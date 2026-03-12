@@ -1,0 +1,10 @@
+@import "tailwindcss";
+
+/* Custom Tooltip Styles */
+.info-tooltip {
+  @apply invisible opacity-0 absolute z-50 p-2 bg-gray-900 border border-white/10 rounded-lg shadow-xl transition-all duration-200 text-[10px] text-gray-300 leading-relaxed w-64 pointer-events-none;
+}
+
+.info-container:hover .info-tooltip {
+  @apply visible opacity-100;
+}

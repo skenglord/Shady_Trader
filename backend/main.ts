@@ -1,0 +1,520 @@
+import { WebSocketServer } from 'ws';
+import { ExchangeConnector } from './exchange/connector.js';
+import { IndicatorEngine } from './indicators/engine.js';
+import { RegimeDetector, RegimeType } from './regime/detector.js';
+import { SignalGenerator } from './strategy/signal_generator.js';
+import { ShadowTrader } from './shadow/shadow_trader.js';
+import { BalanceManager } from './balance/manager.js';
+import { runQuery } from './database.js';
+import fs from 'fs';
+import path from 'path';
+
+export class TradingEngine {
+  exchange: ExchangeConnector | null;
+  isExchangeEnabled: boolean = true; // Re-enabled
+  indicators: IndicatorEngine;
+  regimeDetector: RegimeDetector;
+  signalGenerator: SignalGenerator;
+  shadowTrader: ShadowTrader;
+  balanceManager: BalanceManager;
+  wss: WebSocketServer;
+  db: any; // Keep for now if used elsewhere, but remove from constructor
+  currentRegime: RegimeType = RegimeType.UNCERTAIN;
+  manualRegime: RegimeType | null = null;
+  isRunning: boolean = false;
+  symbol: string = 'BTC/USDT';
+  timeframe: string = '15m';
+  activeMode: string = 'moderate';
+  strategy: string = 'regime';
+
+  aiStrategySwitching: boolean = false;
+  static aiStrategySwitchingEnabled = true;
+  aiSignalGeneration: boolean = false;
+  aiSentimentAnalysis: boolean = false;
+
+  constructor(wss: WebSocketServer) {
+    console.log('TradingEngine constructor called');
+    this.wss = wss;
+    this.exchange = null; // Initialize as null
+    this.indicators = new IndicatorEngine();
+    this.regimeDetector = new RegimeDetector();
+    this.signalGenerator = new SignalGenerator();
+    this.shadowTrader = new ShadowTrader();
+    this.balanceManager = new BalanceManager();
+
+    // Setup DB backup cron (every hour)
+    setInterval(() => {
+      this.backupDatabase();
+    }, 60 * 60 * 1000);
+  }
+
+  async init() {
+    await this.loadSettings();
+  }
+
+  backupDatabase() {
+    try {
+      const dbPath = path.join(process.cwd(), 'trading.db');
+      const backupPath = path.join(process.cwd(), `trading_backup_${Date.now()}.db`);
+      if (fs.existsSync(dbPath)) {
+        fs.copyFileSync(dbPath, backupPath);
+        console.log(`Database backed up to ${backupPath}`);
+        
+        // Clean up old backups (keep last 5)
+        const files = fs.readdirSync(process.cwd());
+        const backups = files.filter(f => f.startsWith('trading_backup_')).sort();
+        if (backups.length > 5) {
+          const toDelete = backups.slice(0, backups.length - 5);
+          toDelete.forEach(f => fs.unlinkSync(path.join(process.cwd(), f)));
+        }
+      }
+    } catch (e) {
+      console.error('Failed to backup database:', e);
+    }
+  }
+
+  async loadSettings() {
+    try {
+      const settings = await runQuery(`SELECT * FROM settings`, [], 'all');
+      const config: any = {};
+      for (const row of settings as any[]) {
+        config[row.key] = row.value;
+      }
+      
+      if (config.symbol) {
+        this.symbol = config.symbol;
+        if (this.exchange) {
+          this.exchange.setActiveSymbol(this.symbol);
+        }
+      }
+      if (config.timeframe) this.timeframe = config.timeframe;
+      if (config.activeMode) this.activeMode = config.activeMode;
+      if (config.strategy) this.strategy = config.strategy;
+      
+      // Hardcoded API keys and exchange (using environment variables)
+      const useTestnet = true; // Hardcoded to true for safety
+      const exchangeName = 'coinmarketcap'; 
+      
+      this.aiStrategySwitching = config.aiStrategySwitching === 'true';
+      this.aiSignalGeneration = config.aiSignalGeneration === 'true';
+      this.aiSentimentAnalysis = config.aiSentimentAnalysis === 'true';
+      
+      if (this.isExchangeEnabled) {
+        this.exchange = new ExchangeConnector(exchangeName, '', '', undefined, useTestnet);
+        this.exchange.setActiveSymbol(this.symbol);
+      } else {
+        this.exchange = null;
+      }
+      
+      this.broadcast({ type: 'status', data: { symbol: this.symbol, timeframe: this.timeframe } });
+      
+      if (this.isRunning) {
+        this.runCycle().catch(console.error);
+      }
+    } catch (e) {
+      console.error('Failed to load settings:', e);
+      this.exchange = this.isExchangeEnabled ? new ExchangeConnector('coinmarketcap', '', '', undefined, true) : null;
+    }
+  }
+
+  async start() {
+    this.isRunning = true;
+    this.shadowTrader.reset();
+    console.log('Trading engine started and reset');
+    this.broadcast({ type: 'status', data: { isRunning: true } });
+    this.broadcast({ type: 'performance', data: this.shadowTrader.getPerformance() });
+
+    while (this.isRunning) {
+      try {
+        await this.runCycle();
+      } catch (error: any) {
+        console.error('Error in trading cycle:', error);
+        this.broadcast({ type: 'error', data: { message: error.message } });
+      }
+      
+      // Wait for next cycle (e.g., 1 second)
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    }
+  }
+
+  stop() {
+    this.isRunning = false;
+    console.log('Trading engine stopped');
+    this.broadcast({ type: 'status', data: { isRunning: false } });
+  }
+
+  async killBot() {
+    this.stop();
+    
+    // Fetch current price to close trades accurately
+    let currentPrice = 0;
+    try {
+      const candles = await this.exchange.getCandles(this.symbol, this.timeframe, 1);
+      if (candles && candles.length > 0) {
+        currentPrice = candles[0].close;
+      }
+    } catch (e) {
+      console.error('Failed to fetch current price for killBot, using entry prices');
+    }
+
+    // Close all shadow positions
+    for (const mode of Object.keys(this.shadowTrader.portfolios)) {
+      const portfolio = this.shadowTrader.portfolios[mode as any];
+      
+      for (const trade of portfolio.openTrades) {
+        const exitPrice = currentPrice || trade.price;
+        let pnl = 0;
+        if (trade.side === 'buy') {
+          pnl = (exitPrice - trade.price) * trade.amount;
+        } else {
+          pnl = (trade.price - exitPrice) * trade.amount;
+        }
+        
+        portfolio.balance += pnl;
+
+        if (mode === this.activeMode) {
+          const tradeCost = trade.amount * trade.price / trade.leverage;
+          this.balanceManager.recordTradeResult(pnl, tradeCost);
+          
+          if (this.exchange && this.exchange.apiKey) {
+            try {
+              const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
+              await this.exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
+            } catch (e: any) {
+              console.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`);
+            }
+          }
+        }
+
+        const stmt = this.db.prepare(`
+          UPDATE shadow_trades
+          SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
+          WHERE id = ?
+        `);
+        stmt.run(pnl, exitPrice, Date.now(), trade.id);
+      }
+      portfolio.openTrades = [];
+    }
+    
+    // Return all bot funds to main balance
+    const balances = await this.balanceManager.getBalances();
+    if (balances.botBalance > 0) {
+      const amount = balances.botBalance;
+      await this.balanceManager.withdrawFromBot(amount);
+      const portfolio = this.shadowTrader.portfolios[this.activeMode as any];
+      if (portfolio) {
+        portfolio.initialBalance -= amount;
+        portfolio.balance -= amount;
+      }
+    }
+
+    this.broadcast({ type: 'performance', data: this.shadowTrader.getPerformance() });
+    this.broadcast({ type: 'balances', data: this.balanceManager.getBalances() });
+    console.log('Bot Killed: All positions closed and funds returned to main balance');
+  }
+
+  setTimeframe(timeframe: string) {
+    this.timeframe = timeframe;
+    console.log(`Timeframe changed to ${timeframe}`);
+    this.broadcast({ type: 'status', data: { timeframe } });
+    if (this.isRunning) {
+      this.runCycle().catch(console.error);
+    }
+  }
+
+  async runCycle() {
+    // 1. Fetch new candles
+    let candles = [];
+    try {
+      candles = this.exchange ? await this.exchange.getCandles(this.symbol, this.timeframe, 200) : [];
+    } catch (e) {
+      console.warn(`Exchange API failed to fetch candles: ${e}`);
+    }
+    if (candles.length < 100) return;
+
+    // 2. Calculate indicators
+    const df = this.indicators.calculateAll(candles);
+    if (df.length === 0) return;
+
+    // 3. Detect regime
+    let regimeResult;
+    if (this.manualRegime) {
+      regimeResult = {
+        regime: this.manualRegime,
+        confidence: 100,
+        reasoning: "Manually set by user",
+        metrics: {},
+        timestamp: Date.now()
+      };
+    } else {
+      regimeResult = await this.regimeDetector.detect(df, this.aiSentimentAnalysis);
+    }
+    
+    if (this.manualRegime || this.regimeDetector.shouldUpdateRegime(this.currentRegime, regimeResult.regime, regimeResult.confidence)) {
+      this.currentRegime = regimeResult.regime;
+      
+      // Save regime history
+      const stmt = this.db.prepare(`
+        INSERT INTO regime_history (timestamp, regime, confidence, reasoning)
+        VALUES (?, ?, ?, ?)
+      `);
+      stmt.run(Date.now(), this.currentRegime, regimeResult.confidence, regimeResult.reasoning);
+
+      this.broadcast({ type: 'regime', data: regimeResult });
+
+      if (this.aiStrategySwitching && TradingEngine.aiStrategySwitchingEnabled) {
+        try {
+          const apiKey = process.env.GEMINI_API_KEY;
+          if (!apiKey) {
+            console.warn("AI Strategy Switch skipped: GEMINI_API_KEY is not set.");
+          } else {
+            const { GoogleGenAI } = await import('@google/genai');
+            const ai = new GoogleGenAI({ apiKey });
+            const prompt = `You are an expert quantitative trader. The market regime has just changed to "${this.currentRegime}" with ${regimeResult.confidence}% confidence. 
+            Reasoning: ${regimeResult.reasoning}
+            
+            Based on this new regime, which risk mode should the trading bot switch to?
+            Available modes: "ultra_conservative", "conservative", "moderate", "aggressive", "degen".
+            
+            Return ONLY the mode name as a plain string.`;
+
+            const response = await ai.models.generateContent({
+              model: "gemini-3-flash-preview",
+              contents: prompt,
+            });
+
+            if (response.text) {
+              const newMode = response.text.trim().toLowerCase().replace(/[^a-z_]/g, '');
+              const validModes = ["ultra_conservative", "conservative", "moderate", "aggressive", "degen"];
+              if (validModes.includes(newMode)) {
+                this.activeMode = newMode;
+                const stmt = this.db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
+                stmt.run('activeMode', newMode);
+                this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
+                console.log(`AI switched strategy to ${newMode}`);
+              }
+            }
+          }
+        } catch (error: any) {
+          if (error.message && error.message.includes("API_KEY_INVALID")) {
+            console.error("AI Strategy Switch failed: Invalid API Key. Disabling AI features.");
+            TradingEngine.aiStrategySwitchingEnabled = false;
+          } else {
+            console.error("AI Strategy Switch failed:", error);
+          }
+          // Fallback
+          let newMode = 'moderate';
+          if (this.currentRegime === 'strong_bull' || this.currentRegime === 'bear') {
+            newMode = 'aggressive';
+          } else if (this.currentRegime === 'sideways') {
+            newMode = 'conservative';
+          }
+          this.activeMode = newMode;
+          const stmt = this.db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
+          stmt.run('activeMode', newMode);
+          this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
+        }
+      }
+    }
+
+    // 4. Generate signal
+    const signal = await this.signalGenerator.generateSignal(df, this.currentRegime, this.symbol, this.aiSignalGeneration, this.strategy);
+    
+    if (signal) {
+      this.broadcast({ type: 'signal', data: signal });
+      
+      // 5. Execute shadow trades
+      const currentPrice = df[df.length - 1].close;
+      await this.shadowTrader.processSignal(signal, currentPrice, this.activeMode, this.balanceManager, this.exchange);
+    }
+
+    // 6. Update positions
+    const currentPrice = df[df.length - 1].close;
+    await this.shadowTrader.updatePositions(currentPrice, this.activeMode, this.balanceManager, this.exchange);
+
+    // 7. Broadcast updates
+    const performance = this.shadowTrader.getPerformance();
+    
+    this.broadcast({ type: 'performance', data: performance });
+    
+    const balances = this.balanceManager.getBalances();
+    this.broadcast({ type: 'balances', data: balances });
+    
+    // Broadcast latest candle for chart
+    this.broadcast({ type: 'candle', data: df[df.length - 1] });
+  }
+
+  broadcast(message: any) {
+    this.wss.clients.forEach(client => {
+      if (client.readyState === 1) { // WebSocket.OPEN
+        client.send(JSON.stringify(message));
+      }
+    });
+  }
+
+  async runBacktest(mode: string, customConfig?: any, startTime?: number, endTime?: number) {
+    // Fetch candles for the period
+    // If startTime/endTime are not provided, default to last 500 candles
+    let candles: any[] = [];
+    
+    if (startTime && endTime) {
+      console.log(`Running backtest from ${new Date(startTime).toISOString()} to ${new Date(endTime).toISOString()}`);
+      // Use getHistoricalCandles to fetch and cache data
+      // Calculate how many candles we need based on timeframe
+      let limit = 20000;
+      if (this.timeframe === '15m') limit = Math.ceil((endTime - startTime) / (15 * 60 * 1000));
+      else if (this.timeframe === '1h') limit = Math.ceil((endTime - startTime) / (60 * 60 * 1000));
+      else if (this.timeframe === '1d') limit = Math.ceil((endTime - startTime) / (24 * 60 * 60 * 1000));
+      
+      // Cap at 100,000 candles to prevent memory issues
+      limit = Math.min(limit, 100000);
+      
+      if (this.exchange) {
+        candles = await this.exchange.getHistoricalCandles(this.symbol, this.timeframe, startTime, limit, endTime);
+        console.log(`[Backtest] Fetched ${candles.length} candles from exchange`);
+      } else {
+        candles = [];
+        console.log(`[Backtest] No exchange connector found`);
+      }
+      
+      // Filter by endTime just in case
+      candles = candles.filter(c => c.time <= endTime);
+    } else {
+      try {
+        if (this.exchange) {
+          candles = await this.exchange.getCandles(this.symbol, this.timeframe, 500);
+        } else {
+          candles = [];
+        }
+      } catch (e) {
+        console.warn(`Exchange API failed to fetch candles for backtest: ${e}`);
+        candles = [];
+      }
+    }
+
+    if (candles.length < 100) return { trades: [], candles: [] };
+
+    // Ensure candles are sorted and unique by time
+    const uniqueCandlesMap = new Map();
+    candles.forEach(c => uniqueCandlesMap.set(c.time, c));
+    const sortedCandles = Array.from(uniqueCandlesMap.values()).sort((a: any, b: any) => a.time - b.time);
+
+    const df = this.indicators.calculateAll(sortedCandles);
+    const virtualTrades = [];
+    const regimeChanges = [];
+    let lastRegime = null;
+    const config = customConfig || this.shadowTrader.riskManager.getConfig(mode as any);
+
+    // Start from index 50 to have enough data for indicators
+    for (let i = 50; i < df.length; i++) {
+      const slice = df.slice(0, i + 1);
+      const regimeResult = await this.regimeDetector.detect(slice, this.aiSentimentAnalysis);
+      
+      if (lastRegime === null) {
+        lastRegime = regimeResult.regime;
+        regimeChanges.push({
+          time: df[i].time,
+          regime: lastRegime
+        });
+      } else if (this.regimeDetector.shouldUpdateRegime(lastRegime, regimeResult.regime, regimeResult.confidence)) {
+        regimeChanges.push({
+          time: df[i].time,
+          regime: regimeResult.regime
+        });
+        lastRegime = regimeResult.regime;
+      }
+
+      const signal = await this.signalGenerator.generateSignal(slice, lastRegime, this.symbol, this.aiSignalGeneration, this.strategy);
+      
+      if (signal) {
+        console.log(`[Backtest] Signal generated at ${new Date(df[i].time).toISOString()}: ${signal.side} ${signal.symbol} confidence=${signal.confidence}`);
+      }
+
+      if (signal && signal.confidence >= (config.confidenceThreshold || 0)) {
+        // Apply multipliers
+        const riskPerUnit = Math.abs(signal.entryPrice - signal.stopLoss);
+        const adjustedStopLoss = signal.side === 'buy' 
+          ? signal.entryPrice - (riskPerUnit * (config.slMultiplier || 1))
+          : signal.entryPrice + (riskPerUnit * (config.slMultiplier || 1));
+        const adjustedTakeProfit = signal.side === 'buy'
+          ? signal.entryPrice + (riskPerUnit * (config.tpMultiplier || 1))
+          : signal.entryPrice - (riskPerUnit * (config.tpMultiplier || 1));
+
+        // Simulate forward to see if it hits TP or SL
+        let exitPrice = null;
+        let exitTime = null;
+        let pnl = 0;
+        let status = 'expired';
+
+        for (let j = i + 1; j < df.length; j++) {
+          const candle = df[j];
+          if (signal.side === 'buy') {
+            if (candle.low <= adjustedStopLoss) {
+              exitPrice = adjustedStopLoss;
+              exitTime = candle.time;
+              pnl = (exitPrice - signal.entryPrice) / signal.entryPrice * 100 * (config.leverage || 1);
+              status = 'loss';
+              break;
+            }
+            if (candle.high >= adjustedTakeProfit) {
+              exitPrice = adjustedTakeProfit;
+              exitTime = candle.time;
+              pnl = (exitPrice - signal.entryPrice) / signal.entryPrice * 100 * (config.leverage || 1);
+              status = 'profit';
+              break;
+            }
+          } else {
+            if (candle.high >= adjustedStopLoss) {
+              exitPrice = adjustedStopLoss;
+              exitTime = candle.time;
+              pnl = (signal.entryPrice - exitPrice) / signal.entryPrice * 100 * (config.leverage || 1);
+              status = 'loss';
+              break;
+            }
+            if (candle.low <= adjustedTakeProfit) {
+              exitPrice = adjustedTakeProfit;
+              exitTime = candle.time;
+              pnl = (signal.entryPrice - exitPrice) / signal.entryPrice * 100 * (config.leverage || 1);
+              status = 'profit';
+              break;
+            }
+          }
+        }
+
+        virtualTrades.push({
+          ...signal,
+          stopLoss: adjustedStopLoss,
+          takeProfit: adjustedTakeProfit,
+          exitPrice,
+          exitTime,
+          pnl,
+          status,
+          time: df[i].time
+        });
+        
+        // Skip ahead to exit time to avoid overlapping trades in simulation
+        if (exitTime) {
+          const exitIndex = df.findIndex(c => c.time === exitTime);
+          if (exitIndex > i) i = exitIndex;
+        }
+      }
+    }
+    return { trades: virtualTrades, candles: df, regimeChanges };
+  }
+}
+
+let engine: TradingEngine | null = null;
+
+export async function startTradingEngine(wss: WebSocketServer) {
+  if (!engine) {
+    engine = new TradingEngine(wss);
+    await engine.init();
+    // Start engine asynchronously
+    engine.start().catch(console.error);
+  }
+  return engine;
+}
+
+export function getTradingEngine() {
+  return engine;
+}
