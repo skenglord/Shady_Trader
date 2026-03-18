@@ -247,7 +247,9 @@ export class TradingEngine {
         timestamp: Date.now()
       };
     } else {
-      regimeResult = await this.regimeDetector.detect(df, this.aiSentimentAnalysis);
+      // Fetch recent shadow performance for AI context (MD 1.3)
+      const shadowPerformance = await this.shadowTrader.getPerformance();
+      regimeResult = await this.regimeDetector.detect(df, this.aiSentimentAnalysis, shadowPerformance);
     }
     
     if (this.manualRegime || this.regimeDetector.shouldUpdateRegime(this.currentRegime, regimeResult.regime, regimeResult.confidence)) {
@@ -330,7 +332,7 @@ export class TradingEngine {
 
     // 6. Update positions
     const currentPrice = df[df.length - 1].close;
-    await this.shadowTrader.updatePositions(currentPrice, this.activeMode, this.balanceManager, this.exchange);
+    await this.shadowTrader.updatePositions(currentPrice, this.activeMode, this.balanceManager, this.exchange, df[df.length - 1]);
 
     // 7. Broadcast updates
     const performance = this.shadowTrader.getPerformance();

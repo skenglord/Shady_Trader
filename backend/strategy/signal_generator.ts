@@ -102,111 +102,205 @@ export class SignalGenerator {
   }
 
   _strongBullStrategy(df: any[], symbol: string): Signal | null {
-    const last = df[df.length - 1];
-    const prev = df[df.length - 2];
+    const data = df[df.length - 1];
+    let score = 0;
+    const indicators: string[] = [];
 
-    // Buy dips in uptrend: Price touches EMA 21 and bounces
-    if (prev.low <= prev.ema_21 && last.close > last.ema_21 && last.rsi_14 > 50) {
-      const entryPrice = last.close;
-      const stopLoss = last.ema_50 * 0.99; // 1% below EMA 50
-      const takeProfit = entryPrice + (entryPrice - stopLoss) * 2; // 1:2 RR
+    // Trend confirmation (45%)
+    if (data.close > data.ema_9 && data.ema_9 > data.ema_21) {
+      score += 45;
+      indicators.push('EMA Trend');
+    } else {
+      return null; // Trend must be intact
+    }
 
+    // RSI Momentum (20%)
+    if (data.rsi_14 > 50 && data.rsi_14 < 75) {
+      score += 20;
+      indicators.push('RSI Momentum');
+    } else if (data.rsi_14 >= 75) {
+      score += 5;
+      indicators.push('RSI Overbought');
+    }
+
+    // Volume Confirmation (20%)
+    if (data.volume_ratio > 1.2) {
+      score += 20;
+      indicators.push('Volume Surge');
+    }
+
+    // Timing: Stoch RSI (15%)
+    if (data.stoch_rsi_k < 30) {
+      score += 15;
+      indicators.push('StochRSI Oversold');
+    } else if (data.stoch_rsi_k < 50) {
+      score += 5;
+      indicators.push('StochRSI Moderate');
+    }
+
+    if (score >= 60) {
       return {
         symbol,
         side: 'buy',
-        confidence: 85,
-        entryPrice,
-        stopLoss,
-        takeProfit,
-        reasoning: 'Strong Bull: Price bounced off EMA 21',
-        indicators: ['EMA 21', 'RSI']
+        confidence: score,
+        entryPrice: data.close,
+        stopLoss: data.close * 0.985, // Default 1.5% as per MD Ultra-Conservative
+        takeProfit: data.close * 1.008, // Default 0.8%
+        reasoning: `Strong Bull: Score ${score} - ${indicators.join(', ')}`,
+        indicators
       };
     }
     return null;
   }
 
   _weakBullStrategy(df: any[], symbol: string): Signal | null {
-    const last = df[df.length - 1];
+    const data = df[df.length - 1];
+    let score = 0;
+    const indicators: string[] = [];
 
-    // Momentum + Mean Reversion: Buy near lower BB if RSI is oversold
-    if (last.close <= last.bb_lower * 1.01 && last.rsi_14 < 40) {
-      const entryPrice = last.close;
-      const stopLoss = last.bb_lower * 0.98; // 2% below lower BB
-      const takeProfit = last.bb_middle; // Target middle BB
+    // Strategy A: Mean reversion (60% weight)
+    if (data.close <= data.bb_lower * 1.01) {
+      if (data.close > data.vwap * 0.995) {
+        if (data.rsi_14 < 40) {
+          score += 60;
+          indicators.push('Mean Reversion (BB/VWAP/RSI)');
+        }
+      }
+    }
+    // Strategy B: Momentum continuation (40% weight)
+    else if (data.close > data.ema_9 && data.ema_9 > data.ema_21) {
+      if (data.rsi_14 > 50 && data.rsi_14 < 70) {
+        if (data.volume_ratio > 1.3) {
+          score += 40;
+          indicators.push('Momentum Breakout');
+        }
+      }
+    }
 
+    // Volume confirmation boost
+    if (data.close > data.open && data.volume_ratio > 1.1) {
+      score += 15;
+      indicators.push('Bullish Volume');
+    }
+
+    // Penalty: Wrong side of VWAP
+    if (data.close < data.vwap * 0.98) {
+      score *= 0.7;
+    }
+
+    if (score >= 50) {
       return {
         symbol,
         side: 'buy',
-        confidence: 75,
-        entryPrice,
-        stopLoss,
-        takeProfit,
-        reasoning: 'Weak Bull: Mean reversion from lower Bollinger Band',
-        indicators: ['Bollinger Bands', 'RSI']
+        confidence: Math.min(score, 100),
+        entryPrice: data.close,
+        stopLoss: data.close * 0.98, // 2%
+        takeProfit: data.close * 1.012, // 1.2%
+        reasoning: `Weak Bull: Score ${Math.min(score, 100).toFixed(0)} - ${indicators.join(', ')}`,
+        indicators
       };
     }
     return null;
   }
 
   _bearStrategy(df: any[], symbol: string): Signal | null {
-    const last = df[df.length - 1];
+    const data = df[df.length - 1];
+    let score = 0;
+    const indicators: string[] = [];
 
-    // Short rallies: Price touches upper BB and RSI is overbought
-    if (last.close >= last.bb_upper * 0.99 && last.rsi_14 > 60) {
-      const entryPrice = last.close;
-      const stopLoss = last.bb_upper * 1.02; // 2% above upper BB
-      const takeProfit = last.bb_lower; // Target lower BB
+    // Must have: Downtrend confirmed
+    if (data.ema_9 < data.ema_21) {
+      score += 30;
+      indicators.push('Downtrend EMA');
+    } else {
+      return null;
+    }
 
+    // Resistance rejection
+    if (data.high >= data.bb_upper * 0.995) {
+      if (data.close < data.open) {
+        if (data.rsi_14 > 60) {
+          score += 50;
+          indicators.push('Resistance Rejection');
+        }
+      }
+    } else if (data.rsi_14 > 65 && data.rsi_14 < 75) {
+      score += 35;
+      indicators.push('Failed Rally');
+    }
+
+    // MACD confirmation
+    if (data.macd_line < data.signal_line) {
+      score += 15;
+      indicators.push('MACD Bearish');
+    }
+
+    if (score >= 50) {
       return {
         symbol,
         side: 'sell',
-        confidence: 80,
-        entryPrice,
-        stopLoss,
-        takeProfit,
-        reasoning: 'Bear: Shorting rally at upper Bollinger Band',
-        indicators: ['Bollinger Bands', 'RSI']
+        confidence: score,
+        entryPrice: data.close,
+        stopLoss: data.close * 1.02, // 2%
+        takeProfit: data.close * 0.98, // 2% (Target lower BB)
+        reasoning: `Bear: Score ${score} - ${indicators.join(', ')}`,
+        indicators
       };
     }
     return null;
   }
 
   _sidewaysStrategy(df: any[], symbol: string): Signal | null {
-    const last = df[df.length - 1];
+    const data = df[df.length - 1];
+    let score = 0;
+    let side: 'buy' | 'sell' = 'buy';
+    const indicators: string[] = [];
 
-    // Range trading: Buy support
-    if (last.close <= last.bb_lower * 1.005 && last.rsi_14 < 35) {
-      const entryPrice = last.close;
-      const stopLoss = last.bb_lower * 0.98;
-      const takeProfit = last.bb_upper * 0.99;
-
-      return {
-        symbol,
-        side: 'buy',
-        confidence: 70,
-        entryPrice,
-        stopLoss,
-        takeProfit,
-        reasoning: 'Sideways: Buying support at lower Bollinger Band',
-        indicators: ['Bollinger Bands', 'RSI']
-      };
+    // Long Setup
+    if (data.close <= data.bb_lower * 1.005) {
+      score += 30;
+      indicators.push('BB Lower');
+      if (data.rsi_14 < 35) {
+        score += 25;
+        indicators.push('RSI Oversold');
+      }
+      if (data.stoch_rsi_k < 25) {
+        score += 20;
+        indicators.push('Stoch Oversold');
+      }
+      side = 'buy';
+    }
+    // Short Setup
+    else if (data.close >= data.bb_upper * 0.995) {
+      score += 30;
+      indicators.push('BB Upper');
+      if (data.rsi_14 > 65) {
+        score += 25;
+        indicators.push('RSI Overbought');
+      }
+      if (data.stoch_rsi_k > 75) {
+        score += 20;
+        indicators.push('Stoch Overbought');
+      }
+      side = 'sell';
     }
 
-    // Range trading: Sell resistance
-    if (last.close >= last.bb_upper * 0.995 && last.rsi_14 > 65) {
-      const entryPrice = last.close;
-      const stopLoss = last.bb_upper * 1.02;
-      const takeProfit = last.bb_lower * 1.01;
+    // Volume filter: Reduce if volume spiking
+    if (data.volume_ratio > 1.5) {
+      score *= 0.5;
+      indicators.push('Volume Spike Penalty');
+    }
 
+    if (score >= 50) {
       return {
         symbol,
-        side: 'sell',
-        confidence: 70,
-        entryPrice,
-        stopLoss,
-        takeProfit,
-        reasoning: 'Sideways: Selling resistance at upper Bollinger Band',
-        indicators: ['Bollinger Bands', 'RSI']
+        side,
+        confidence: score,
+        entryPrice: data.close,
+        stopLoss: side === 'buy' ? data.close * 0.985 : data.close * 1.015,
+        takeProfit: side === 'buy' ? data.close * 1.006 : data.close * 0.994,
+        reasoning: `Sideways: Score ${score} - ${indicators.join(', ')}`,
+        indicators
       };
     }
 

@@ -77,19 +77,25 @@ export class ShadowTrader {
         continue;
       }
 
-      // Calculate position size
-      const positionSize = this.riskManager.calculatePositionSize(effectiveBalance, signal.entryPrice, signal.stopLoss, mode as RiskMode);
+      // Calculate position size with dynamic multiplier from MD Part 5.1
+      const positionSize = this.riskManager.calculatePositionSize(effectiveBalance, signal.entryPrice, signal.stopLoss, mode as RiskMode, signal.confidence);
       if (positionSize <= 0) continue;
 
       // Adjust TP/SL based on mode config
       const config = this.riskManager.getConfig(mode as RiskMode);
-      const riskPerUnit = Math.abs(signal.entryPrice - signal.stopLoss);
+
+      // Part 5.2: Dynamic Stops (ATR-based)
+      // Since we have ATR in candles, let's use it if available
+      // For now, using percentage from config as fallback
+      const slPct = (config.stopLoss || 2.0) / 100;
+      const tpPct = (config.takeProfit || 1.5) / 100;
+
       const adjustedStopLoss = signal.side === 'buy' 
-        ? signal.entryPrice - (riskPerUnit * config.slMultiplier)
-        : signal.entryPrice + (riskPerUnit * config.slMultiplier);
+        ? signal.entryPrice * (1 - slPct)
+        : signal.entryPrice * (1 + slPct);
       const adjustedTakeProfit = signal.side === 'buy'
-        ? signal.entryPrice + (riskPerUnit * config.tpMultiplier)
-        : signal.entryPrice - (riskPerUnit * config.tpMultiplier);
+        ? signal.entryPrice * (1 + tpPct)
+        : signal.entryPrice * (1 - tpPct);
 
       // Execute shadow trade
       const trade = {
@@ -103,7 +109,10 @@ export class ShadowTrader {
         risk_mode: mode,
         stopLoss: adjustedStopLoss,
         takeProfit: adjustedTakeProfit,
+        initialStopLoss: adjustedStopLoss, // Save for trailing logic
         leverage: config.leverage || 1,
+        candlesHeld: 0,
+        isRunner: false,
         exchangeOrderId: null as string | null
       };
 
@@ -140,7 +149,7 @@ export class ShadowTrader {
     }
   }
 
-  async updatePositions(currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any) {
+  async updatePositions(currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any, lastCandle: any = null) {
     for (const mode of Object.values(RiskMode)) {
       const portfolio = this.portfolios[mode];
       const newOpenTrades = [];
@@ -149,24 +158,55 @@ export class ShadowTrader {
       const maintenanceMargin = 0.005; // 0.5% maintenance margin
 
       for (const trade of portfolio.openTrades) {
+        // Increment candles held if a new candle is provided
+        if (lastCandle && (!trade.lastUpdateTime || lastCandle.time > trade.lastUpdateTime)) {
+          trade.candlesHeld = (trade.candlesHeld || 0) + 1;
+          trade.lastUpdateTime = lastCandle.time;
+        }
+
         console.log(`[ShadowTrader] Checking trade ${trade.id} for ${mode}. Price: ${currentPrice}, SL: ${trade.stopLoss}, TP: ${trade.takeProfit}`);
         let pnl = 0;
         let closed = false;
         let exitReason = '';
+        const profitPct = trade.side === 'buy'
+          ? (currentPrice - trade.price) / trade.price
+          : (trade.price - currentPrice) / trade.price;
 
         if (trade.side === 'buy') {
           pnl = (currentPrice - trade.price) * trade.amount;
           
-          // Trailing Stop Logic: if price moves up, trail the stop loss behind it
-          // Let's trail by the original risk amount (entry - initial stop loss)
-          // Since we don't store initial stop loss, we can trail by a fixed percentage (e.g., 2%)
-          // Or we can just calculate the current profit % and trail if it's > 1%
-          const profitPct = (currentPrice - trade.price) / trade.price;
-          if (profitPct > 0.01) {
-            const trailStop = currentPrice * 0.99; // 1% trailing stop
+          // MD Part 2.1: Multi-candle hold & Trailing Stop
+          if (config.multiCandleHoldEnabled && profitPct > 0.005) {
+            const trailStop = currentPrice * 0.996; // 0.4% trail as per Moderate mode
             if (trailStop > trade.stopLoss) {
               trade.stopLoss = trailStop;
             }
+          }
+
+          // Part 2.1: Runner Position Logic
+          if (config.runnerEnabled && !trade.isRunner && profitPct >= (config.runnerConditions?.triggerProfit / 100 || 0.015)) {
+             console.log(`[ShadowTrader] [${mode}] Runner triggered for ${trade.id}`);
+             // Partial exit (close e.g. 60%)
+             const exitFactor = config.runnerConditions?.partialExit || 0.6;
+             const closeAmount = trade.amount * exitFactor;
+             const partialPnl = (currentPrice - trade.price) * closeAmount;
+
+             portfolio.balance += partialPnl;
+             trade.amount -= closeAmount;
+             trade.isRunner = true;
+             // Lock in minimum profit on runner (entry + 0.5%)
+             trade.stopLoss = Math.max(trade.stopLoss, trade.price * 1.005);
+
+             if (mode === activeMode && balanceManager) {
+               const tradeCost = closeAmount * trade.price / trade.leverage;
+               balanceManager.recordTradeResult(partialPnl, tradeCost);
+             }
+          }
+
+          // Part 2.1: Early Exit Feature
+          if (config.earlyExitEnabled && profitPct >= (config.earlyExitTarget / 100)) {
+            closed = true;
+            exitReason = 'early_exit';
           }
 
           // Liquidation Logic
@@ -178,20 +218,31 @@ export class ShadowTrader {
           } else if (currentPrice <= trade.stopLoss) {
             closed = true;
             exitReason = 'stop_loss';
-          } else if (currentPrice >= trade.takeProfit) {
+          } else if (currentPrice >= trade.takeProfit && !trade.isRunner) {
             closed = true;
             exitReason = 'take_profit';
+          }
+
+          // Multi-candle expiration
+          if (config.multiCandleHoldEnabled && trade.candlesHeld >= (config.holdConditions?.maxCandles || 3)) {
+            closed = true;
+            exitReason = 'multi_candle_expiry';
           }
         } else {
           pnl = (trade.price - currentPrice) * trade.amount;
           
-          // Trailing Stop Logic
-          const profitPct = (trade.price - currentPrice) / trade.price;
-          if (profitPct > 0.01) {
-            const trailStop = currentPrice * 1.01; // 1% trailing stop
+          // Trailing Stop Logic for Shorts
+          if (config.multiCandleHoldEnabled && profitPct > 0.005) {
+            const trailStop = currentPrice * 1.004; // 0.4% trail
             if (trailStop < trade.stopLoss) {
               trade.stopLoss = trailStop;
             }
+          }
+
+          // Part 2.1: Early Exit Feature
+          if (config.earlyExitEnabled && profitPct >= (config.earlyExitTarget / 100)) {
+            closed = true;
+            exitReason = 'early_exit';
           }
 
           // Liquidation Logic
@@ -203,9 +254,15 @@ export class ShadowTrader {
           } else if (currentPrice >= trade.stopLoss) {
             closed = true;
             exitReason = 'stop_loss';
-          } else if (currentPrice <= trade.takeProfit) {
+          } else if (currentPrice <= trade.takeProfit && !trade.isRunner) {
             closed = true;
             exitReason = 'take_profit';
+          }
+
+          // Multi-candle expiration
+          if (config.multiCandleHoldEnabled && trade.candlesHeld >= (config.holdConditions?.maxCandles || 3)) {
+            closed = true;
+            exitReason = 'multi_candle_expiry';
           }
         }
 

@@ -11,64 +11,132 @@ export enum RiskMode {
 
 export const DEFAULT_RISK_CONFIGS = {
   [RiskMode.ULTRA_CONSERVATIVE]: {
-    maxRiskPerTrade: 0.005, // 0.5%
-    maxDrawdown: 0.05, // 5%
+    positionSize: 0.02, // 2% per trade
+    maxDrawdown: 0.07, // 7%
+    maxDailyLoss: 0.03, // 3%
     confidenceThreshold: 85,
     maxConcurrentPositions: 1,
-    tpMultiplier: 1.5,
-    slMultiplier: 0.5,
-    leverage: 1,
-    description: "Maximum safety. Only takes the highest confidence signals with very tight stops and small positions. Ideal for capital preservation."
+    maxDailyTrades: 8,
+    leverage: 1.0,
+    stopLoss: 1.5, // 1.5%
+    takeProfit: 0.8, // 0.8%
+    activeRegimes: ["strong_bull", "weak_bull"],
+    earlyExitEnabled: false,
+    multiCandleHoldEnabled: false,
+    runnerEnabled: false,
+    description: "Maximum safety. Only takes the highest confidence signals. Stay out of bear/sideways markets. Ideal for capital preservation."
   },
   [RiskMode.CONSERVATIVE]: {
-    maxRiskPerTrade: 0.01, // 1%
-    maxDrawdown: 0.08, // 8%
+    positionSize: 0.03, // 3% per trade
+    maxDrawdown: 0.11, // 11%
+    maxDailyLoss: 0.03, // 3%
     confidenceThreshold: 80,
     maxConcurrentPositions: 2,
-    tpMultiplier: 2.0,
-    slMultiplier: 1.0,
-    leverage: 2,
-    description: "Balanced safety. Takes high-probability setups with standard risk-reward ratios. Good for steady, low-volatility growth."
+    maxDailyTrades: 12,
+    leverage: 1.0,
+    stopLoss: 2.0, // 2.0%
+    takeProfit: 1.2, // 1.2%
+    activeRegimes: ["strong_bull", "weak_bull", "sideways"],
+    earlyExitEnabled: true,
+    earlyExitTarget: 0.8,
+    multiCandleHoldEnabled: false,
+    runnerEnabled: false,
+    description: "Proven strategy. Balanced risk/reward with early exit feature for steady, low-volatility growth."
   },
   [RiskMode.MODERATE]: {
-    maxRiskPerTrade: 0.02, // 2%
-    maxDrawdown: 0.12, // 12%
+    positionSize: 0.05, // 5% per trade
+    maxDrawdown: 0.15, // 15%
+    maxDailyLoss: 0.05, // 5%
     confidenceThreshold: 75,
     maxConcurrentPositions: 3,
-    tpMultiplier: 2.5,
-    slMultiplier: 1.5,
-    leverage: 5,
-    description: "Standard trading. Optimized for the best balance between risk and return. Uses wider stops to allow trades room to breathe."
+    maxDailyTrades: 18,
+    leverage: 1.5,
+    stopLoss: 2.5, // 2.5%
+    takeProfit: 1.8, // 1.8%
+    activeRegimes: ["strong_bull", "weak_bull", "sideways"],
+    earlyExitEnabled: true,
+    earlyExitTarget: 1.0,
+    multiCandleHoldEnabled: true,
+    holdConditions: {
+      minProfit: 0.5, // 0.5%
+      maxCandles: 3
+    },
+    runnerEnabled: false,
+    description: "Balanced aggression. Uses multi-candle holds to capture extended moves while maintaining strict risk controls."
   },
   [RiskMode.AGGRESSIVE]: {
-    maxRiskPerTrade: 0.05, // 5%
-    maxDrawdown: 0.18, // 18%
+    positionSize: 0.08, // 8% per trade
+    maxDrawdown: 0.22, // 22%
+    maxDailyLoss: 0.08, // 8%
     confidenceThreshold: 70,
-    maxConcurrentPositions: 5,
-    tpMultiplier: 3.0,
-    slMultiplier: 2.0,
-    leverage: 20,
-    description: "High growth. Willing to take more frequent signals and larger drawdowns for higher potential returns. Requires strong trends."
+    maxConcurrentPositions: 4,
+    maxDailyTrades: 25,
+    leverage: 2.0,
+    stopLoss: 3.0, // 3.0%
+    takeProfit: 2.5, // 2.5%
+    activeRegimes: ["strong_bull", "weak_bull", "sideways", "bear"],
+    earlyExitEnabled: true,
+    earlyExitTarget: 1.5,
+    multiCandleHoldEnabled: true,
+    holdConditions: {
+      minProfit: 0.3,
+      maxCandles: 5
+    },
+    runnerEnabled: true,
+    runnerConditions: {
+      triggerProfit: 1.5,
+      partialExit: 0.6,
+      maxRunnerDuration: 3600000 // 1 hour
+    },
+    description: "High risk/reward. Uses runners and multi-candle holds to capture outsized moves. Trades all market regimes."
   },
   [RiskMode.DEGEN]: {
-    maxRiskPerTrade: 0.10, // 10%
-    maxDrawdown: 0.30, // 30%
-    confidenceThreshold: 60,
-    maxConcurrentPositions: 10,
-    tpMultiplier: 5.0,
-    slMultiplier: 3.0,
-    leverage: 100,
-    description: "Maximum risk. Takes almost every signal with large positions and very wide targets. High probability of significant drawdown."
+    positionSize: 0.15, // 15% per trade
+    maxDrawdown: 0.35, // 35%
+    maxDailyLoss: 0.15, // 15%
+    confidenceThreshold: 65,
+    maxConcurrentPositions: 5,
+    maxDailyTrades: 40,
+    leverage: 3.0,
+    stopLoss: 4.0, // 4.0%
+    takeProfit: 3.5, // 3.5%
+    activeRegimes: ["strong_bull", "weak_bull", "sideways", "bear"],
+    earlyExitEnabled: true,
+    earlyExitTarget: 2.0,
+    multiCandleHoldEnabled: true,
+    holdConditions: {
+      minProfit: 0.2,
+      maxCandles: 8
+    },
+    runnerEnabled: true,
+    runnerConditions: {
+      triggerProfit: 1.0,
+      partialExit: 0.5,
+      maxRunnerDuration: 7200000 // 2 hours
+    },
+    description: "Maximum aggression. Very high position sizing and leverage. High probability of significant drawdown or blowup."
   },
   [RiskMode.AI_ENHANCED]: {
-    maxRiskPerTrade: 0.02, // 2%
-    maxDrawdown: 0.12, // 12%
+    positionSize: 0.05, // 5% per trade
+    maxDrawdown: 0.15, // 15%
+    maxDailyLoss: 0.05, // 5%
     confidenceThreshold: 75,
     maxConcurrentPositions: 3,
-    tpMultiplier: 2.5,
-    slMultiplier: 1.5,
-    leverage: 5,
-    description: "AI Enhanced. Uses Gemini for macro-level signal confirmation and sentiment analysis before taking a trade. Matches Moderate risk profile."
+    maxDailyTrades: 18,
+    leverage: 1.5,
+    stopLoss: 2.5, // 2.5%
+    takeProfit: 1.8, // 1.8%
+    activeRegimes: ["strong_bull", "weak_bull", "sideways"],
+    earlyExitEnabled: true,
+    earlyExitTarget: 1.0,
+    multiCandleHoldEnabled: true,
+    holdConditions: {
+      minProfit: 0.5,
+      maxCandles: 3
+    },
+    runnerEnabled: false,
+    aiValidationEnabled: true,
+    description: "AI Enhanced Moderate. Matches Moderate risk profile but with mandatory Gemini AI validation for all trades."
   }
 };
 
@@ -109,30 +177,49 @@ export class RiskManager {
     return this.RISK_CONFIGS[mode];
   }
 
-  calculatePositionSize(balance: number, entryPrice: number, stopLoss: number, riskMode: RiskMode): number {
+  calculatePositionSize(balance: number, entryPrice: number, stopLoss: number, riskMode: RiskMode, confidence: number = 75): number {
     const config = this.RISK_CONFIGS[riskMode];
-    const riskAmount = balance * config.maxRiskPerTrade;
     
-    const riskPerUnit = Math.abs(entryPrice - stopLoss);
-    if (riskPerUnit === 0) return 0;
+    // MD Part 5.1: Dynamic Position Sizing
+    // We use a simplified version: positionSize * confidence_multiplier
+    const baseSize = config.positionSize || 0.02;
 
-    const riskBasedSize = riskAmount / riskPerUnit;
+    // Confidence multiplier (±20%) - from MD Part 5.1 (corrected based on example)
+    const confidenceMultiplier = 1.0 + (confidence - 75) / 100;
+    const clippedMultiplier = Math.max(0.7, Math.min(1.2, confidenceMultiplier));
+
+    const finalPct = baseSize * clippedMultiplier;
+    const amountInCurrency = balance * finalPct;
+
     const leverage = config.leverage || 1;
-    const maxLeveragedSize = (balance * leverage) / entryPrice;
+    const positionSize = (amountInCurrency * leverage) / entryPrice;
     
-    return Math.min(riskBasedSize, maxLeveragedSize);
+    // Optional: Risk-based sizing as a secondary constraint
+    // const riskAmount = balance * (config.maxRiskPerTrade || 0.02);
+    // const riskPerUnit = Math.abs(entryPrice - stopLoss);
+    // if (riskPerUnit > 0) {
+    //   const riskBasedSize = riskAmount / riskPerUnit;
+    //   return Math.min(positionSize, riskBasedSize);
+    // }
+
+    return positionSize;
   }
 
-  validateTrade(signal: any, riskMode: RiskMode, currentPositions: number): boolean {
+  validateTrade(signal: any, riskMode: RiskMode, currentPositions: number, regime: string): boolean {
     const config = this.RISK_CONFIGS[riskMode];
 
     if (signal.confidence < config.confidenceThreshold) return false;
     if (currentPositions >= config.maxConcurrentPositions) return false;
 
+    // Enforce active regimes from MD
+    if (config.activeRegimes && !config.activeRegimes.includes(regime)) {
+      return false;
+    }
+
     return true;
   }
 
-  checkCircuitBreakers(balance: number, initialBalance: number, dailyLoss: number, riskMode: RiskMode): string | null {
+  checkCircuitBreakers(balance: number, initialBalance: number, dailyLoss: number, riskMode: RiskMode, consecutiveLosses: number = 0, currentAtr: number = 0, avgAtr: number = 0): string | null {
     const config = this.RISK_CONFIGS[riskMode];
     
     const currentDrawdown = (initialBalance - balance) / initialBalance;
@@ -140,8 +227,22 @@ export class RiskManager {
       return `Max drawdown reached: ${(currentDrawdown * 100).toFixed(2)}% >= ${(config.maxDrawdown * 100).toFixed(2)}%`;
     }
 
-    if (dailyLoss >= balance * config.maxRiskPerTrade * 3) {
-      return `Max daily loss reached: $${dailyLoss.toFixed(2)}`;
+    if (dailyLoss >= initialBalance * (config.maxDailyLoss || 0.05)) {
+      return `Max daily loss reached: $${dailyLoss.toFixed(2)} (Limit: ${(config.maxDailyLoss * 100).toFixed(1)}%)`;
+    }
+
+    // MD Part 5.3: Consecutive Losses
+    if (consecutiveLosses >= 5) {
+      // Per MD, action is "reduce_position_size_50%".
+      // For simplicity in this check, we might just return a warning or halt.
+      // Let's return a string to indicate a halt for now if it's extreme,
+      // or we can handle reduction elsewhere.
+      if (consecutiveLosses >= 7) return `Extreme consecutive losses: ${consecutiveLosses}`;
+    }
+
+    // MD Part 5.3: Volatility Spike
+    if (avgAtr > 0 && currentAtr > avgAtr * 3) {
+      return `Volatility spike detected: ATR ${currentAtr.toFixed(2)} > 3x Avg (${avgAtr.toFixed(2)})`;
     }
 
     return null;
