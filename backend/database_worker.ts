@@ -83,6 +83,26 @@ db.exec(`
     total_pnl_pct REAL NOT NULL DEFAULT 0
   );
 
+  CREATE TABLE IF NOT EXISTS market_data (
+    id TEXT PRIMARY KEY,
+    market_cap REAL,
+    total_volume REAL,
+    fear_greed_index INTEGER,
+    fear_greed_value TEXT,
+    btc_dominance REAL,
+    last_updated INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS market_news (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    url TEXT NOT NULL,
+    source TEXT,
+    timestamp INTEGER,
+    sentiment TEXT,
+    sentiment_score REAL
+  );
+
   INSERT OR IGNORE INTO balances (id, main_balance, bot_balance, active_trade_balance, total_pnl, total_pnl_pct)
   VALUES ('default', 100000, 0, 0, 0, 0);
 `);
