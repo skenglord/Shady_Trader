@@ -33,7 +33,7 @@ export class RegimeDetector {
     price_30d_max: 0.12
   };
 
-  async detect(df: any[], useAI: boolean = false, shadowPerformance: any = null) {
+  async detect(df: any[], useAI: boolean = false, shadowPerformance: any = null, marketContext: any = null) {
     const metrics = this._calculateMetrics(df);
     let { regime, confidence, reasoning } = this._classifyRegime(metrics);
 
@@ -48,29 +48,33 @@ export class RegimeDetector {
           const { GoogleGenAI } = await import('@google/genai');
           const ai = new GoogleGenAI({ apiKey });
           
-          // Mocking news for context as per MD 1.3
-          const marketContext = {
+          // Use provided market context or default to mock
+          const context = marketContext || {
             btc_dominance: "52%",
             fear_greed_index: 45,
-            major_news: "Market awaiting key economic data"
+            major_news: "Market awaiting key economic data",
+            all_news: ["Market awaiting key economic data"]
           };
 
-          const prompt = `You are analyzing trading system performance for regime validation.
-Current regime detected by algorithm: ${regime}
-System confidence: ${confidence}%
+          const prompt = `You are analyzing trading system performance and news sentiment for regime validation.
+Current regime detected by rule-based algorithm: ${regime}
+Rule-based confidence: ${confidence}%
 
 Technical Metrics: ${JSON.stringify(metrics)}
 Shadow Performance (7d): ${JSON.stringify(shadowPerformance)}
-Market Context: ${JSON.stringify(marketContext)}
+Market Context (News & Global): ${JSON.stringify(context)}
 
 Tasks:
-1. Validate if regime classification is correct
-2. Identify if external factors (news, macro) explain performance
-3. Recommend: [continue | reduce_risk | halt | switch]
+1. Validate if regime classification is correct based on technicals AND news sentiment.
+2. Analyze the sentiment of the provided news (all_news). Are they bullish, bearish, or neutral?
+3. Identify if external factors (news, macro) explain recent shadow performance.
+4. Recommend: [continue | reduce_risk | halt | switch]
 
 Output JSON only:
 {
   "regime_validation": "correct" | "misclassified",
+  "news_sentiment": "bullish" | "bearish" | "neutral",
+  "sentiment_score": number (-1.0 to 1.0),
   "performance_explanation": "string (1 sentence)",
   "external_factors": ["string"],
   "recommended_action": "continue" | "reduce_risk" | "halt" | "switch",
@@ -87,11 +91,17 @@ Output JSON only:
 
           if (response.text) {
             aiValidation = JSON.parse(response.text);
-            reasoning = `AI Analysis: ${aiValidation.performance_explanation} Recommendation: ${aiValidation.recommended_action}.`;
+            reasoning = `AI Analysis: ${aiValidation.performance_explanation} Sentiment: ${aiValidation.news_sentiment} (${aiValidation.sentiment_score}). Rec: ${aiValidation.recommended_action}.`;
 
-            // Per MD, AI should not override rule-based detection but can provide context.
-            // If misclassified and AI is very confident, we could potentially adjust,
-            // but the MD says "Should not override rule-based regime detection".
+            // Adjust confidence based on sentiment alignment
+            if (aiValidation.news_sentiment === 'bullish' && (regime === RegimeType.STRONG_BULL || regime === RegimeType.WEAK_BULL)) {
+              confidence = Math.min(100, confidence + 5);
+            } else if (aiValidation.news_sentiment === 'bearish' && regime === RegimeType.BEAR) {
+              confidence = Math.min(100, confidence + 5);
+            } else if (aiValidation.news_sentiment !== 'neutral') {
+              // Dissonance between technicals and news
+              confidence = Math.max(50, confidence - 10);
+            }
           }
         }
       } catch (e: any) {

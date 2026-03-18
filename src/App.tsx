@@ -94,6 +94,10 @@ export default function App() {
     totalPnl: 0,
     totalPnlPct: 0
   });
+  const [marketData, setMarketData] = useState<any>(null);
+  const [marketNews, setMarketNews] = useState<any[]>([]);
+  const [isRefreshingMarket, setIsRefreshingMarket] = useState(false);
+  const [isOptimizing, setIsOptimizing] = useState(false);
   const [showBalanceModal, setShowBalanceModal] = useState(false);
   const [balanceModalType, setBalanceModalType] = useState<'allocate' | 'withdraw'>('allocate');
   const [balanceAmount, setBalanceAmount] = useState('');
@@ -140,6 +144,8 @@ export default function App() {
     fetchRiskConfigs();
     fetchBalances();
     fetchOpenPositions();
+    fetchMarketData();
+    fetchMarketNews();
 
     // Setup WebSocket
     const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
@@ -796,6 +802,56 @@ export default function App() {
     }
   };
 
+  const fetchMarketData = async () => {
+    try {
+      const response = await fetch(`${APP_URL}/api/market/data`);
+      const data = await response.json();
+      setMarketData(data);
+    } catch (e) {
+      console.error('Failed to fetch market data:', e);
+    }
+  };
+
+  const fetchMarketNews = async () => {
+    try {
+      const response = await fetch(`${APP_URL}/api/market/news`);
+      const data = await response.json();
+      setMarketNews(data);
+    } catch (e) {
+      console.error('Failed to fetch market news:', e);
+    }
+  };
+
+  const refreshMarketData = async () => {
+    setIsRefreshingMarket(true);
+    try {
+      setLastCallTime(Date.now());
+      await fetch(`${APP_URL}/api/market/refresh`, { method: 'POST' });
+      await fetchMarketData();
+      await fetchMarketNews();
+    } catch (e) {
+      console.error('Failed to refresh market data:', e);
+    } finally {
+      setIsRefreshingMarket(false);
+    }
+  };
+
+  const runOptimization = async () => {
+    setIsOptimizing(true);
+    try {
+      setLastCallTime(Date.now());
+      const res = await fetch(`${APP_URL}/api/optimize`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        await fetchRiskConfigs();
+      }
+    } catch (e) {
+      console.error('Failed to run optimization:', e);
+    } finally {
+      setIsOptimizing(false);
+    }
+  };
+
   const fetchOpenPositions = async () => {
     try {
       setLastCallTime(Date.now());
@@ -1018,6 +1074,55 @@ export default function App() {
               className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
             >
               <Settings className="w-5 h-5 text-gray-400" />
+            </button>
+          </div>
+        </div>
+
+        {/* Market Overview Bar */}
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+          <div className="bg-[#1e1e1e] rounded-xl border border-white/5 p-3 flex flex-col justify-center">
+            <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">Market Cap</p>
+            <p className="text-sm font-mono text-white">
+              {marketData ? `$${(marketData.market_cap / 1e12).toFixed(2)}T` : '---'}
+            </p>
+          </div>
+          <div className="bg-[#1e1e1e] rounded-xl border border-white/5 p-3 flex flex-col justify-center">
+            <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">24h Volume</p>
+            <p className="text-sm font-mono text-white">
+              {marketData ? `$${(marketData.total_volume / 1e9).toFixed(2)}B` : '---'}
+            </p>
+          </div>
+          <div className="bg-[#1e1e1e] rounded-xl border border-white/5 p-3 flex flex-col justify-center">
+            <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider mb-1">BTC Dominance</p>
+            <p className="text-sm font-mono text-white">
+              {marketData ? `${marketData.btc_dominance.toFixed(1)}%` : '---'}
+            </p>
+          </div>
+          <div className="bg-[#1e1e1e] rounded-xl border border-white/5 p-3 flex flex-col justify-center">
+            <div className="flex justify-between items-center mb-1">
+              <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider">Fear & Greed</p>
+              {marketData && (
+                <span className={`text-[8px] font-bold px-1 rounded ${
+                  marketData.fear_greed_index > 70 ? 'bg-emerald-500/20 text-emerald-400' :
+                  marketData.fear_greed_index < 30 ? 'bg-red-500/20 text-red-400' :
+                  'bg-amber-500/20 text-amber-400'
+                }`}>
+                  {marketData.fear_greed_value}
+                </span>
+              )}
+            </div>
+            <p className="text-sm font-mono text-white">
+              {marketData ? marketData.fear_greed_index : '---'}
+            </p>
+          </div>
+          <div className="col-span-2 md:col-span-4 lg:col-span-1 flex items-center gap-2">
+            <button
+              onClick={refreshMarketData}
+              disabled={isRefreshingMarket}
+              className="flex-1 h-full bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 py-3 lg:py-0"
+            >
+              <Activity className={`w-4 h-4 ${isRefreshingMarket ? 'animate-spin' : ''}`} />
+              {isRefreshingMarket ? 'Refreshing...' : 'Refresh Market Data'}
             </button>
           </div>
         </div>

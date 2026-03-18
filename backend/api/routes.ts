@@ -107,6 +107,47 @@ apiRouter.get('/candles', async (req, res) => {
   }
 });
 
+apiRouter.get('/market/data', async (req, res) => {
+  const engine = getTradingEngine();
+  if (engine) {
+    const data = await engine.marketDataService.getLatestMarketData();
+    res.json(data);
+  } else {
+    res.status(500).json({ error: 'Engine not initialized' });
+  }
+});
+
+apiRouter.get('/market/news', async (req, res) => {
+  const engine = getTradingEngine();
+  if (engine) {
+    const news = await engine.marketDataService.getLatestNews();
+    res.json(news);
+  } else {
+    res.status(500).json({ error: 'Engine not initialized' });
+  }
+});
+
+apiRouter.post('/market/refresh', async (req, res) => {
+  const engine = getTradingEngine();
+  if (engine) {
+    await engine.marketDataService.fetchMarketData();
+    await engine.marketDataService.fetchNews();
+    res.json({ success: true });
+  } else {
+    res.status(500).json({ error: 'Engine not initialized' });
+  }
+});
+
+apiRouter.post('/optimize', async (req, res) => {
+  const engine = getTradingEngine();
+  if (engine) {
+    await engine.optimizationEngine.optimize(engine.currentRegime);
+    res.json({ success: true });
+  } else {
+    res.status(500).json({ error: 'Engine not initialized' });
+  }
+});
+
 apiRouter.get('/performance', (req, res) => {
   const engine = getTradingEngine();
   if (engine) {

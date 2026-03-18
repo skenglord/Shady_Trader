@@ -6,6 +6,8 @@ import { SignalGenerator } from './strategy/signal_generator.js';
 import { ShadowTrader } from './shadow/shadow_trader.js';
 import { BalanceManager } from './balance/manager.js';
 import { runQuery } from './database.js';
+import { MarketDataService } from './api/marketDataService.js';
+import { OptimizationEngine } from './strategy/optimization_engine.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -17,6 +19,8 @@ export class TradingEngine {
   signalGenerator: SignalGenerator;
   shadowTrader: ShadowTrader;
   balanceManager: BalanceManager;
+  marketDataService: MarketDataService;
+  optimizationEngine: OptimizationEngine;
   wss: WebSocketServer;
   db: any; // Keep for now if used elsewhere, but remove from constructor
   currentRegime: RegimeType = RegimeType.UNCERTAIN;
@@ -41,11 +45,28 @@ export class TradingEngine {
     this.signalGenerator = new SignalGenerator();
     this.shadowTrader = new ShadowTrader();
     this.balanceManager = new BalanceManager();
+    this.marketDataService = new MarketDataService();
+    this.optimizationEngine = new OptimizationEngine(this.shadowTrader.riskManager);
 
     // Setup DB backup cron (every hour)
     setInterval(() => {
       this.backupDatabase();
     }, 60 * 60 * 1000);
+
+    // Setup market data polling (every hour)
+    setInterval(() => {
+      this.marketDataService.fetchMarketData().catch(console.error);
+      this.marketDataService.fetchNews().catch(console.error);
+    }, 60 * 60 * 1000);
+
+    // Initial fetch
+    this.marketDataService.fetchMarketData().catch(console.error);
+    this.marketDataService.fetchNews().catch(console.error);
+
+    // Setup auto-optimization (every 15 minutes)
+    setInterval(() => {
+      this.optimizationEngine.optimize(this.currentRegime).catch(console.error);
+    }, 15 * 60 * 1000);
   }
 
   async init() {
@@ -249,7 +270,19 @@ export class TradingEngine {
     } else {
       // Fetch recent shadow performance for AI context (MD 1.3)
       const shadowPerformance = await this.shadowTrader.getPerformance();
-      regimeResult = await this.regimeDetector.detect(df, this.aiSentimentAnalysis, shadowPerformance);
+
+      // Fetch latest market data and news for AI context
+      const marketData = await this.marketDataService.getLatestMarketData();
+      const marketNews = await this.marketDataService.getLatestNews(10);
+
+      const marketContext = {
+        btc_dominance: marketData?.btc_dominance ? `${marketData.btc_dominance.toFixed(1)}%` : "N/A",
+        fear_greed_index: marketData?.fear_greed_index || "N/A",
+        major_news: marketNews.length > 0 ? marketNews[0].title : "No recent major news",
+        all_news: marketNews.map(n => n.title)
+      };
+
+      regimeResult = await this.regimeDetector.detect(df, this.aiSentimentAnalysis, shadowPerformance, marketContext);
     }
     
     if (this.manualRegime || this.regimeDetector.shouldUpdateRegime(this.currentRegime, regimeResult.regime, regimeResult.confidence)) {
