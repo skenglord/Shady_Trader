@@ -43,14 +43,16 @@ graph TD
 The project has a fully functional backend engine capable of shadow trading across 6 risk modes. The UI features a modernized wallet dashboard and granular position management.
 
 ### Recently Completed Tasks
-- [x] Modernized Wallet UI with equity visualization.
-- [x] Implemented leverage adjustment for open positions.
-- [x] Refined `shotgun` and `chasing_dragons` strategies.
-- [x] Added hourly Market Data service (Fear/Greed, News, Market Cap).
-- [x] Integrated per-mode fund return toggle (Main vs. Bot).
-- [x] Implemented automatic historical data loading from root HTML.
+- [x] Aligned trading logic with `build_logic.md` v2.0 specifications.
+- [x] Implemented weighted scoring system for regime-specific strategies.
+- [x] Added advanced features: Multi-candle holds, Runner positions, Trailing stops.
+- [x] Updated Risk Manager with MD-compliant leverage and position sizing.
+- [x] Enhanced AI Regime Analysis with shadow performance context.
+- [x] Implemented comprehensive circuit breakers (consecutive losses, volatility spikes).
 
 ### TODO List
+- [ ] Implement Auto-Optimization Engine (ML quarterly indicator weight adjustments).
+- [ ] Add Risk Mode Performance Comparison Dashboard (Shadow metrics visualization).
 - [ ] Implement real-time news sentiment weight in `RegimeDetector`.
 - [ ] Add more granular backtest reporting (Sharpe Ratio, Max Drawdown duration).
 - [ ] Support custom indicator parameters via UI.
