@@ -1,3 +1,6 @@
+import 'dotenv/config'; // Add this as line 1
+import express from "express";
+import { createServer as createViteServer } from "vite";
 import express from "express";
 import { createServer as createViteServer } from "vite";
 import { createServer } from "http";
