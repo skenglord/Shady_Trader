@@ -6,14 +6,14 @@ This document outlines the granular logic governing trade initiation, risk manag
 
 The system maintains 6 "Shadow Portfolios", each with its own risk parameters.
 
-| Mode | Max Risk/Trade | Max Drawdown | Max Positions | Leverage | Return funds to... |
+| Mode | Pos Size | Max Drawdown | Max Positions | Leverage | Active Regimes |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Ultra Conservative** | 0.5% | 5% | 1 | 1x | Bot Balance |
-| **Conservative** | 1.0% | 8% | 2 | 2x | Bot Balance |
-| **Moderate** | 2.0% | 12% | 3 | 5x | Bot Balance |
-| **Aggressive** | 5.0% | 18% | 5 | 20x | Bot Balance |
-| **Degen** | 10.0% | 30% | 10 | 100x | Bot Balance |
-| **AI Enhanced** | 2.0% | 12% | 3 | 5x | Bot Balance |
+| **Ultra Conservative** | 2% | 7% | 1 | 1x | Strong/Weak Bull |
+| **Conservative** | 3% | 11% | 2 | 1x | Bull/Sideways |
+| **Moderate** | 5% | 15% | 3 | 1.5x | Bull/Sideways |
+| **Aggressive** | 8% | 22% | 4 | 2x | All Regimes |
+| **Degen** | 15% | 35% | 5 | 3x | All Regimes |
+| **AI Enhanced** | 5% | 15% | 3 | 1.5x | Bull/Sideways (Mandatory AI) |
 
 > **Note**: Users can toggle "Return funds to Main Balance" per mode to harvest profits or protect capital.
 
@@ -21,12 +21,12 @@ The system maintains 6 "Shadow Portfolios", each with its own risk parameters.
 
 ## 2. Trading Strategies
 
-### A. Regime-Based (Standard)
-Dynamically adapts based on the detected market regime (`RegimeDetector`).
-- **Strong Bull**: Buys dips when price bounces off EMA 21 and RSI > 50.
-- **Weak Bull**: Mean reversion buys near lower Bollinger Band when RSI is oversold (< 40).
-- **Bear**: Shorts rallies at upper Bollinger Band when RSI is overbought (> 60).
-- **Sideways**: Range-bound trading; buys support (Lower BB), sells resistance (Upper BB).
+### A. Regime-Based (Standard) - Weighted Scoring
+Dynamically adapts using a weighted indicator confluence system.
+- **Strong Bull**: Trend following. Weights: EMA Trend (45%), RSI Momentum (20%), Volume Surge (20%), Stoch RSI (15%). Score >= 60 to enter.
+- **Weak Bull**: Hybrid approach. Weights: Mean Reversion (60%) or Momentum Breakout (40%) + Volume confirmation (15%). 30% penalty if price < VWAP.
+- **Bear**: Shorting rallies. Weights: EMA Downtrend (30%), Resistance Rejection (50%), MACD Confirmation (15%). *Restricted to Aggressive/Degen modes.*
+- **Sideways**: Range extremes. Weights: Bollinger Bands (30%), RSI (25%), Stoch (20%). Penalized if volume is spiking.
 
 ### B. Shotgun (High Frequency)
 Designed for capturing quick momentum bursts.
@@ -61,13 +61,14 @@ The system calculates indicators using a 50-candle warmup period:
 ## 4. Execution Logic
 
 ### Entry
-1. **Signal Generation**: Technical indicators meet strategy criteria.
-2. **AI Confirmation (Optional)**: Gemini analyzes context (20 candles + news + stats). If "confirmed" is false, entry is aborted.
-3. **Risk Check**: Validates if `maxConcurrentPositions` or `maxDrawdown` has been reached.
-4. **Sizing**: Position size calculated based on `maxRiskPerTrade` vs. Distance to Stop Loss.
+1. **Weighted Signal Scoring**: Sums indicators based on regime weights. Minimum score required for entry.
+2. **AI Validation Layer**: (Optional/Toggleable) Gemini validates regime classification and signal context using news and shadow performance.
+3. **Regime Enforcement**: Modes like Ultra-Conservative stay in cash during Bear/Sideways markets.
+4. **Dynamic Sizing**: Position size = `baseSize * confidenceMultiplier (0.7 to 1.2)`.
 
-### Exit
-1. **Take Profit / Stop Loss**: Constantly monitored every cycle.
-2. **Trailing Stop**: For Buy trades, if profit > 1%, the Stop Loss trails at 1% below current price.
-3. **Liquidation**: Monitored based on leverage and a 0.5% maintenance margin.
-4. **Kill Bot**: Manual override that closes all positions and returns funds to Main Balance.
+### Exit & Trade Management
+1. **Multi-Candle Holds**: (Moderate+) Trades can extend across candles if in profit > 0.5% and trend holds.
+2. **Trailing Stop**: Dynamic 0.4% trail behind the highest price achieved (starts after 0.5% profit).
+3. **Runner Positions**: (Aggressive+) At 1.5% profit, 60% of position is closed; remaining 40% runs with wider trailing stops.
+4. **Early Exit**: (Conservative+) Exit immediately if fixed target (e.g., 0.8%) is hit before candle close.
+5. **Circuit Breakers**: Halts trading on max drawdown, max daily loss (3-15%), consecutive losses (>= 5), or 3x volatility spikes.
