@@ -6,7 +6,13 @@ let messageId = 0;
 const pendingRequests = new Map<number, { resolve: Function; reject: Function }>();
 
 export function initDatabase() {
-  worker = new Worker(path.join(process.cwd(), 'backend/database_worker.js'));
+  const isTsx = true; // Assume tsx for development
+  const workerPath = path.join(process.cwd(), 'backend', isTsx ? 'database_worker.ts' : 'database_worker.js');
+
+  worker = new Worker(workerPath, {
+    execArgv: isTsx ? ['--import', 'tsx'] : []
+  });
+
   worker.on('message', (message) => {
     const { id, result, error } = message;
     const request = pendingRequests.get(id);

@@ -61,8 +61,6 @@ export async function seedDatabase() {
     }
   }
   // Seed candles
-  const symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'];
-  const now = Date.now();
   const msPerCandle = 60000; // 1m
 
   for (const symbol of symbols) {
