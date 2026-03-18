@@ -49,9 +49,9 @@ export class TradingEngine {
     this.optimizationEngine = new OptimizationEngine(this.shadowTrader.riskManager);
 
     // Setup DB backup cron (every hour)
-    setInterval(() => {
-      this.backupDatabase();
-    }, 60 * 60 * 1000);
+    // setInterval(() => {
+    //   this.backupDatabase();
+    // }, 60 * 60 * 1000);
 
     // Setup market data polling (every hour)
     setInterval(() => {
@@ -70,6 +70,17 @@ export class TradingEngine {
   }
 
   async init() {
+    // Wait for database initialization
+    let retry = 0;
+    while (retry < 5) {
+      try {
+        await runQuery('SELECT 1');
+        break;
+      } catch (e) {
+        retry++;
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+    }
     await this.loadSettings();
   }
 
@@ -207,12 +218,11 @@ export class TradingEngine {
           }
         }
 
-        const stmt = this.db.prepare(`
+        await runQuery(`
           UPDATE shadow_trades
           SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
           WHERE id = ?
-        `);
-        stmt.run(pnl, exitPrice, Date.now(), trade.id);
+        `, [pnl, exitPrice, Date.now(), trade.id]);
       }
       portfolio.openTrades = [];
     }
@@ -289,11 +299,10 @@ export class TradingEngine {
       this.currentRegime = regimeResult.regime;
       
       // Save regime history
-      const stmt = this.db.prepare(`
+      await runQuery(`
         INSERT INTO regime_history (timestamp, regime, confidence, reasoning)
         VALUES (?, ?, ?, ?)
-      `);
-      stmt.run(Date.now(), this.currentRegime, regimeResult.confidence, regimeResult.reasoning);
+      `, [Date.now(), this.currentRegime, regimeResult.confidence, regimeResult.reasoning]);
 
       this.broadcast({ type: 'regime', data: regimeResult });
 
@@ -323,8 +332,7 @@ export class TradingEngine {
               const validModes = ["ultra_conservative", "conservative", "moderate", "aggressive", "degen"];
               if (validModes.includes(newMode)) {
                 this.activeMode = newMode;
-                const stmt = this.db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
-                stmt.run('activeMode', newMode);
+                await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
                 this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
                 console.log(`AI switched strategy to ${newMode}`);
               }
@@ -345,8 +353,7 @@ export class TradingEngine {
             newMode = 'conservative';
           }
           this.activeMode = newMode;
-          const stmt = this.db.prepare(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`);
-          stmt.run('activeMode', newMode);
+          await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
           this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
         }
       }

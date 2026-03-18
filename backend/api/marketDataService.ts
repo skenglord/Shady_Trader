@@ -71,12 +71,17 @@ export class MarketDataService {
         newsItems = fallbackRes.data.Data || [];
       }
 
+      if (!Array.isArray(newsItems)) {
+        console.warn('News items is not an array:', newsItems);
+        return [];
+      }
+
       const news: MarketNews[] = newsItems.map((item: any) => ({
-        id: item.id || item.guid || Math.random().toString(36).substr(2, 9),
-        title: item.title,
-        url: item.url,
+        id: String(item.id || item.guid || Math.random().toString(36).substr(2, 9)),
+        title: item.title || 'No Title',
+        url: item.url || '#',
         source: item.source_info?.name || item.author || 'CryptoNews',
-        timestamp: (item.published_on || new Date(item.updated_at).getTime() / 1000) * 1000
+        timestamp: (item.published_on || (item.updated_at ? new Date(item.updated_at).getTime() / 1000 : Date.now() / 1000)) * 1000
       }));
 
       await this.saveNews(news);
