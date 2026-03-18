@@ -33,33 +33,49 @@ export class RegimeDetector {
     price_30d_max: 0.12
   };
 
-  async detect(df: any[], useAI: boolean = false) {
+  async detect(df: any[], useAI: boolean = false, shadowPerformance: any = null) {
     const metrics = this._calculateMetrics(df);
     let { regime, confidence, reasoning } = this._classifyRegime(metrics);
+
+    let aiValidation = null;
 
     if (useAI && RegimeDetector.aiEnabled) {
       try {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
-          console.warn("AI Sentiment Analysis skipped: GEMINI_API_KEY is not set.");
+          console.warn("AI Regime Analysis skipped: GEMINI_API_KEY is not set.");
         } else {
           const { GoogleGenAI } = await import('@google/genai');
           const ai = new GoogleGenAI({ apiKey });
           
-          // Fetch some basic crypto news for sentiment (mocking the fetch for reliability in preview)
-          // In a real app, you'd fetch from CryptoPanic or similar
-          const recentNews = [
-            "Bitcoin shows resilience despite macro headwinds",
-            "Institutional adoption of crypto continues to grow",
-            "Regulatory clarity improves in major markets"
-          ].join('. ');
+          // Mocking news for context as per MD 1.3
+          const marketContext = {
+            btc_dominance: "52%",
+            fear_greed_index: 45,
+            major_news: "Market awaiting key economic data"
+          };
 
-          const prompt = `You are a quantitative analyst. Based on these technical metrics: ${JSON.stringify(metrics)}
-          and the current news sentiment: "${recentNews}",
-          The base algorithm classified the regime as ${regime} with ${confidence}% confidence.
-          Do you agree? If the sentiment strongly contradicts the technicals, you can adjust the regime or confidence.
-          Return a JSON object with:
-          { "regime": "strong_bull" | "weak_bull" | "bear" | "sideways" | "uncertain", "confidence": number, "reasoning": "string" }`;
+          const prompt = `You are analyzing trading system performance for regime validation.
+Current regime detected by algorithm: ${regime}
+System confidence: ${confidence}%
+
+Technical Metrics: ${JSON.stringify(metrics)}
+Shadow Performance (7d): ${JSON.stringify(shadowPerformance)}
+Market Context: ${JSON.stringify(marketContext)}
+
+Tasks:
+1. Validate if regime classification is correct
+2. Identify if external factors (news, macro) explain performance
+3. Recommend: [continue | reduce_risk | halt | switch]
+
+Output JSON only:
+{
+  "regime_validation": "correct" | "misclassified",
+  "performance_explanation": "string (1 sentence)",
+  "external_factors": ["string"],
+  "recommended_action": "continue" | "reduce_risk" | "halt" | "switch",
+  "confidence": number (0-100)
+}`;
 
           const response = await ai.models.generateContent({
             model: "gemini-3-flash-preview",
@@ -70,20 +86,20 @@ export class RegimeDetector {
           });
 
           if (response.text) {
-            const aiResult = JSON.parse(response.text);
-            if (aiResult.regime && aiResult.confidence) {
-              regime = aiResult.regime;
-              confidence = aiResult.confidence;
-              reasoning = `AI Adjusted: ${aiResult.reasoning}`;
-            }
+            aiValidation = JSON.parse(response.text);
+            reasoning = `AI Analysis: ${aiValidation.performance_explanation} Recommendation: ${aiValidation.recommended_action}.`;
+
+            // Per MD, AI should not override rule-based detection but can provide context.
+            // If misclassified and AI is very confident, we could potentially adjust,
+            // but the MD says "Should not override rule-based regime detection".
           }
         }
       } catch (e: any) {
         if (e.message && e.message.includes("API_KEY_INVALID")) {
-          console.error("AI Sentiment Analysis failed: Invalid API Key. Disabling AI features.");
+          console.error("AI Regime Analysis failed: Invalid API Key. Disabling AI features.");
           RegimeDetector.aiEnabled = false;
         } else {
-          console.error("AI Sentiment Analysis failed:", e);
+          console.error("AI Regime Analysis failed:", e);
         }
       }
     }
@@ -93,6 +109,7 @@ export class RegimeDetector {
       confidence,
       metrics,
       reasoning,
+      aiValidation,
       timestamp: df[df.length - 1]?.time || null
     };
   }
@@ -106,9 +123,15 @@ export class RegimeDetector {
 
     const lastRow = df[df.length - 1];
     const adx = lastRow.adx;
-    const volume_ratio = lastRow.volume_ratio;
+
+    const last30d = df.slice(-periods_30d);
+    const avg_volume_30d = last30d.reduce((sum, row) => sum + (row.volume || 0), 0) / last30d.length;
 
     const last7d = df.slice(-periods_7d);
+    const avg_volume_7d = last7d.reduce((sum, row) => sum + (row.volume || 0), 0) / last7d.length;
+
+    const volume_ratio = avg_volume_30d > 0 ? avg_volume_7d / avg_volume_30d : 1;
+
     const rsi_avg_7d = last7d.reduce((sum, row) => sum + (row.rsi_14 || 0), 0) / last7d.length;
 
     return {
@@ -133,11 +156,13 @@ export class RegimeDetector {
   _classifyRegime(metrics: any) {
     const { adx, price_change_30d, price_change_7d, volume_ratio, rsi_avg_7d } = metrics;
 
+    // console.log(`[RegimeDetector] Classifying: adx=${adx}, price30d=${price_change_30d}, price7d=${price_change_7d}, vol=${volume_ratio}`);
+
     if (
       adx > this.STRONG_BULL_THRESHOLDS.adx_min &&
       price_change_30d > this.STRONG_BULL_THRESHOLDS.price_30d_min &&
-      price_change_7d > this.STRONG_BULL_THRESHOLDS.price_7d_min &&
-      volume_ratio > this.STRONG_BULL_THRESHOLDS.volume_ratio_min
+      price_change_7d >= this.STRONG_BULL_THRESHOLDS.price_7d_min &&
+      volume_ratio >= this.STRONG_BULL_THRESHOLDS.volume_ratio_min
     ) {
       return {
         regime: RegimeType.STRONG_BULL,

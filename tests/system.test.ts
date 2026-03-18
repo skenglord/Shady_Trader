@@ -18,12 +18,22 @@ setMockRunQuery(async (sql, params) => {
 describe('Trading System Tests', () => {
   test('RegimeDetector should classify strong bull regime correctly', async () => {
     const detector = new RegimeDetector();
-    const mockDf = Array(100).fill(0).map((_, i) => ({
-      close: 100 + i, // Price goes up
-      adx: 35,
-      volume_ratio: 1.5,
-      rsi_14: 60
-    }));
+    // Need at least 2880 for 30d metrics calculation in detector
+    // Price change 30d must be > 12%
+    // Price change 7d must be > 3%
+    // Volume ratio must be > 1.3
+    const mockDf = Array(3000).fill(0).map((_, i) => {
+      let close = 100;
+      if (i > 2300) close = 120; // Price jump 7d ago
+      if (i > 2900) close = 130; // Price jump now
+
+      return {
+        close: close,
+        adx: 35,
+        volume: i > 2328 ? 150 : 100, // Volume surge in last 7d
+        rsi_14: 60
+      };
+    });
     
     const result = await detector.detect(mockDf);
     assert.strictEqual(result.regime, RegimeType.STRONG_BULL);
@@ -46,50 +56,45 @@ describe('Trading System Tests', () => {
 
   test('SignalGenerator should generate buy signal in strong bull regime', async () => {
     const generator = new SignalGenerator();
-    const mockDf = Array(50).fill(0).map((_, i) => ({
-      close: 100 + i,
-      low: 99 + i,
-      ema_21: 100 + i,
-      ema_50: 95 + i,
-      rsi_14: 55
+    const mockDf = Array(100).fill(0).map((_, i) => ({
+      close: 150,
+      ema_9: 145,
+      ema_21: 140,
+      rsi_14: 60,
+      volume_ratio: 1.5,
+      stoch_rsi_k: 25
     }));
-    
-    // Make the last candle bounce off EMA 21
-    mockDf[48].low = 147; // prev low <= prev ema_21 (148)
-    mockDf[49].close = 150; // last close > last ema_21 (149)
     
     const signal = await generator.generateSignal(mockDf, RegimeType.STRONG_BULL, 'BTC/USDT');
     assert.ok(signal);
     assert.strictEqual(signal?.side, 'buy');
     assert.strictEqual(signal?.symbol, 'BTC/USDT');
+    assert.ok(signal?.confidence >= 60);
   });
 
-  test('RiskManager should calculate position size with leverage correctly', () => {
+  test('RiskManager should calculate position size correctly', () => {
     const manager = new RiskManager();
-    // Override config for test
+    // Default Moderate has positionSize 0.05 (5%) and leverage 1.5
     manager.RISK_CONFIGS[RiskMode.MODERATE] = {
-      maxRiskPerTrade: 0.02, // 2%
-      leverage: 10
+      positionSize: 0.05,
+      leverage: 2.0
     };
     
     const balance = 10000;
     const entryPrice = 100;
-    const stopLoss = 90; // Risk per unit = 10
     
-    // Risk amount = 10000 * 0.02 = 200
-    // Risk based size = 200 / 10 = 20 units
-    // Max leveraged size = (10000 * 10) / 100 = 1000 units
-    // Should return min(20, 1000) = 20
-    const size = manager.calculatePositionSize(balance, entryPrice, stopLoss, RiskMode.MODERATE);
-    assert.strictEqual(size, 20);
+    // With 75% confidence (multiplier 1.0)
+    // 10000 * 0.05 = 500 capital
+    // 500 * 2.0 (leverage) = 1000 total position value
+    // 1000 / 100 (price) = 10 units
+    const size = manager.calculatePositionSize(balance, entryPrice, 90, RiskMode.MODERATE, 75);
+    assert.ok(Math.abs(size - 10) < 0.0001);
     
-    // Test leverage constraint
-    const tightStopLoss = 99.9; // Risk per unit = 0.1
-    // Risk based size = 200 / 0.1 = 2000 units
-    // Max leveraged size = 1000 units
-    // Should return min(2000, 1000) = 1000
-    const sizeLeveraged = manager.calculatePositionSize(balance, entryPrice, tightStopLoss, RiskMode.MODERATE);
-    assert.strictEqual(sizeLeveraged, 1000);
+    // With 85% confidence (multiplier 1.1)
+    // 1.0 + (85 - 75) / 100 = 1.1
+    // 10000 * (0.05 * 1.1) * 2.0 / 100 = 11 units
+    const sizeHighConf = manager.calculatePositionSize(balance, entryPrice, 90, RiskMode.MODERATE, 85);
+    assert.ok(Math.abs(sizeHighConf - 11) < 0.0001);
   });
 
   test('ShadowTrader reset should clear trades and set balance to 100,000', async () => {
@@ -116,6 +121,8 @@ describe('Trading System Tests', () => {
   test('ShadowTrader updatePositions should apply trailing stops', async () => {
     const trader = new ShadowTrader();
     const mode = RiskMode.MODERATE;
+    // Moderate has multiCandleHoldEnabled: true, earlyExitEnabled: true
+    trader.riskManager.RISK_CONFIGS[mode].earlyExitEnabled = false; // Disable for this test
     trader.portfolios[mode].balance = 10000;
     
     // Mock a buy trade
@@ -129,18 +136,17 @@ describe('Trading System Tests', () => {
       timestamp: Date.now(),
       risk_mode: mode,
       stopLoss: 90,
-      takeProfit: 120,
+      takeProfit: 150,
       leverage: 1
     };
     trader.portfolios[mode].openTrades = [trade];
     
-    // Price goes up by 2%
+    // Price goes up to 102 (2% profit)
+    // Moderate trail is 0.4%: 102 * (1 - 0.004) = 102 * 0.996 = 101.592
     await trader.updatePositions(102, mode, null, null);
     
-    // Trailing stop should be 102 * 0.99 = 100.98
-    // Which is > 90, so it should update
     assert.strictEqual(trader.portfolios[mode].openTrades.length, 1);
-    assert.strictEqual(trader.portfolios[mode].openTrades[0].stopLoss, 100.98);
+    assert.strictEqual(trader.portfolios[mode].openTrades[0].stopLoss, 101.592);
   });
 
   test('ShadowTrader updatePositions should trigger liquidation', async () => {
