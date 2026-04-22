@@ -43,6 +43,7 @@ graph TD
 The project has a fully functional backend engine capable of shadow trading across 6 risk modes. The UI features a modernized wallet dashboard and granular position management.
 
 ### Recently Completed Tasks
+- [x] Implemented repository maintenance standards with a `.gitignore` to exclude local databases (`*.db`), logs (`*.log`), environment files (`.env`), and backup directories.
 - [x] Aligned trading logic with `build_logic.md` v2.0 specifications.
 - [x] Implemented weighted scoring system for regime-specific strategies.
 - [x] Added advanced features: Multi-candle holds, Runner positions, Trailing stops.
