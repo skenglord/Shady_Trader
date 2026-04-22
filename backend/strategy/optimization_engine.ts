@@ -2,12 +2,29 @@ import { runQuery } from '../database.js';
 import { RiskMode, RiskManager } from '../risk/manager.js';
 import { GoogleGenAI, Type } from '@google/genai';
 
+type QueryFn = (query: string, params?: any[], mode?: 'all' | 'get' | 'run') => Promise<any>;
+type AiClientFactory = (apiKey: string) => {
+  models: {
+    generateContent: (input: any) => Promise<{ text?: string | null }>;
+  };
+};
+
 export class OptimizationEngine {
   private riskManager: RiskManager;
   private isOptimizing: boolean = false;
+  private queryFn: QueryFn;
+  private aiClientFactory: AiClientFactory;
 
-  constructor(riskManager: RiskManager) {
+  constructor(
+    riskManager: RiskManager,
+    deps: {
+      queryFn?: QueryFn;
+      aiClientFactory?: AiClientFactory;
+    } = {}
+  ) {
     this.riskManager = riskManager;
+    this.queryFn = deps.queryFn || runQuery;
+    this.aiClientFactory = deps.aiClientFactory || ((apiKey: string) => new GoogleGenAI({ apiKey }) as any);
   }
 
   async optimize(regime: string) {
@@ -24,14 +41,14 @@ export class OptimizationEngine {
 
       // 1. Fetch recent trade performance (last 7 days)
       const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
-      const recentTrades = await runQuery(`
+      const recentTrades = await this.queryFn(`
         SELECT * FROM shadow_trades
         WHERE timestamp > ? AND status = 'closed'
         ORDER BY timestamp DESC
       `, [sevenDaysAgo], 'all');
 
       // 2. Fetch daily performance metrics
-      const performanceMetrics = await runQuery(`
+      const performanceMetrics = await this.queryFn(`
         SELECT * FROM daily_performance
         ORDER BY date DESC LIMIT 30
       `, [], 'all');
@@ -39,7 +56,7 @@ export class OptimizationEngine {
       const currentConfigs = this.riskManager.RISK_CONFIGS;
 
       // 3. Use Gemini to analyze performance and recommend adjustments
-      const ai = new GoogleGenAI({ apiKey });
+      const ai = this.aiClientFactory(apiKey);
       const prompt = `You are an expert quantitative trading systems optimizer.
 Current Market Regime: ${regime}
 Recent Trades (last 7 days): ${JSON.stringify(recentTrades.slice(0, 50))}
@@ -72,7 +89,13 @@ Return the updated configurations for ALL modes in JSON format.`;
       });
 
       if (response.text) {
-        const recommendations = JSON.parse(response.text);
+        let recommendations: any = null;
+        try {
+          recommendations = JSON.parse(response.text);
+        } catch (e) {
+          console.error("Auto-optimization returned invalid JSON:", response.text);
+          return;
+        }
         const newConfigs = JSON.parse(JSON.stringify(currentConfigs));
 
         for (const mode of Object.keys(recommendations)) {

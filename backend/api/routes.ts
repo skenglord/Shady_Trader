@@ -1,18 +1,207 @@
 import { Router } from 'express';
 import { runQuery } from '../database.js';
-import { getTradingEngine } from '../main.js';
+import { getTradingEngine, getStartupDiagnostics } from '../main.js';
 import { RiskMode, DEFAULT_RISK_CONFIGS } from '../risk/manager.js';
+import { RegimeType } from '../regime/detector.js';
 import multer from 'multer';
 import { parse } from 'csv-parse';
 import fs from 'fs';
+import { z } from 'zod';
+import { getRequestId, logger } from '../logging/logger.js';
+import { getApiMetricsSnapshot, recordApiRequest, toPrometheusMetrics } from '../observability/requestMetrics.js';
 
 const upload = multer({ dest: 'uploads/' });
 export const apiRouter = Router();
+type Role = 'trader' | 'admin';
+
+const TIMEFRAME_ALLOWLIST = new Set(['1m', '5m', '15m', '1h', '1d']);
+const MUTABLE_SETTINGS_BLOCKLIST = new Set(['apiKey', 'apiSecret', 'apiPassword', 'exchange', 'apiProviders']);
+const riskModes = new Set(Object.values(RiskMode));
+const regimeModes = new Set(Object.values(RegimeType));
+const roleRank: Record<Role, number> = { trader: 1, admin: 2 };
+
+function getAuthTokens() {
+  const adminToken = process.env.API_ADMIN_TOKEN || process.env.API_AUTH_TOKEN || '';
+  const traderToken = process.env.API_TRADER_TOKEN || '';
+  return { adminToken, traderToken };
+}
+
+function getProvidedToken(req: any) {
+  const bearerToken = req.headers.authorization?.startsWith('Bearer ')
+    ? req.headers.authorization.slice(7)
+    : null;
+  const headerToken = req.headers['x-api-token'];
+  return bearerToken || headerToken || '';
+}
+
+function resolveRoleFromToken(token: string): Role | null {
+  if (!token) return null;
+  const { adminToken, traderToken } = getAuthTokens();
+  if (adminToken && token === adminToken) return 'admin';
+  if (traderToken && token === traderToken) return 'trader';
+  return null;
+}
+
+function requireRole(requiredRole: Role) {
+  return (req: any, res: any, next: any) => {
+    const { adminToken, traderToken } = getAuthTokens();
+    const isAuthConfigured = Boolean(adminToken || traderToken);
+    if (!isAuthConfigured) {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(503).json({ error: 'API authentication is not configured' });
+      }
+      return next();
+    }
+
+    const providedToken = getProvidedToken(req);
+    const callerRole = resolveRoleFromToken(providedToken);
+    if (!callerRole) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    if (roleRank[callerRole] < roleRank[requiredRole]) {
+      return res.status(403).json({ error: 'Forbidden' });
+    }
+    next();
+  };
+}
+
+function validateBody(schema: z.ZodTypeAny) {
+  return (req: any, res: any, next: any) => {
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      logger.warn('Payload validation failed', {
+        requestId: req.requestId,
+        route: req.originalUrl || req.url,
+        method: req.method,
+        issue: parsed.error.issues[0]?.message
+      });
+      return res.status(400).json({
+        error: parsed.error.issues[0]?.message || 'Invalid request payload'
+      });
+    }
+    req.body = parsed.data;
+    next();
+  };
+}
 
 apiRouter.use((req, res, next) => {
-  console.log('apiRouter hit:', req.url);
+  const start = process.hrtime.bigint();
+  req.requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  res.setHeader('x-request-id', req.requestId);
+  logger.info('API request received', {
+    requestId: req.requestId,
+    route: req.originalUrl || req.url,
+    method: req.method
+  });
+  res.on('finish', () => {
+    const durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
+    const routeKey = `${req.method} ${req.route?.path || req.path || req.originalUrl || req.url}`;
+    recordApiRequest(routeKey, res.statusCode, durationMs);
+    if (res.statusCode >= 500 || durationMs >= 1000) {
+      logger.warn('API request completed with warning', {
+        requestId: req.requestId,
+        route: routeKey,
+        statusCode: res.statusCode,
+        latencyMs: Number(durationMs.toFixed(2))
+      });
+    }
+  });
   next();
 });
+
+const adminRoutes = [
+  '/start',
+  '/stop',
+  '/optimize',
+  '/settings',
+  '/risk-configs',
+  '/risk-configs/reset',
+  '/risk-configs/ai-recommend',
+  '/backtest',
+  '/kill',
+  '/import-csv',
+  '/diagnostics'
+];
+
+const traderRoutes = [
+  '/timeframe',
+  '/market/refresh',
+  '/positions/close',
+  '/positions/update',
+  '/balances/allocate',
+  '/balances/withdraw',
+  '/balances/half',
+  '/balances/double',
+  '/active-mode',
+  '/regime/manual',
+  '/manual-trade'
+];
+
+for (const route of adminRoutes) {
+  apiRouter.use(route, requireRole('admin'));
+}
+for (const route of traderRoutes) {
+  apiRouter.use(route, requireRole('trader'));
+}
+
+const timeframeSchema = z.object({
+  timeframe: z.string().refine((v) => TIMEFRAME_ALLOWLIST.has(v), 'Invalid timeframe. Allowed: 1m, 5m, 15m, 1h, 1d')
+});
+const validateTimeframeBody = validateBody(timeframeSchema);
+
+const settingsSchema = z.record(z.any()).superRefine((settings, ctx) => {
+  for (const key of Object.keys(settings)) {
+    if (MUTABLE_SETTINGS_BLOCKLIST.has(key)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: `Setting "${key}" cannot be modified via this endpoint`
+      });
+    }
+  }
+});
+const validateSettingsBody = validateBody(settingsSchema);
+
+const validatePositionsCloseBody = validateBody(z.object({
+  tradeId: z.string().trim().min(1, 'tradeId is required'),
+  currentPrice: z.number().positive('currentPrice must be a positive number')
+}));
+
+const validatePositionsUpdateBody = validateBody(z.object({
+  tradeId: z.string().trim().min(1, 'tradeId is required'),
+  stopLoss: z.number().positive('stopLoss must be a positive number').optional(),
+  takeProfit: z.number().positive('takeProfit must be a positive number').optional()
+}).refine((v) => v.stopLoss !== undefined || v.takeProfit !== undefined, {
+  message: 'At least one of stopLoss or takeProfit must be provided'
+}));
+
+const validateRiskConfigsBody = validateBody(z.record(z.any()));
+
+const validateBacktestBody = validateBody(z.object({
+  mode: z.string().refine((v) => riskModes.has(v as RiskMode), 'Invalid backtest mode'),
+  config: z.record(z.any()),
+  startTime: z.number().finite(),
+  endTime: z.number().finite()
+}).refine((v) => v.endTime > v.startTime, { message: 'Invalid time range' }));
+
+const validateAmountBody = validateBody(z.object({
+  amount: z.number().positive('amount must be a positive number')
+}));
+
+const validateActiveModeBody = validateBody(z.object({
+  mode: z.string().refine((v) => riskModes.has(v as RiskMode), 'Invalid risk mode')
+}));
+
+const validateManualRegimeBody = validateBody(z.object({
+  regime: z.string().refine((v) => regimeModes.has(v as RegimeType), 'Invalid regime')
+}));
+
+const validateManualTradeBody = validateBody(z.object({
+  side: z.enum(['buy', 'sell']),
+  symbol: z.string().trim().min(1, 'symbol is required'),
+  price: z.number().positive('price must be a positive number'),
+  stopLoss: z.number().positive('stopLoss must be a positive number'),
+  takeProfit: z.number().positive('takeProfit must be a positive number')
+}));
 
 apiRouter.get('/status', (req, res) => {
   const engine = getTradingEngine();
@@ -24,10 +213,53 @@ apiRouter.get('/status', (req, res) => {
   });
 });
 
+apiRouter.get('/diagnostics/startup', (req, res) => {
+  const diagnostics = getStartupDiagnostics();
+  if (!diagnostics) {
+    return res.status(500).json({ error: 'Engine not initialized' });
+  }
+  return res.json(diagnostics);
+});
+
+apiRouter.get('/diagnostics/health', async (req, res) => {
+  const engine = getTradingEngine();
+  if (!engine) {
+    return res.status(500).json({ error: 'Engine not initialized' });
+  }
+
+  const latestMarketData = await engine.marketDataService.getLatestMarketData();
+  const marketMetrics = engine.marketDataService.getMetrics();
+  const apiMetrics = getApiMetricsSnapshot();
+  return res.json({
+    uptimeSec: Math.floor(process.uptime()),
+    requestId: req.requestId,
+    isRunning: engine.isRunning,
+    startup: engine.getStartupDiagnostics(),
+    api: apiMetrics,
+    marketData: {
+      hasCachedData: Boolean(latestMarketData),
+      lastUpdated: latestMarketData?.last_updated || null,
+      metrics: marketMetrics
+    }
+  });
+});
+
+apiRouter.get('/diagnostics/metrics', async (req, res) => {
+  const engine = getTradingEngine();
+  if (!engine) {
+    return res.status(500).json({ error: 'Engine not initialized' });
+  }
+
+  const marketMetrics = engine.marketDataService.getMetrics();
+  const payload = toPrometheusMetrics(marketMetrics);
+  res.setHeader('content-type', 'text/plain; version=0.0.4; charset=utf-8');
+  return res.send(payload);
+});
+
 apiRouter.post('/start', (req, res) => {
   const engine = getTradingEngine();
   if (engine && !engine.isRunning) {
-    engine.start().catch(console.error);
+    engine.start().catch((error: Error) => logger.error('Failed to start engine', { requestId: req.requestId, error: error.message }));
     res.json({ success: true, message: 'Trading engine started' });
   } else {
     res.status(400).json({ success: false, message: 'Engine already running or not initialized' });
@@ -44,7 +276,7 @@ apiRouter.post('/stop', (req, res) => {
   }
 });
 
-apiRouter.post('/timeframe', async (req, res) => {
+apiRouter.post('/timeframe', validateTimeframeBody, async (req, res) => {
   const engine = getTradingEngine();
   const { timeframe } = req.body;
   
@@ -159,7 +391,8 @@ apiRouter.get('/performance', (req, res) => {
 });
 
 apiRouter.get('/trades', async (req, res) => {
-  const limit = parseInt(req.query.limit as string) || 50;
+  const requestedLimit = parseInt(req.query.limit as string) || 50;
+  const limit = Math.max(1, Math.min(requestedLimit, 200));
   
   const trades = await runQuery(`
     SELECT * FROM shadow_trades
@@ -170,7 +403,8 @@ apiRouter.get('/trades', async (req, res) => {
 });
 
 apiRouter.get('/history/regime', async (req, res) => {
-  const limit = parseInt(req.query.limit as string) || 20;
+  const requestedLimit = parseInt(req.query.limit as string) || 20;
+  const limit = Math.max(1, Math.min(requestedLimit, 200));
   
   const history = await runQuery(`
     SELECT * FROM regime_history
@@ -180,7 +414,7 @@ apiRouter.get('/history/regime', async (req, res) => {
   res.json(history);
 });
 
-apiRouter.post('/settings', async (req, res) => {
+apiRouter.post('/settings', validateSettingsBody, async (req, res) => {
   const settings = req.body;
   
   for (const [key, value] of Object.entries(settings)) {
@@ -218,7 +452,7 @@ apiRouter.get('/settings', async (req, res) => {
 });
 
 apiRouter.get('/positions/open', (req, res) => {
-  console.log('GET /api/positions/open hit');
+  logger.info('Fetching open positions', { requestId: req.requestId });
   const engine = getTradingEngine();
   if (engine) {
     const allOpenTrades = [];
@@ -230,12 +464,12 @@ apiRouter.get('/positions/open', (req, res) => {
     }
     res.json(allOpenTrades);
   } else {
-    console.log('Engine not initialized');
+    logger.warn('Engine not initialized for /positions/open', { requestId: req.requestId });
     res.status(500).json({ error: 'Engine not initialized' });
   }
 });
 
-apiRouter.post('/positions/close', async (req, res) => {
+apiRouter.post('/positions/close', validatePositionsCloseBody, async (req, res) => {
   const { tradeId, currentPrice } = req.body;
   const engine = getTradingEngine();
   if (engine) {
@@ -252,7 +486,7 @@ apiRouter.post('/positions/close', async (req, res) => {
   }
 });
 
-apiRouter.post('/positions/update', async (req, res) => {
+apiRouter.post('/positions/update', validatePositionsUpdateBody, async (req, res) => {
   const { tradeId, stopLoss, takeProfit } = req.body;
   const engine = getTradingEngine();
   if (engine) {
@@ -272,7 +506,7 @@ apiRouter.get('/risk-configs', (req, res) => {
   }
 });
 
-apiRouter.post('/risk-configs', (req, res) => {
+apiRouter.post('/risk-configs', validateRiskConfigsBody, (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     engine.shadowTrader.riskManager.saveConfigs(req.body);
@@ -385,7 +619,7 @@ apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
   }
 });
 
-apiRouter.post('/backtest', async (req, res) => {
+apiRouter.post('/backtest', validateBacktestBody, async (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     const { mode, config, startTime, endTime } = req.body;
@@ -405,7 +639,7 @@ apiRouter.get('/balances', async (req, res) => {
   }
 });
 
-apiRouter.post('/balances/allocate', async (req, res) => {
+apiRouter.post('/balances/allocate', validateAmountBody, async (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     const { amount } = req.body;
@@ -426,7 +660,7 @@ apiRouter.post('/balances/allocate', async (req, res) => {
   }
 });
 
-apiRouter.post('/balances/withdraw', async (req, res) => {
+apiRouter.post('/balances/withdraw', validateAmountBody, async (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     const { amount } = req.body;
@@ -502,7 +736,7 @@ apiRouter.post('/kill', async (req, res) => {
   }
 });
 
-apiRouter.post('/active-mode', async (req, res) => {
+apiRouter.post('/active-mode', validateActiveModeBody, async (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     const { mode } = req.body;
@@ -514,7 +748,7 @@ apiRouter.post('/active-mode', async (req, res) => {
   }
 });
 
-apiRouter.post('/regime/manual', (req, res) => {
+apiRouter.post('/regime/manual', validateManualRegimeBody, (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     const { regime } = req.body;
@@ -566,7 +800,7 @@ apiRouter.post('/import-csv', upload.single('file'), async (req, res) => {
     });
 });
 
-apiRouter.post('/manual-trade', async (req, res) => {
+apiRouter.post('/manual-trade', validateManualTradeBody, async (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     if (!engine.isRunning) {
@@ -588,7 +822,14 @@ apiRouter.post('/manual-trade', async (req, res) => {
 
     try {
       // Execute trade
-      await engine.shadowTrader.processSignal(signal, price, engine.activeMode, engine.balanceManager, engine.exchange);
+      await engine.shadowTrader.processSignal(
+        signal,
+        price,
+        engine.activeMode,
+        engine.balanceManager,
+        engine.exchange,
+        engine.currentRegime
+      );
       res.json({ success: true, message: 'Manual trade opened' });
     } catch (e: any) {
       res.status(400).json({ error: e.message });

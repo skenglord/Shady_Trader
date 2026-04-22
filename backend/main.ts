@@ -10,6 +10,7 @@ import { MarketDataService } from './api/marketDataService.js';
 import { OptimizationEngine } from './strategy/optimization_engine.js';
 import fs from 'fs';
 import path from 'path';
+import { logger } from './logging/logger.js';
 
 export class TradingEngine {
   exchange: ExchangeConnector | null;
@@ -35,9 +36,22 @@ export class TradingEngine {
   static aiStrategySwitchingEnabled = true;
   aiSignalGeneration: boolean = false;
   aiSentimentAnalysis: boolean = false;
+  private marketPollInterval: NodeJS.Timeout | null = null;
+  private optimizationInterval: NodeJS.Timeout | null = null;
+  private startupDiagnostics: {
+    exchangeEnabled: boolean;
+    exchangeName: string;
+    exchangeConfigured: boolean;
+    exchangeReason: string;
+  } = {
+    exchangeEnabled: true,
+    exchangeName: 'coinmarketcap',
+    exchangeConfigured: false,
+    exchangeReason: 'not_initialized'
+  };
 
   constructor(wss: WebSocketServer) {
-    console.log('TradingEngine constructor called');
+    logger.info('TradingEngine constructor called', { service: 'TradingEngine' });
     this.wss = wss;
     this.exchange = null; // Initialize as null
     this.indicators = new IndicatorEngine();
@@ -53,20 +67,38 @@ export class TradingEngine {
     //   this.backupDatabase();
     // }, 60 * 60 * 1000);
 
-    // Setup market data polling (every hour)
-    setInterval(() => {
-      this.marketDataService.fetchMarketData().catch(console.error);
-      this.marketDataService.fetchNews().catch(console.error);
-    }, 60 * 60 * 1000);
+    this.startSchedulers();
+  }
 
-    // Initial fetch
+  startSchedulers() {
+    if (!this.marketPollInterval) {
+      this.marketPollInterval = setInterval(() => {
+        this.marketDataService.fetchMarketData().catch(console.error);
+        this.marketDataService.fetchNews().catch(console.error);
+      }, 60 * 60 * 1000);
+      this.marketPollInterval.unref?.();
+    }
+
+    if (!this.optimizationInterval) {
+      this.optimizationInterval = setInterval(() => {
+        this.optimizationEngine.optimize(this.currentRegime).catch(console.error);
+      }, 6 * 60 * 60 * 1000);
+      this.optimizationInterval.unref?.();
+    }
+
     this.marketDataService.fetchMarketData().catch(console.error);
     this.marketDataService.fetchNews().catch(console.error);
+  }
 
-    // Setup auto-optimization (every 15 minutes)
-    setInterval(() => {
-      this.optimizationEngine.optimize(this.currentRegime).catch(console.error);
-    }, 15 * 60 * 1000);
+  stopSchedulers() {
+    if (this.marketPollInterval) {
+      clearInterval(this.marketPollInterval);
+      this.marketPollInterval = null;
+    }
+    if (this.optimizationInterval) {
+      clearInterval(this.optimizationInterval);
+      this.optimizationInterval = null;
+    }
   }
 
   async init() {
@@ -122,20 +154,61 @@ export class TradingEngine {
       if (config.timeframe) this.timeframe = config.timeframe;
       if (config.activeMode) this.activeMode = config.activeMode;
       if (config.strategy) this.strategy = config.strategy;
-      
-      // Hardcoded API keys and exchange (using environment variables)
-      const useTestnet = true; // Hardcoded to true for safety
-      const exchangeName = 'coinmarketcap'; 
+
+      const exchangeName = String(
+        config.exchange || process.env.EXCHANGE_NAME || 'coinmarketcap'
+      ).toLowerCase();
+      const exchangeApiKey = String(
+        config.apiKey || process.env.EXCHANGE_API_KEY || ''
+      );
+      const exchangeApiSecret = String(
+        config.apiSecret || process.env.EXCHANGE_API_SECRET || ''
+      );
+      const exchangeApiPassword = String(
+        config.apiPassword || process.env.EXCHANGE_API_PASSWORD || ''
+      );
+      const useTestnet = String(
+        config.exchangeUseTestnet || process.env.EXCHANGE_USE_TESTNET || 'true'
+      ).toLowerCase() === 'true';
       
       this.aiStrategySwitching = config.aiStrategySwitching === 'true';
       this.aiSignalGeneration = config.aiSignalGeneration === 'true';
       this.aiSentimentAnalysis = config.aiSentimentAnalysis === 'true';
       
+      this.startupDiagnostics = {
+        exchangeEnabled: this.isExchangeEnabled,
+        exchangeName,
+        exchangeConfigured: false,
+        exchangeReason: 'pending_validation'
+      };
+
       if (this.isExchangeEnabled) {
-        this.exchange = new ExchangeConnector(exchangeName, '', '', undefined, useTestnet);
-        this.exchange.setActiveSymbol(this.symbol);
+        const requiresApiKey = exchangeName === 'coinmarketcap';
+        if (requiresApiKey && !exchangeApiKey) {
+          const message = `Exchange "${exchangeName}" requires EXCHANGE_API_KEY or persisted settings.apiKey`;
+          if (process.env.NODE_ENV === 'production') {
+            throw new Error(message);
+          }
+          console.warn(`[TradingEngine] ${message}. Exchange disabled until configured.`);
+          this.exchange = null;
+          this.startupDiagnostics.exchangeConfigured = false;
+          this.startupDiagnostics.exchangeReason = message;
+        } else {
+          this.exchange = new ExchangeConnector(
+            exchangeName,
+            exchangeApiKey,
+            exchangeApiSecret,
+            exchangeApiPassword || undefined,
+            useTestnet
+          );
+          this.exchange.setActiveSymbol(this.symbol);
+          this.startupDiagnostics.exchangeConfigured = true;
+          this.startupDiagnostics.exchangeReason = 'ok';
+        }
       } else {
         this.exchange = null;
+        this.startupDiagnostics.exchangeConfigured = false;
+        this.startupDiagnostics.exchangeReason = 'exchange_disabled';
       }
       
       this.broadcast({ type: 'status', data: { symbol: this.symbol, timeframe: this.timeframe } });
@@ -145,14 +218,17 @@ export class TradingEngine {
       }
     } catch (e) {
       console.error('Failed to load settings:', e);
-      this.exchange = this.isExchangeEnabled ? new ExchangeConnector('coinmarketcap', '', '', undefined, true) : null;
+      this.exchange = null;
+      this.startupDiagnostics.exchangeConfigured = false;
+      this.startupDiagnostics.exchangeReason = e instanceof Error ? e.message : 'load_settings_failed';
     }
   }
 
   async start() {
+    this.startSchedulers();
     this.isRunning = true;
     this.shadowTrader.reset();
-    console.log('Trading engine started and reset');
+    logger.info('Trading engine started and reset', { service: 'TradingEngine' });
     this.broadcast({ type: 'status', data: { isRunning: true } });
     this.broadcast({ type: 'performance', data: this.shadowTrader.getPerformance() });
 
@@ -171,7 +247,8 @@ export class TradingEngine {
 
   stop() {
     this.isRunning = false;
-    console.log('Trading engine stopped');
+    this.stopSchedulers();
+    logger.info('Trading engine stopped', { service: 'TradingEngine' });
     this.broadcast({ type: 'status', data: { isRunning: false } });
   }
 
@@ -367,7 +444,14 @@ export class TradingEngine {
       
       // 5. Execute shadow trades
       const currentPrice = df[df.length - 1].close;
-      await this.shadowTrader.processSignal(signal, currentPrice, this.activeMode, this.balanceManager, this.exchange);
+      await this.shadowTrader.processSignal(
+        signal,
+        currentPrice,
+        this.activeMode,
+        this.balanceManager,
+        this.exchange,
+        this.currentRegime
+      );
     }
 
     // 6. Update positions
@@ -543,6 +627,17 @@ export class TradingEngine {
     }
     return { trades: virtualTrades, candles: df, regimeChanges };
   }
+
+  getStartupDiagnostics() {
+    return {
+      ...this.startupDiagnostics,
+      hasExchangeInstance: Boolean(this.exchange),
+      exchangeCapabilities: this.exchange?.getCapabilities() || null,
+      isRunning: this.isRunning,
+      symbol: this.symbol,
+      timeframe: this.timeframe
+    };
+  }
 }
 
 let engine: TradingEngine | null = null;
@@ -559,4 +654,8 @@ export async function startTradingEngine(wss: WebSocketServer) {
 
 export function getTradingEngine() {
   return engine;
+}
+
+export function getStartupDiagnostics() {
+  return engine?.getStartupDiagnostics() || null;
 }
