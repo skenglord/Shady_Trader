@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { logger } from '../logging/logger.js';
 import { runQuery } from '../database.js';
 
 export interface MarketData {
@@ -23,8 +24,22 @@ export interface MarketNews {
 export class MarketDataService {
   private cgApiKey: string;
   private baseUrl = 'https://api.coingecko.com/api/v3';
+  private marketDataFailures = 0;
+  private newsFailures = 0;
+  private marketDataCircuitOpenUntil = 0;
+  private newsCircuitOpenUntil = 0;
+  private readonly failureThreshold = 3;
+  private readonly cooldownMs = 5 * 60 * 1000;
+  private metrics = {
+    marketDataFetchCount: 0,
+    marketDataFetchFailures: 0,
+    newsFetchCount: 0,
+    newsFetchFailures: 0,
+    lastMarketDataFetchAt: 0,
+    lastNewsFetchAt: 0
+  };
 
-  constructor(cgApiKey: string = 'CG-LCyUvdWfGJS1f6sCqi287qFb') {
+  constructor(cgApiKey: string = process.env.COINGECKO_API_KEY || '') {
     this.cgApiKey = cgApiKey;
   }
 
@@ -33,6 +48,13 @@ export class MarketDataService {
   }
 
   async fetchMarketData(): Promise<MarketData | null> {
+    this.metrics.marketDataFetchCount++;
+    this.metrics.lastMarketDataFetchAt = Date.now();
+    if (Date.now() < this.marketDataCircuitOpenUntil) {
+      logger.warn('Market-data circuit open; returning cached data', { service: 'MarketDataService' });
+      return this.getLatestMarketData();
+    }
+
     try {
       // 1. Fetch Global Data from CoinGecko
       const globalResponse = await axios.get(this.getUrl('/global'));
@@ -52,27 +74,40 @@ export class MarketDataService {
       };
 
       await this.saveMarketData(marketData);
+      this.marketDataFailures = 0;
       return marketData;
     } catch (error) {
-      console.error('Error fetching market data:', error);
-      return null;
+      this.marketDataFailures++;
+      this.metrics.marketDataFetchFailures++;
+      if (this.marketDataFailures >= this.failureThreshold) {
+        this.marketDataCircuitOpenUntil = Date.now() + this.cooldownMs;
+      }
+      logger.error('Error fetching market data', { service: 'MarketDataService', error: (error as Error).message });
+      return this.getLatestMarketData();
     }
   }
 
   async fetchNews(): Promise<MarketNews[]> {
+    this.metrics.newsFetchCount++;
+    this.metrics.lastNewsFetchAt = Date.now();
+    if (Date.now() < this.newsCircuitOpenUntil) {
+      logger.warn('News circuit open; returning cached data', { service: 'MarketDataService' });
+      return this.getLatestNews();
+    }
+
     try {
       let newsItems = [];
       try {
         const response = await axios.get(this.getUrl('/news'));
         newsItems = response.data.data || response.data || [];
       } catch (e) {
-        console.warn('CoinGecko news failed, trying CryptoCompare fallback');
+        logger.warn('CoinGecko news failed, trying CryptoCompare fallback', { service: 'MarketDataService' });
         const fallbackRes = await axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN');
         newsItems = fallbackRes.data.Data || [];
       }
 
       if (!Array.isArray(newsItems)) {
-        console.warn('News items is not an array:', newsItems);
+        logger.warn('News items is not an array', { service: 'MarketDataService' });
         return [];
       }
 
@@ -85,10 +120,16 @@ export class MarketDataService {
       }));
 
       await this.saveNews(news);
+      this.newsFailures = 0;
       return news;
     } catch (error) {
-      console.error('Error fetching news:', error);
-      return [];
+      this.newsFailures++;
+      this.metrics.newsFetchFailures++;
+      if (this.newsFailures >= this.failureThreshold) {
+        this.newsCircuitOpenUntil = Date.now() + this.cooldownMs;
+      }
+      logger.error('Error fetching news', { service: 'MarketDataService', error: (error as Error).message });
+      return this.getLatestNews();
     }
   }
 
@@ -115,5 +156,15 @@ export class MarketDataService {
 
   async getLatestNews(limit: number = 10): Promise<MarketNews[]> {
     return await runQuery('SELECT * FROM market_news ORDER BY timestamp DESC LIMIT ?', [limit], 'all');
+  }
+
+  getMetrics() {
+    return {
+      ...this.metrics,
+      marketDataCircuitOpen: Date.now() < this.marketDataCircuitOpenUntil,
+      newsCircuitOpen: Date.now() < this.newsCircuitOpenUntil,
+      marketDataCircuitOpenUntil: this.marketDataCircuitOpenUntil,
+      newsCircuitOpenUntil: this.newsCircuitOpenUntil
+    };
   }
 }

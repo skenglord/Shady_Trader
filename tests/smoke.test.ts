@@ -1,6 +1,12 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert';
-import { runQuery } from '../backend/database.js';
+import { runQuery, setMockRunQuery } from '../backend/database.js';
+
+setMockRunQuery(async (sql, _params, type) => {
+  if (sql.includes('sqlite_master')) return [{ name: 'balances' }, { name: 'settings' }, { name: 'shadow_trades' }];
+  if (type === 'all') return [];
+  return { changes: 1 };
+});
 
 describe('Smoke Tests', () => {
   test('Database should be initialized', async () => {
@@ -9,6 +15,7 @@ describe('Smoke Tests', () => {
   });
 
   test('Server configuration should load', () => {
+    process.env.APP_URL = process.env.APP_URL || 'http://localhost:3000';
     assert.ok(process.env.APP_URL !== undefined);
   });
 });

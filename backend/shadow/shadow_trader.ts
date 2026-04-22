@@ -52,7 +52,14 @@ export class ShadowTrader {
     }
   }
 
-  async processSignal(signal: any, currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any) {
+  async processSignal(
+    signal: any,
+    currentPrice: number,
+    activeMode?: string,
+    balanceManager?: any,
+    exchange?: any,
+    regime: string = 'uncertain'
+  ) {
     for (const mode of Object.values(RiskMode)) {
       const portfolio = this.portfolios[mode];
       
@@ -73,7 +80,7 @@ export class ShadowTrader {
       }
 
       // Validate trade
-      if (!this.riskManager.validateTrade(signal, mode, portfolio.openTrades.length)) {
+      if (!this.riskManager.validateTrade(signal, mode, portfolio.openTrades.length, regime)) {
         continue;
       }
 

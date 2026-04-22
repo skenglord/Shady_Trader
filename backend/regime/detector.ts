@@ -36,6 +36,7 @@ export class RegimeDetector {
   async detect(df: any[], useAI: boolean = false, shadowPerformance: any = null, marketContext: any = null) {
     const metrics = this._calculateMetrics(df);
     let { regime, confidence, reasoning } = this._classifyRegime(metrics);
+    ({ regime, confidence, reasoning } = this._applyNewsSentimentWeight(regime, confidence, reasoning, marketContext));
 
     let aiValidation = null;
 
@@ -219,6 +220,51 @@ Output JSON only:
       regime: RegimeType.UNCERTAIN,
       confidence: 50,
       reasoning: "Market regime unclear, awaiting confirmation"
+    };
+  }
+
+  _applyNewsSentimentWeight(regime: RegimeType, confidence: number, reasoning: string, marketContext: any) {
+    if (!marketContext) return { regime, confidence, reasoning };
+
+    const sentimentLabel = String(marketContext.news_sentiment || '').toLowerCase();
+    const rawScore = Number(marketContext.sentiment_score ?? Number.NaN);
+    const score = Number.isFinite(rawScore)
+      ? Math.max(-1, Math.min(1, rawScore))
+      : sentimentLabel === 'bullish'
+        ? 0.5
+        : sentimentLabel === 'bearish'
+          ? -0.5
+          : 0;
+    if (score === 0) return { regime, confidence, reasoning };
+
+    const isBullRegime = regime === RegimeType.STRONG_BULL || regime === RegimeType.WEAK_BULL;
+    const aligns = (score > 0 && isBullRegime) || (score < 0 && regime === RegimeType.BEAR);
+    const magnitudeBoost = Math.max(2, Math.round(Math.abs(score) * 10));
+
+    if (aligns) {
+      const boostedConfidence = Math.min(100, confidence + magnitudeBoost);
+      return {
+        regime,
+        confidence: boostedConfidence,
+        reasoning: `${reasoning}. News sentiment alignment score=${score.toFixed(2)} boosted confidence by ${boostedConfidence - confidence}.`
+      };
+    }
+
+    if (regime === RegimeType.UNCERTAIN && Math.abs(score) >= 0.75) {
+      const sentimentRegime = score > 0 ? RegimeType.WEAK_BULL : RegimeType.BEAR;
+      const sentimentConfidence = Math.max(confidence, 60 + Math.round(Math.abs(score) * 10));
+      return {
+        regime: sentimentRegime,
+        confidence: Math.min(85, sentimentConfidence),
+        reasoning: `${reasoning}. Strong news sentiment score=${score.toFixed(2)} nudged regime to ${sentimentRegime}.`
+      };
+    }
+
+    const reducedConfidence = Math.max(45, confidence - Math.max(4, magnitudeBoost));
+    return {
+      regime,
+      confidence: reducedConfidence,
+      reasoning: `${reasoning}. News sentiment dissonance score=${score.toFixed(2)} reduced confidence by ${confidence - reducedConfidence}.`
     };
   }
 
