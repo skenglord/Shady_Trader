@@ -238,11 +238,20 @@ export class TradingEngine {
       } catch (error: any) {
         console.error('Error in trading cycle:', error);
         this.broadcast({ type: 'error', data: { message: error.message } });
+        // Add delay on error to prevent tight error loops
+        await new Promise(resolve => setTimeout(resolve, 5000));
       }
       
-      // Wait for next cycle (e.g., 1 second)
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Wait for next cycle with abortable sleep
+      await this.sleepAbortable(1000);
     }
+  }
+
+  private sleepAbortable(ms: number) {
+    return new Promise(resolve => {
+      const timeout = setTimeout(resolve, ms);
+      // Could add abort signal here
+    });
   }
 
   stop() {
@@ -272,11 +281,15 @@ export class TradingEngine {
       
       for (const trade of portfolio.openTrades) {
         const exitPrice = currentPrice || trade.price;
+        const leverage = trade.leverage || 1;
+        const marginUsed = trade.amount * trade.price / leverage;
+        const currentNotional = trade.amount * exitPrice;
+        const currentMargin = currentNotional / leverage;
         let pnl = 0;
         if (trade.side === 'buy') {
-          pnl = (exitPrice - trade.price) * trade.amount;
+          pnl = currentMargin - marginUsed;
         } else {
-          pnl = (trade.price - exitPrice) * trade.amount;
+          pnl = marginUsed - currentMargin;
         }
         
         portfolio.balance += pnl;

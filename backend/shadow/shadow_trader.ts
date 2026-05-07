@@ -160,28 +160,31 @@ export class ShadowTrader {
     for (const mode of Object.values(RiskMode)) {
       const portfolio = this.portfolios[mode];
       const newOpenTrades = [];
-      const config = this.riskManager.getConfig(mode as RiskMode);
-      const leverage = config.leverage || 1;
-      const maintenanceMargin = 0.005; // 0.5% maintenance margin
+       const config = this.riskManager.getConfig(mode as RiskMode);
+       const maintenanceMargin = 0.005; // 0.5% maintenance margin
 
-      for (const trade of portfolio.openTrades) {
-        // Increment candles held if a new candle is provided
-        if (lastCandle && (!trade.lastUpdateTime || lastCandle.time > trade.lastUpdateTime)) {
-          trade.candlesHeld = (trade.candlesHeld || 0) + 1;
-          trade.lastUpdateTime = lastCandle.time;
-        }
+       for (const trade of portfolio.openTrades) {
+         // Increment candles held if a new candle is provided
+         if (lastCandle && (!trade.lastUpdateTime || lastCandle.time > trade.lastUpdateTime)) {
+           trade.candlesHeld = (trade.candlesHeld || 0) + 1;
+           trade.lastUpdateTime = lastCandle.time;
+         }
 
-        console.log(`[ShadowTrader] Checking trade ${trade.id} for ${mode}. Price: ${currentPrice}, SL: ${trade.stopLoss}, TP: ${trade.takeProfit}`);
-        let pnl = 0;
-        let closed = false;
-        let exitReason = '';
-        const profitPct = trade.side === 'buy'
-          ? (currentPrice - trade.price) / trade.price
-          : (trade.price - currentPrice) / trade.price;
+         console.log(`[ShadowTrader] Checking trade ${trade.id} for ${mode}. Price: ${currentPrice}, SL: ${trade.stopLoss}, TP: ${trade.takeProfit}`);
+         let pnl = 0;
+         let closed = false;
+         let exitReason = '';
+         const leverage = trade.leverage || config.leverage || 1;
+         const marginUsed = trade.amount * trade.price / leverage;
+         const currentNotional = trade.amount * currentPrice;
+         const currentMargin = currentNotional / leverage;
+         const profitPct = trade.side === 'buy'
+           ? (currentPrice - trade.price) / trade.price
+           : (trade.price - currentPrice) / trade.price;
 
-        if (trade.side === 'buy') {
-          pnl = (currentPrice - trade.price) * trade.amount;
-          
+         if (trade.side === 'buy') {
+           pnl = (currentMargin - marginUsed); // Leveraged PnL based on margin
+           
           // MD Part 2.1: Multi-candle hold & Trailing Stop
           if (config.multiCandleHoldEnabled && profitPct > 0.005) {
             const trailStop = currentPrice * 0.996; // 0.4% trail as per Moderate mode
@@ -196,18 +199,19 @@ export class ShadowTrader {
              // Partial exit (close e.g. 60%)
              const exitFactor = config.runnerConditions?.partialExit || 0.6;
              const closeAmount = trade.amount * exitFactor;
-             const partialPnl = (currentPrice - trade.price) * closeAmount;
+             const closeMargin = closeAmount * trade.price / leverage;
+             const partialPnl = (currentMargin - marginUsed) * (closeAmount / trade.amount); // Proportional margin PnL
 
-             portfolio.balance += partialPnl;
-             trade.amount -= closeAmount;
-             trade.isRunner = true;
-             // Lock in minimum profit on runner (entry + 0.5%)
-             trade.stopLoss = Math.max(trade.stopLoss, trade.price * 1.005);
+            portfolio.balance += partialPnl;
+            trade.amount -= closeAmount;
+            trade.isRunner = true;
+            // Lock in minimum profit on runner (entry + 0.5%)
+            trade.stopLoss = Math.max(trade.stopLoss, trade.price * 1.005);
 
-             if (mode === activeMode && balanceManager) {
-               const tradeCost = closeAmount * trade.price / trade.leverage;
-               balanceManager.recordTradeResult(partialPnl, tradeCost);
-             }
+            if (mode === activeMode && balanceManager) {
+              const tradeCost = closeAmount * trade.price / trade.leverage;
+              balanceManager.recordTradeResult(partialPnl, tradeCost);
+            }
           }
 
           // Part 2.1: Early Exit Feature
@@ -216,29 +220,29 @@ export class ShadowTrader {
             exitReason = 'early_exit';
           }
 
-          // Liquidation Logic
-          const lossPct = (trade.price - currentPrice) / trade.price;
-          if (lossPct >= (1 / leverage) - maintenanceMargin) {
-            closed = true;
-            exitReason = 'liquidation';
-            pnl = -trade.amount * trade.price * (1 / leverage); // Total loss of margin
-          } else if (currentPrice <= trade.stopLoss) {
-            closed = true;
-            exitReason = 'stop_loss';
-          } else if (currentPrice >= trade.takeProfit && !trade.isRunner) {
-            closed = true;
-            exitReason = 'take_profit';
-          }
+           // Liquidation Logic
+           const lossPct = (marginUsed - currentMargin) / marginUsed; // Percentage of margin lost (same as notional loss %)
+           if (lossPct >= (1 / leverage) - maintenanceMargin) { // Liquidation threshold based on leverage
+             closed = true;
+             exitReason = 'liquidation';
+             pnl = -marginUsed; // Total loss of margin
+           } else if (currentPrice <= trade.stopLoss) {
+             closed = true;
+             exitReason = 'stop_loss';
+           } else if (currentPrice >= trade.takeProfit && !trade.isRunner) {
+             closed = true;
+             exitReason = 'take_profit';
+           }
 
           // Multi-candle expiration
           if (config.multiCandleHoldEnabled && trade.candlesHeld >= (config.holdConditions?.maxCandles || 3)) {
             closed = true;
             exitReason = 'multi_candle_expiry';
           }
-        } else {
-          pnl = (trade.price - currentPrice) * trade.amount;
-          
-          // Trailing Stop Logic for Shorts
+         } else {
+           pnl = (marginUsed - currentMargin); // Leveraged PnL based on margin
+            
+           // Trailing Stop Logic for Shorts
           if (config.multiCandleHoldEnabled && profitPct > 0.005) {
             const trailStop = currentPrice * 1.004; // 0.4% trail
             if (trailStop < trade.stopLoss) {
@@ -252,103 +256,121 @@ export class ShadowTrader {
             exitReason = 'early_exit';
           }
 
-          // Liquidation Logic
-          const lossPct = (currentPrice - trade.price) / trade.price;
-          if (lossPct >= (1 / leverage) - maintenanceMargin) {
-            closed = true;
-            exitReason = 'liquidation';
-            pnl = -trade.amount * trade.price * (1 / leverage); // Total loss of margin
-          } else if (currentPrice >= trade.stopLoss) {
-            closed = true;
-            exitReason = 'stop_loss';
-          } else if (currentPrice <= trade.takeProfit && !trade.isRunner) {
-            closed = true;
-            exitReason = 'take_profit';
-          }
+           // Liquidation Logic
+           const lossPct = (marginUsed - currentMargin) / marginUsed; // Percentage of margin lost (same as notional loss %)
+           if (lossPct >= (1 / leverage) - maintenanceMargin) { // Liquidation threshold based on leverage
+             closed = true;
+             exitReason = 'liquidation';
+             pnl = -marginUsed; // Total loss of margin
+           } else if (currentPrice >= trade.stopLoss) {
+             closed = true;
+             exitReason = 'stop_loss';
+           } else if (currentPrice <= trade.takeProfit && !trade.isRunner) {
+             closed = true;
+             exitReason = 'take_profit';
+           }
 
           // Multi-candle expiration
           if (config.multiCandleHoldEnabled && trade.candlesHeld >= (config.holdConditions?.maxCandles || 3)) {
             closed = true;
             exitReason = 'multi_candle_expiry';
           }
-        }
+         }
 
-        if (closed) {
-          portfolio.balance += pnl;
-          
-          if (mode === activeMode && balanceManager) {
-            const tradeCost = trade.amount * trade.price / trade.leverage;
-            balanceManager.recordTradeResult(pnl, tradeCost);
-            
-            if (exchange && exchange.apiKey) {
-               try {
-                 const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
-                 const order = await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
-                 console.log(`Live close order executed for ${trade.symbol} (${closeSide}): ${order.id}`);
-               } catch (e: any) {
-                 console.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`);
-               }
-            }
-          }
-          
-          // Update DB
-          await runQuery(`
-            UPDATE shadow_trades
-            SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
-            WHERE id = ?
-          `, [pnl, currentPrice, Date.now(), trade.id]);
-          console.log(`Shadow Trader [${mode}]: Trade ${trade.id} closed due to ${exitReason}. PnL: ${pnl.toFixed(2)}`);
-        } else {
-          newOpenTrades.push(trade);
-        }
-      }
+         if (closed) {
+           portfolio.balance += pnl;
+           
+           // Record win/loss for circuit breaker tracking
+           if (pnl > 0) {
+             this.riskManager.recordWin(mode);
+           } else {
+             this.riskManager.recordLoss(mode);
+           }
+           
+           if (mode === activeMode && balanceManager) {
+             const tradeCost = trade.amount * trade.price / trade.leverage;
+             balanceManager.recordTradeResult(pnl, tradeCost);
+             
+             if (exchange && exchange.apiKey) {
+                try {
+                  const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
+                  const order = await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
+                  console.log(`Live close order executed for ${trade.symbol} (${closeSide}): ${order.id}`);
+                } catch (e: any) {
+                  console.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`);
+                }
+             }
+           }
+           
+           // Update DB
+           await runQuery(`
+             UPDATE shadow_trades
+             SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
+             WHERE id = ?
+           `, [pnl, currentPrice, Date.now(), trade.id]);
+           console.log(`Shadow Trader [${mode}]: Trade ${trade.id} closed due to ${exitReason}. PnL: ${pnl.toFixed(2)}`);
+         } else {
+           newOpenTrades.push(trade);
+         }
+       }
 
-      portfolio.openTrades = newOpenTrades;
-    }
-  }
+       portfolio.openTrades = newOpenTrades;
+     }
+   }
 
-  async closeTrade(tradeId: string, currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any) {
-    for (const mode of Object.values(RiskMode)) {
-      const portfolio = this.portfolios[mode];
-      const tradeIndex = portfolio.openTrades.findIndex(t => t.id === tradeId);
-      
-      if (tradeIndex !== -1) {
-        const trade = portfolio.openTrades[tradeIndex];
-        let pnl = 0;
-        if (trade.side === 'buy') {
-          pnl = (currentPrice - trade.price) * trade.amount;
-        } else {
-          pnl = (trade.price - currentPrice) * trade.amount;
-        }
+    async closeTrade(tradeId: string, currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any) {
+     for (const mode of Object.values(RiskMode)) {
+       const portfolio = this.portfolios[mode];
+       const tradeIndex = portfolio.openTrades.findIndex(t => t.id === tradeId);
+       
+       if (tradeIndex !== -1) {
+         const trade = portfolio.openTrades[tradeIndex];
+         const leverage = trade.leverage || 1;
+         const marginUsed = trade.amount * trade.price / leverage;
+         const currentNotional = trade.amount * currentPrice;
+         const currentMargin = currentNotional / leverage;
+         let pnl = 0;
+         if (trade.side === 'buy') {
+           pnl = currentMargin - marginUsed;
+         } else {
+           pnl = marginUsed - currentMargin;
+         }
 
-        portfolio.balance += pnl;
-        
-        if (mode === activeMode && balanceManager) {
-          const tradeCost = trade.amount * trade.price / trade.leverage;
-          balanceManager.recordTradeResult(pnl, tradeCost);
-          
-          if (exchange && exchange.apiKey) {
-            try {
-              const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
-              await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
-            } catch (e: any) {
-              console.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`);
-            }
-          }
-        }
+         portfolio.balance += pnl;
+         
+         // Record win/loss for circuit breaker tracking
+         if (pnl > 0) {
+           this.riskManager.recordWin(mode);
+         } else {
+           this.riskManager.recordLoss(mode);
+         }
+         
+         if (mode === activeMode && balanceManager) {
+           const tradeCost = trade.amount * trade.price / trade.leverage;
+           balanceManager.recordTradeResult(pnl, tradeCost);
+           
+           if (exchange && exchange.apiKey) {
+             try {
+               const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
+               await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
+             } catch (e: any) {
+               console.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`);
+             }
+           }
+         }
 
-        const result = await runQuery(`
-          UPDATE shadow_trades
-          SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
-          WHERE id = ?
-        `, [pnl, currentPrice, Date.now(), trade.id]);
-        
-        portfolio.openTrades.splice(tradeIndex, 1);
-        return true;
-      }
-    }
-    return false;
-  }
+         const result = await runQuery(`
+           UPDATE shadow_trades
+           SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
+           WHERE id = ?
+         `, [pnl, currentPrice, Date.now(), trade.id]);
+         
+         portfolio.openTrades.splice(tradeIndex, 1);
+         return true;
+       }
+     }
+     return false;
+   }
 
   async updateTradeParams(tradeId: string, stopLoss: number, takeProfit: number) {
     for (const mode of Object.values(RiskMode)) {

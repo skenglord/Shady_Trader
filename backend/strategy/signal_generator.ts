@@ -92,8 +92,12 @@ export class SignalGenerator {
         if (e.message && e.message.includes("API_KEY_INVALID")) {
           console.error("AI Signal Confirmation failed: Invalid API Key. Disabling AI features.");
           SignalGenerator.aiEnabled = false;
+          return null; // Don't proceed without AI when it's required
         } else {
           console.error("AI Signal Confirmation failed:", e);
+          // Option 1: Return null to block trade
+          // Option 2: Return signal with warning flag
+          signal.reasoning += ` [AI Confirmation Failed: ${e.message}]`;
         }
       }
     }

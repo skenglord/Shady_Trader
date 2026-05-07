@@ -142,9 +142,17 @@ export const DEFAULT_RISK_CONFIGS = {
 
 export class RiskManager {
   RISK_CONFIGS: Record<string, any>;
+  private consecutiveLosses: Record<string, number>;
+  private originalPositionSizes: Record<string, number>;
 
   constructor() {
     this.RISK_CONFIGS = JSON.parse(JSON.stringify(DEFAULT_RISK_CONFIGS));
+    this.consecutiveLosses = {};
+    this.originalPositionSizes = {};
+    // Initialize original position sizes for each mode
+    for (const mode of Object.values(RiskMode)) {
+      this.originalPositionSizes[mode] = this.RISK_CONFIGS[mode].positionSize;
+    }
   }
 
   async init() {
@@ -158,6 +166,10 @@ export class RiskManager {
       if (row && row.value) {
         const savedConfigs = JSON.parse(row.value);
         this.RISK_CONFIGS = { ...this.RISK_CONFIGS, ...savedConfigs };
+      }
+      // Re-initialize original position sizes after loading
+      for (const mode of Object.values(RiskMode)) {
+        this.originalPositionSizes[mode] = this.RISK_CONFIGS[mode].positionSize;
       }
     } catch (e) {
       console.error('Failed to load risk configs:', e);
@@ -176,6 +188,54 @@ export class RiskManager {
   getConfig(mode: RiskMode) {
     return this.RISK_CONFIGS[mode];
   }
+
+  getConsecutiveLosses(mode: RiskMode): number {
+    return this.consecutiveLosses[mode] || 0;
+  }
+
+  recordLoss(mode: RiskMode) {
+    const current = this.consecutiveLosses[mode] || 0;
+    this.consecutiveLosses[mode] = current + 1;
+    this.applyCircuitBreaker(mode);
+  }
+
+  recordWin(mode: RiskMode) {
+    this.consecutiveLosses[mode] = 0;
+    this.resetPositionSize(mode);
+  }
+
+  private applyCircuitBreaker(mode: RiskMode) {
+    const losses = this.consecutiveLosses[mode] || 0;
+    const config = this.RISK_CONFIGS[mode];
+    const originalSize = this.originalPositionSizes[mode];
+
+    if (losses >= 5) {
+      // Reduce position size by 50%
+      const reducedSize = originalSize * 0.5;
+      if (config.positionSize !== reducedSize) {
+        config.positionSize = reducedSize;
+        console.log(`[RiskManager] Circuit breaker: Position size for ${mode} reduced to ${(reducedSize * 100).toFixed(1)}% due to ${losses} consecutive losses`);
+      }
+    }
+    if (losses >= 7) {
+      // Further reduce to 25% of original
+      const furtherReducedSize = originalSize * 0.25;
+      if (config.positionSize !== furtherReducedSize) {
+        config.positionSize = furtherReducedSize;
+        console.log(`[RiskManager] Circuit breaker: Position size for ${mode} further reduced to ${(furtherReducedSize * 100).toFixed(1)}% due to ${losses} consecutive losses`);
+      }
+    }
+  }
+
+  private resetPositionSize(mode: RiskMode) {
+    const originalSize = this.originalPositionSizes[mode];
+    const config = this.RISK_CONFIGS[mode];
+    if (config.positionSize !== originalSize) {
+      config.positionSize = originalSize;
+      console.log(`[RiskManager] Circuit breaker: Position size for ${mode} reset to ${(originalSize * 100).toFixed(1)}% after winning trade`);
+    }
+  }
+
 
   calculatePositionSize(balance: number, entryPrice: number, stopLoss: number, riskMode: RiskMode, confidence: number = 75): number {
     const config = this.RISK_CONFIGS[riskMode];
@@ -231,13 +291,13 @@ export class RiskManager {
       return `Max daily loss reached: $${dailyLoss.toFixed(2)} (Limit: ${(config.maxDailyLoss * 100).toFixed(1)}%)`;
     }
 
-    // MD Part 5.3: Consecutive Losses
-    if (consecutiveLosses >= 5) {
-      // Per MD, action is "reduce_position_size_50%".
-      // For simplicity in this check, we might just return a warning or halt.
-      // Let's return a string to indicate a halt for now if it's extreme,
-      // or we can handle reduction elsewhere.
-      if (consecutiveLosses >= 7) return `Extreme consecutive losses: ${consecutiveLosses}`;
+    // MD Part 5.3: Consecutive Losses - track and reduce position size
+    const currentLosses = consecutiveLosses > 0 ? consecutiveLosses : (this.consecutiveLosses[riskMode] || 0);
+    if (currentLosses >= 5) {
+      if (currentLosses >= 7) {
+        return `Extreme consecutive losses: ${currentLosses}. Position size reduced to 25%`;
+      }
+      return `High consecutive losses: ${currentLosses}. Position size reduced to 50%`;
     }
 
     // MD Part 5.3: Volatility Spike

@@ -77,8 +77,8 @@ The project has a fully functional backend engine capable of shadow trading acro
 - [x] Ratcheted quality-gate default coverage thresholds to 50% lines / 65% branches.
 - [x] Added focused engine utility and logger helper tests (`trading_engine_methods`, `logger`) and improved observed coverage to ~61.8% lines / ~70.6% branches.
 - [x] Added cross-platform shortcut launcher script (`npm run bot:launch`) for Windows/macOS/Ubuntu/Arch/Fedora/Linux plus Android/iOS shell runtimes with target/mode flags.
-
-### TODO List
+- [x] Fixed leveraged PnL calculations in ShadowTrader to use margin-based accounting (trade-specific leverage) instead of simple price-based PnL, with correct liquidation thresholds based on leverage and maintenance margin. All 53 tests passing.
+- [x] Implemented circuit breaker position size reduction in RiskManager. Consecutive losses (5+) reduce position size by 50%, extreme losses (7+) reduce to 25%. Position size resets on winning trades.
 - [ ] Continue raising quality-gate thresholds toward target policy (coverage and complexity) as test breadth grows.
 - [ ] Expand exchange connector abstraction for additional authenticated providers beyond Binance/Kraken (e.g., OKX).
 - [ ] Push automated coverage toward stretch goal (95% long-term) by adding deep route/main/shadow deterministic tests.
