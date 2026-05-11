@@ -24,8 +24,22 @@ MarketDataService.prototype.fetchNews = async () => ([]);
 
 test('TradingEngine should initialize with correct polling interval', async () => {
   const wss = new WebSocketServer({ noServer: true });
-  const engine = new TradingEngine(wss);
+  const redisMock: any = {
+    options: { host: 'mock', port: 6379 },
+    on: () => undefined,
+    get: async () => null,
+    set: async () => 'OK',
+    setex: async () => 'OK',
+    del: async () => 1,
+    keys: async () => [],
+    mget: async () => [],
+    eval: async () => 'OK',
+    publish: async () => 1,
+    duplicate: () => ({ subscribe: async () => undefined, on: () => undefined })
+  };
+  const engine = new TradingEngine(wss, redisMock);
   engine.isExchangeEnabled = false;
   await engine.init();
   assert.strictEqual(engine.isRunning, false);
+  wss.close();
 });

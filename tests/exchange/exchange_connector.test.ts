@@ -10,7 +10,7 @@ const connectors: ExchangeConnector[] = [];
 
 function makeConnector(exchange: string, key = '', secret = '') {
   const connector = new ExchangeConnector(exchange, key, secret, undefined, true);
-  clearInterval((connector as any).updateInterval);
+  connector.shutdown();
   connectors.push(connector);
   return connector;
 }
@@ -20,24 +20,13 @@ afterEach(() => {
   axios.post = originalPost;
   axios.delete = originalDelete;
   for (const connector of connectors.splice(0, connectors.length)) {
-    clearInterval((connector as any).updateInterval);
+    connector.shutdown();
   }
 });
 
 describe('ExchangeConnector execution adapters', () => {
-  test('returns simulated order/balance flows for non-execution providers', async () => {
-    const connector = makeConnector('coinmarketcap');
-
-    const capabilities = connector.getCapabilities();
-    assert.strictEqual(capabilities.provider, 'coinmarketcap');
-    assert.strictEqual(capabilities.supportsLiveTrading, false);
-
-    const order = await connector.placeOrder('BTC/USDT', 'buy', 0.1);
-    assert.strictEqual(order.simulated, true);
-    assert.strictEqual(order.exchange, 'coinmarketcap');
-
-    const balance = await connector.getBalance();
-    assert.strictEqual(balance.simulated, true);
+  test('rejects unsupported adapter providers at construction', async () => {
+    assert.throws(() => makeConnector('coinmarketcap'), /Unsupported exchange/);
   });
 
   test('enforces Binance credentials for authenticated execution', async () => {
