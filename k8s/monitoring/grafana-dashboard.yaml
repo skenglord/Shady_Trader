@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: monitoring
+  labels:
+    grafana_dashboard: "1"
+data:
+  trading-dashboard.json: |
+    {
+      "dashboard": {
+        "id": null,
+        "title": "Trading System Overview",
+        "tags": ["trading", "prometheus"],
+        "timezone": "browser",
+        "panels": [
+          {
+            "id": 1,
+            "title": "Trading Operations Rate",
+            "type": "graph",
+            "targets": [
+              {
+                "expr": "rate(trading_operations_total[5m])",
+                "legendFormat": "{{type}} - {{regime}}"
+              }
+            ]
+          },
+          {
+            "id": 2,
+            "title": "Market Data Fetch Duration",
+            "type": "heatmap",
+            "targets": [
+              {
+                "expr": "market_data_fetch_duration_seconds",
+                "legendFormat": "Duration"
+              }
+            ]
+          },
+          {
+            "id": 3,
+            "title": "Balance Changes",
+            "type": "gauge",
+            "targets": [
+              {
+                "expr": "balance_changes",
+                "legendFormat": "Balance"
+              }
+            ]
+          }
+        ],
+        "time": {
+          "from": "now-1h",
+          "to": "now"
+        },
+        "refresh": "5s"
+      }
+    }

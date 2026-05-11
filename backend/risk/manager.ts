@@ -1,5 +1,6 @@
 import { runQuery } from '../database.js';
-
+import { logger } from '../logging/logger.js';
+import { randomUUID } from 'crypto';
 export enum RiskMode {
   ULTRA_CONSERVATIVE = "ultra_conservative",
   CONSERVATIVE = "conservative",
@@ -86,6 +87,7 @@ export const DEFAULT_RISK_CONFIGS = {
     runnerConditions: {
       triggerProfit: 1.5,
       partialExit: 0.6,
+      maxPartialExits: 3,
       maxRunnerDuration: 3600000 // 1 hour
     },
     description: "High risk/reward. Uses runners and multi-candle holds to capture outsized moves. Trades all market regimes."
@@ -112,6 +114,7 @@ export const DEFAULT_RISK_CONFIGS = {
     runnerConditions: {
       triggerProfit: 1.0,
       partialExit: 0.5,
+      maxPartialExits: 3,
       maxRunnerDuration: 7200000 // 2 hours
     },
     description: "Maximum aggression. Very high position sizing and leverage. High probability of significant drawdown or blowup."
@@ -143,15 +146,32 @@ export const DEFAULT_RISK_CONFIGS = {
 export class RiskManager {
   RISK_CONFIGS: Record<string, any>;
   private consecutiveLosses: Record<string, number>;
+  private consecutiveWins: Record<string, number>;
   private originalPositionSizes: Record<string, number>;
 
   constructor() {
     this.RISK_CONFIGS = JSON.parse(JSON.stringify(DEFAULT_RISK_CONFIGS));
     this.consecutiveLosses = {};
+    this.consecutiveWins = {};
     this.originalPositionSizes = {};
     // Initialize original position sizes for each mode
     for (const mode of Object.values(RiskMode)) {
       this.originalPositionSizes[mode] = this.RISK_CONFIGS[mode].positionSize;
+    }
+  }
+
+  private async logSystemEvent(eventType: string, message: string, metadata?: any) {
+    try {
+      const auditId = randomUUID();
+      const timestamp = Date.now();
+      const metadataJson = metadata ? JSON.stringify(metadata) : null;
+
+      await runQuery(`
+        INSERT INTO audit_system_events (id, event_type, message, timestamp, severity, metadata)
+        VALUES (?, ?, ?, ?, ?, ?)
+      `, [auditId, eventType, message, timestamp, 'info', metadataJson]);
+    } catch (error) {
+      logger.error('Failed to log system event', { error: error.message });
     }
   }
 
@@ -201,7 +221,38 @@ export class RiskManager {
 
   recordWin(mode: RiskMode) {
     this.consecutiveLosses[mode] = 0;
-    this.resetPositionSize(mode);
+    const currentWins = (this.consecutiveWins[mode] || 0) + 1;
+    this.consecutiveWins[mode] = currentWins;
+    
+    // Gradual recovery after multiple wins
+    const RECOVERY_WINS = 3;
+    if (currentWins >= RECOVERY_WINS) {
+      this.resetPositionSize(mode);
+      this.consecutiveWins[mode] = 0;
+    } else {
+      // Partial recovery - restore some position size
+      this.partialRecovery(mode, currentWins);
+    }
+  }
+
+  private partialRecovery(mode: RiskMode, wins: number) {
+    const originalSize = this.originalPositionSizes[mode];
+    const config = this.RISK_CONFIGS[mode];
+    const losses = this.consecutiveLosses[mode] || 0;
+    
+    if (losses >= 7) {
+      // After 7+ losses, gradual recovery from 25% towards original
+      const recoveryFactor = 0.25 + (wins * 0.25);
+      config.positionSize = Math.min(originalSize, originalSize * recoveryFactor);
+    } else if (losses >= 5) {
+      // After 5-6 losses, gradual recovery from 50% towards original
+      const recoveryFactor = 0.5 + (wins * 0.25);
+      config.positionSize = Math.min(originalSize, originalSize * recoveryFactor);
+    }
+    
+    if (config.positionSize !== originalSize && wins <= 3) {
+      logger.info(`[RiskManager] Circuit breaker: Position size for ${mode} recovering to ${(config.positionSize * 100).toFixed(1)}% after ${wins} win(s)`);
+    }
   }
 
   private applyCircuitBreaker(mode: RiskMode) {
@@ -232,19 +283,59 @@ export class RiskManager {
     const config = this.RISK_CONFIGS[mode];
     if (config.positionSize !== originalSize) {
       config.positionSize = originalSize;
-      console.log(`[RiskManager] Circuit breaker: Position size for ${mode} reset to ${(originalSize * 100).toFixed(1)}% after winning trade`);
+      logger.info(`[RiskManager] Circuit breaker: Position size for ${mode} reset to ${(originalSize * 100).toFixed(1)}% after winning trade`);
     }
   }
 
+  async calculateKellyPositionSize(balance: number, riskMode: RiskMode, regime: string): Promise<number> {
+    try {
+      // Fetch historical performance for win rate and win/loss ratio calculation
+      const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
+      const historicalTrades = await runQuery(`
+        SELECT pnl FROM shadow_trades
+        WHERE timestamp > ? AND risk_mode = ? AND regime = ? AND status = 'closed'
+        ORDER BY timestamp DESC LIMIT 100
+      `, [thirtyDaysAgo, riskMode, regime], 'all');
 
-  calculatePositionSize(balance: number, entryPrice: number, stopLoss: number, riskMode: RiskMode, confidence: number = 75): number {
+      if (historicalTrades.length < 10) {
+        // Not enough data, fall back to config
+        return this.RISK_CONFIGS[riskMode].positionSize;
+      }
+
+      const wins = historicalTrades.filter((t: any) => t.pnl > 0);
+      const losses = historicalTrades.filter((t: any) => t.pnl < 0);
+
+      const p = wins.length / historicalTrades.length; // Win probability
+      const q = 1 - p; // Loss probability
+
+      if (p <= 0 || p >= 1) return this.RISK_CONFIGS[riskMode].positionSize;
+
+      // Calculate average win and loss ratios
+      const avgWin = wins.reduce((sum: number, t: any) => sum + Math.abs(t.pnl), 0) / wins.length;
+      const avgLoss = losses.reduce((sum: number, t: any) => sum + Math.abs(t.pnl), 0) / losses.length;
+
+      const b = avgWin / avgLoss; // Odds ratio (average win / average loss)
+
+      // Kelly Criterion: f = (bp - q)/b
+      const kellyFraction = (b * p - q) / b;
+
+      // Apply bounds and safety factor
+      const boundedKelly = Math.max(0.01, Math.min(0.25, kellyFraction * 0.5)); // Half-Kelly for safety
+
+      return boundedKelly;
+    } catch (error) {
+      logger.error('Failed to calculate Kelly position size', { error: error.message, riskMode, regime });
+      return this.RISK_CONFIGS[riskMode].positionSize; // Fallback
+    }
+  }
+
+  calculatePositionSize(balance: number, entryPrice: number, stopLoss: number, riskMode: RiskMode, confidence: number = 75, regime: string = ''): number {
     const config = this.RISK_CONFIGS[riskMode];
-    
-    // MD Part 5.1: Dynamic Position Sizing
-    // We use a simplified version: positionSize * confidence_multiplier
-    const baseSize = config.positionSize || 0.02;
 
-    // Confidence multiplier (±20%) - from MD Part 5.1 (corrected based on example)
+    // Base position size from config (may be adjusted by circuit breaker)
+    let baseSize = config.positionSize || 0.02;
+
+    // MD Part 5.1: Dynamic Position Sizing with confidence multiplier
     const confidenceMultiplier = 1.0 + (confidence - 75) / 100;
     const clippedMultiplier = Math.max(0.7, Math.min(1.2, confidenceMultiplier));
 
@@ -253,14 +344,6 @@ export class RiskManager {
 
     const leverage = config.leverage || 1;
     const positionSize = (amountInCurrency * leverage) / entryPrice;
-    
-    // Optional: Risk-based sizing as a secondary constraint
-    // const riskAmount = balance * (config.maxRiskPerTrade || 0.02);
-    // const riskPerUnit = Math.abs(entryPrice - stopLoss);
-    // if (riskPerUnit > 0) {
-    //   const riskBasedSize = riskAmount / riskPerUnit;
-    //   return Math.min(positionSize, riskBasedSize);
-    // }
 
     return positionSize;
   }
@@ -281,28 +364,35 @@ export class RiskManager {
 
   checkCircuitBreakers(balance: number, initialBalance: number, dailyLoss: number, riskMode: RiskMode, consecutiveLosses: number = 0, currentAtr: number = 0, avgAtr: number = 0): string | null {
     const config = this.RISK_CONFIGS[riskMode];
-    
+
     const currentDrawdown = (initialBalance - balance) / initialBalance;
     if (currentDrawdown >= config.maxDrawdown) {
-      return `Max drawdown reached: ${(currentDrawdown * 100).toFixed(2)}% >= ${(config.maxDrawdown * 100).toFixed(2)}%`;
+      const reason = `Max drawdown reached: ${(currentDrawdown * 100).toFixed(2)}% >= ${(config.maxDrawdown * 100).toFixed(2)}%`;
+      this.logSystemEvent('circuit_breaker', reason, { riskMode, balance, initialBalance, currentDrawdown, maxDrawdown: config.maxDrawdown });
+      return reason;
     }
 
     if (dailyLoss >= initialBalance * (config.maxDailyLoss || 0.05)) {
-      return `Max daily loss reached: $${dailyLoss.toFixed(2)} (Limit: ${(config.maxDailyLoss * 100).toFixed(1)}%)`;
+      const reason = `Max daily loss reached: $${dailyLoss.toFixed(2)} (Limit: ${(config.maxDailyLoss * 100).toFixed(1)}%)`;
+      this.logSystemEvent('circuit_breaker', reason, { riskMode, dailyLoss, maxDailyLoss: config.maxDailyLoss, initialBalance });
+      return reason;
     }
 
     // MD Part 5.3: Consecutive Losses - track and reduce position size
     const currentLosses = consecutiveLosses > 0 ? consecutiveLosses : (this.consecutiveLosses[riskMode] || 0);
     if (currentLosses >= 5) {
-      if (currentLosses >= 7) {
-        return `Extreme consecutive losses: ${currentLosses}. Position size reduced to 25%`;
-      }
-      return `High consecutive losses: ${currentLosses}. Position size reduced to 50%`;
+      const reason = currentLosses >= 7
+        ? `Extreme consecutive losses: ${currentLosses}. Position size reduced to 25%`
+        : `High consecutive losses: ${currentLosses}. Position size reduced to 50%`;
+      this.logSystemEvent('circuit_breaker', reason, { riskMode, consecutiveLosses: currentLosses });
+      return reason;
     }
 
     // MD Part 5.3: Volatility Spike
     if (avgAtr > 0 && currentAtr > avgAtr * 3) {
-      return `Volatility spike detected: ATR ${currentAtr.toFixed(2)} > 3x Avg (${avgAtr.toFixed(2)})`;
+      const reason = `Volatility spike detected: ATR ${currentAtr.toFixed(2)} > 3x Avg (${avgAtr.toFixed(2)})`;
+      this.logSystemEvent('circuit_breaker', reason, { riskMode, currentAtr, avgAtr });
+      return reason;
     }
 
     return null;

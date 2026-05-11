@@ -1,0 +1,27 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: shady-trader-alerts
+  namespace: monitoring
+  labels:
+    app: shady-trader
+spec:
+  groups:
+  - name: trading-alerts
+    rules:
+    - alert: HighTradingLatency
+      expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="shady-trader-backend"}[5m])) > 0.5
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High trading latency detected"
+        description: "95th percentile latency > 500ms for 5 minutes"
+    - alert: TradingOperationsFailure
+      expr: increase(trading_operations_total{type="failure"}[5m]) > 5
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "High trading operation failures"
+        description: "More than 5 trading failures in 5 minutes"

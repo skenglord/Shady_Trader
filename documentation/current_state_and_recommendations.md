@@ -11,11 +11,13 @@
 1. **Core engine flow is cohesive**
    - TradingEngine -> IndicatorEngine -> RegimeDetector -> SignalGenerator -> ShadowTrader path is present and integrated.
 2. **Shadow portfolio mechanics are active**
-   - Multi-mode portfolio structure, stop/take-profit handling, and performance aggregation are available.
+   - Multi-mode portfolio structure, stop/take-profit handling, margin-based PnL accounting, and performance aggregation are available.
 3. **Operational API coverage is strong**
    - The backend exposes lifecycle, settings, balances, positions, backtest, and history endpoints.
 4. **Test and typecheck baseline is green**
-   - Lint/typecheck and all current test files are passing in this environment.
+   - Lint/typecheck and all current test files are passing in this environment (53/53 tests passing).
+5. **AI integration error handling**
+   - API_KEY_INVALID blocks trades, non-critical AI errors add warning flags, AI health monitoring with circuit breaker, and graceful fallback to technical-only signals.
 
 ### Current technical risk areas
 1. **Security coverage is improved but not complete**
@@ -129,3 +131,5 @@
 3. Add deeper simulation tests for `TradingEngine.runCycle` and `ShadowTrader` close/update branches to progress toward a 95% stretch target.
 4. Add full OpenTelemetry instrumentation and dashboard/alert wiring (current metrics endpoint is Prometheus-text only).
 5. Expand authenticated execution adapters to additional providers (e.g., OKX) behind the typed interface.
+6. Finalize and document circuit-breaker behavior and margin-based PnL/leverage calculations in runbooks and configuration guides.
+7. Monitor AI health metrics and refine circuit breaker thresholds based on production failure patterns.

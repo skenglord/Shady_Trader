@@ -1,0 +1,17 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: shady-trader-backend
+  namespace: monitoring
+  labels:
+    app: shady-trader
+spec:
+  selector:
+    matchLabels:
+      app: shady-trader
+      component: backend
+  endpoints:
+  - port: "3000"
+    path: /metrics
+    interval: 15s
+    scrapeTimeout: 10s

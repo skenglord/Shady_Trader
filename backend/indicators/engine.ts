@@ -1,4 +1,10 @@
 import { EMA, RSI, BollingerBands, ADX, StochasticRSI, MACD, SMA, ATR } from 'technicalindicators';
+import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 export interface Candle {
   time: number;
@@ -19,6 +25,66 @@ export class IndicatorEngine {
   ADX_PERIOD = 14;
   STOCH_RSI_PERIOD = 14;
   VOLUME_PERIOD = 20;
+
+  private workerPool: Worker[] = [];
+  private maxWorkers = 4;
+
+  async calculateAllParallel(candles: Candle[]): Promise<any[]> {
+    if (candles.length < 50) {
+      throw new Error("Need at least 50 candles for indicator calculation");
+    }
+
+    // Split work across workers
+    const chunkSize = Math.ceil(candles.length / this.maxWorkers);
+    const promises: Promise<any[]>[] = [];
+
+    for (let i = 0; i < this.maxWorkers; i++) {
+      const start = i * chunkSize;
+      const end = Math.min(start + chunkSize + 50, candles.length); // Include overlap for accurate calculations
+      const chunk = candles.slice(start, end);
+
+      promises.push(this.calculateChunk(chunk, start));
+    }
+
+    const results = await Promise.all(promises);
+
+    // Merge results
+    const merged = this.mergeResults(results);
+    return merged.filter(r => r.ema_50 !== null);
+  }
+
+  private async calculateChunk(candles: Candle[], offset: number): Promise<any[]> {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(path.join(__dirname, 'indicator-worker.js'), {
+        workerData: { candles, offset }
+      });
+
+      worker.on('message', resolve);
+      worker.on('error', reject);
+      worker.on('exit', (code) => {
+        if (code !== 0) {
+          reject(new Error(`Worker stopped with exit code ${code}`));
+        }
+      });
+    });
+  }
+
+  private mergeResults(results: any[][]): any[] {
+    // Simple merge - take the longest result and fill gaps
+    const maxLength = Math.max(...results.map(r => r.length));
+    const merged = new Array(maxLength);
+
+    for (let i = 0; i < maxLength; i++) {
+      for (const result of results) {
+        if (result[i]) {
+          merged[i] = result[i];
+          break;
+        }
+      }
+    }
+
+    return merged;
+  }
 
   calculateAll(candles: Candle[]) {
     if (candles.length < 50) {

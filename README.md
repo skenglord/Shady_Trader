@@ -147,5 +147,21 @@ Run `npm run test` to execute the full backend test suite (`tests/*.test.ts`), i
 - Current baseline coverage thresholds are intentionally incremental: **50% lines** and **65% branches** (ratcheted upward over time).
 - Current observed coverage in this environment after latest test expansion: approximately **61% lines** and **70% branches**.
 
+## API Gateway & Load Balancing (Phase 1.4)
+
+For multi-instance Kubernetes deployments, the system includes:
+
+- **NGINX Ingress Controller** with TLS termination, rate limiting, and security headers
+- **Horizontal Pod Autoscaler (HPA)** scaling 2-10 replicas based on CPU/memory
+- **WebSocket sticky session support** for real-time trading updates
+- **Load balancing** with health checks and graceful shutdown
+
+Kubernetes manifests in `k8s/`:
+- `ingress.yaml` - NGINX ingress with TLS, rate limiting, security headers
+- `hpa.yaml` - HorizontalPodAutoscaler configuration
+- `nginx-config.yaml` - NGINX configuration for rate limiting
+
+Apply with: `kubectl apply -f k8s/`
+
 For a current architectural/health appraisal and prioritized recommendations, see:
 - `documentation/current_state_and_recommendations.md`

@@ -9,12 +9,127 @@ export interface Signal {
   takeProfit: number;
   reasoning: string;
   indicators: string[]; // List of indicators that triggered the signal
+  aiWarning?: boolean; // Flag for non-critical AI errors
 }
 
 export class SignalGenerator {
   static aiEnabled = true;
+  static aiHealth: {
+    totalRequests: number;
+    successfulConfirmations: number;
+    failedConfirmations: number;
+    lastFailureReason: string | null;
+    circuitBreakerTripped: boolean;
+    consecutiveFailures: number;
+  } = {
+    totalRequests: 0,
+    successfulConfirmations: 0,
+    failedConfirmations: 0,
+    lastFailureReason: null,
+    circuitBreakerTripped: false,
+    consecutiveFailures: 0
+  };
 
-  async generateSignal(df: any[], regime: RegimeType, symbol: string, useAI: boolean = false, strategy: string = 'regime'): Promise<Signal | null> {
+  private streamingBuffers: Map<string, any[]> = new Map();
+  private maxBufferSize = 100;
+
+  // ATR multipliers for different regimes (conservative to aggressive)
+  private static ATR_STOP_MULTIPLIERS = {
+    ultra_conservative: 2.0,
+    conservative: 1.8,
+    moderate: 1.5,
+    aggressive: 1.2,
+    degen: 1.0,
+    ai_enhanced: 1.5
+  };
+
+  private static ATR_PROFIT_MULTIPLIERS = {
+    ultra_conservative: 1.0,
+    conservative: 1.2,
+    moderate: 1.5,
+    aggressive: 2.0,
+    degen: 2.5,
+    ai_enhanced: 1.5
+  };
+
+  static resetAIHealth() {
+    this.aiHealth = {
+      totalRequests: 0,
+      successfulConfirmations: 0,
+      failedConfirmations: 0,
+      lastFailureReason: null,
+      circuitBreakerTripped: false,
+      consecutiveFailures: 0
+    };
+  }
+
+  static getAIHealth() {
+    const h = this.aiHealth;
+    const successRate = h.totalRequests > 0 ? (h.successfulConfirmations / h.totalRequests) * 100 : 0;
+    return {
+      ...h,
+      successRate,
+      aiAvailable: this.aiEnabled && !this.aiHealth.circuitBreakerTripped
+    };
+  }
+
+  private calculateATRAdjustedLevels(entryPrice: number, atr: number, side: 'buy' | 'sell', riskMode: string): { stopLoss: number, takeProfit: number } {
+    const stopMultiplier = SignalGenerator.ATR_STOP_MULTIPLIERS[riskMode] || 1.5;
+    const profitMultiplier = SignalGenerator.ATR_PROFIT_MULTIPLIERS[riskMode] || 1.5;
+
+    if (side === 'buy') {
+      const stopLoss = entryPrice - (stopMultiplier * atr);
+      const takeProfit = entryPrice + (profitMultiplier * atr);
+      return { stopLoss, takeProfit };
+    } else {
+      const stopLoss = entryPrice + (stopMultiplier * atr);
+      const takeProfit = entryPrice - (profitMultiplier * atr);
+      return { stopLoss, takeProfit };
+    }
+  }
+
+  // Streaming signal generation
+  addToStream(symbol: string, candle: any): void {
+    let buffer = this.streamingBuffers.get(symbol);
+    if (!buffer) {
+      buffer = [];
+      this.streamingBuffers.set(symbol, buffer);
+    }
+
+    buffer.push(candle);
+
+    // Keep buffer size manageable
+    if (buffer.length > this.maxBufferSize) {
+      buffer.shift();
+    }
+  }
+
+  generateStreamingSignal(
+    symbol: string,
+    regime: RegimeType,
+    useAI: boolean = false,
+    strategy: string = 'regime',
+    riskMode: string = 'moderate'
+  ): Signal | null {
+    const buffer = this.streamingBuffers.get(symbol);
+    if (!buffer || buffer.length < 50) {
+      return null; // Need minimum data for indicators
+    }
+
+    // Use the most recent data
+    return this.generateSignal(buffer, regime, symbol, useAI, strategy, riskMode);
+  }
+
+  getStreamingBufferSize(symbol: string): number {
+    const buffer = this.streamingBuffers.get(symbol);
+    return buffer ? buffer.length : 0;
+  }
+
+  clearStreamingBuffer(symbol: string): void {
+    this.streamingBuffers.delete(symbol);
+  }
+
+  async generateSignal(df: any[], regime: RegimeType, symbol: string, useAI: boolean = false, strategy: string = 'regime', riskMode: string = 'moderate'): Promise<Signal | null> {
     if (df.length < 50) return null;
 
     let signal: Signal | null = null;
@@ -44,11 +159,22 @@ export class SignalGenerator {
       }
     }
 
-    if (signal && useAI && SignalGenerator.aiEnabled) {
+    if (signal && useAI && SignalGenerator.aiEnabled && !SignalGenerator.aiHealth.circuitBreakerTripped) {
       try {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) {
           console.warn("AI Signal Confirmation skipped: GEMINI_API_KEY is not set.");
+          SignalGenerator.aiHealth.totalRequests++;
+          SignalGenerator.aiHealth.failedConfirmations++;
+          SignalGenerator.aiHealth.consecutiveFailures++;
+          SignalGenerator.aiHealth.lastFailureReason = 'GEMINI_API_KEY not configured';
+          signal.aiWarning = true;
+          // Disable AI features when no key is configured
+          SignalGenerator.aiEnabled = false;
+          if (SignalGenerator.aiHealth.consecutiveFailures >= 3) {
+            SignalGenerator.aiHealth.circuitBreakerTripped = true;
+            console.error('[AI Circuit Breaker] Tripped due to missing API key');
+          }
         } else {
           const { GoogleGenAI } = await import('@google/genai');
           const ai = new GoogleGenAI({ apiKey });
@@ -80,24 +206,40 @@ export class SignalGenerator {
 
           if (response.text) {
             const aiResult = JSON.parse(response.text);
+            SignalGenerator.aiHealth.totalRequests++;
+            SignalGenerator.aiHealth.successfulConfirmations++;
+            SignalGenerator.aiHealth.consecutiveFailures = 0;
             if (!aiResult.confirmed) {
               console.log(`AI rejected signal for ${symbol}: ${aiResult.reasoning}`);
-              return null;
+              return null; // Block trade when AI rejects
             } else {
               signal.reasoning = `AI Confirmed: ${aiResult.reasoning}`;
             }
           }
         }
       } catch (e: any) {
+        SignalGenerator.aiHealth.totalRequests++;
+        SignalGenerator.aiHealth.failedConfirmations++;
+        SignalGenerator.aiHealth.consecutiveFailures++;
+        SignalGenerator.aiHealth.lastFailureReason = e.message || String(e);
+        
         if (e.message && e.message.includes("API_KEY_INVALID")) {
           console.error("AI Signal Confirmation failed: Invalid API Key. Disabling AI features.");
           SignalGenerator.aiEnabled = false;
-          return null; // Don't proceed without AI when it's required
+          SignalGenerator.aiHealth.circuitBreakerTripped = true;
+          return null; // Block trade when AI key is invalid and AI is required
         } else {
           console.error("AI Signal Confirmation failed:", e);
-          // Option 1: Return null to block trade
-          // Option 2: Return signal with warning flag
+          // Non-critical AI error: add warning flag to signal, allow trade to proceed
+          signal.aiWarning = true;
           signal.reasoning += ` [AI Confirmation Failed: ${e.message}]`;
+          
+          // Circuit breaker: trip after 5 consecutive failures
+          if (SignalGenerator.aiHealth.consecutiveFailures >= 5) {
+            SignalGenerator.aiHealth.circuitBreakerTripped = true;
+            console.error(`[AI Circuit Breaker] Tripped after ${SignalGenerator.aiHealth.consecutiveFailures} consecutive failures. AI features disabled temporarily.`);
+            SignalGenerator.aiEnabled = false;
+          }
         }
       }
     }
@@ -143,14 +285,15 @@ export class SignalGenerator {
     }
 
     if (score >= 60) {
+      const { stopLoss, takeProfit } = this.calculateATRAdjustedLevels(data.close, data.atr, 'buy', riskMode);
       return {
         symbol,
         side: 'buy',
         confidence: score,
         entryPrice: data.close,
-        stopLoss: data.close * 0.985, // Default 1.5% as per MD Ultra-Conservative
-        takeProfit: data.close * 1.008, // Default 0.8%
-        reasoning: `Strong Bull: Score ${score} - ${indicators.join(', ')}`,
+        stopLoss,
+        takeProfit,
+        reasoning: `Strong Bull: Score ${score} - ${indicators.join(', ')} (ATR-adjusted)`,
         indicators
       };
     }
@@ -193,14 +336,15 @@ export class SignalGenerator {
     }
 
     if (score >= 50) {
+      const { stopLoss, takeProfit } = this.calculateATRAdjustedLevels(data.close, data.atr, 'buy', riskMode);
       return {
         symbol,
         side: 'buy',
         confidence: Math.min(score, 100),
         entryPrice: data.close,
-        stopLoss: data.close * 0.98, // 2%
-        takeProfit: data.close * 1.012, // 1.2%
-        reasoning: `Weak Bull: Score ${Math.min(score, 100).toFixed(0)} - ${indicators.join(', ')}`,
+        stopLoss,
+        takeProfit,
+        reasoning: `Weak Bull: Score ${Math.min(score, 100).toFixed(0)} - ${indicators.join(', ')} (ATR-adjusted)`,
         indicators
       };
     }
@@ -240,14 +384,15 @@ export class SignalGenerator {
     }
 
     if (score >= 50) {
+      const { stopLoss, takeProfit } = this.calculateATRAdjustedLevels(data.close, data.atr, 'sell', riskMode);
       return {
         symbol,
         side: 'sell',
         confidence: score,
         entryPrice: data.close,
-        stopLoss: data.close * 1.02, // 2%
-        takeProfit: data.close * 0.98, // 2% (Target lower BB)
-        reasoning: `Bear: Score ${score} - ${indicators.join(', ')}`,
+        stopLoss,
+        takeProfit,
+        reasoning: `Bear: Score ${score} - ${indicators.join(', ')} (ATR-adjusted)`,
         indicators
       };
     }
@@ -296,14 +441,15 @@ export class SignalGenerator {
     }
 
     if (score >= 50) {
+      const { stopLoss, takeProfit } = this.calculateATRAdjustedLevels(data.close, data.atr, side, riskMode);
       return {
         symbol,
         side,
         confidence: score,
         entryPrice: data.close,
-        stopLoss: side === 'buy' ? data.close * 0.985 : data.close * 1.015,
-        takeProfit: side === 'buy' ? data.close * 1.006 : data.close * 0.994,
-        reasoning: `Sideways: Score ${score} - ${indicators.join(', ')}`,
+        stopLoss,
+        takeProfit,
+        reasoning: `Sideways: Score ${score} - ${indicators.join(', ')} (ATR-adjusted)`,
         indicators
       };
     }
@@ -317,14 +463,15 @@ export class SignalGenerator {
     // For now, let's just return a signal if indicators align.
     const last = df[df.length - 1];
     if (last.rsi_14 > 50) {
+      const { stopLoss, takeProfit } = this.calculateATRAdjustedLevels(last.close, last.atr, 'buy', riskMode);
       return {
         symbol,
         side: 'buy',
         confidence: 60,
         entryPrice: last.close,
-        stopLoss: last.close * 0.99,
-        takeProfit: last.close * 1.01,
-        reasoning: 'Shotgun: Triggered by RSI',
+        stopLoss,
+        takeProfit,
+        reasoning: 'Shotgun: Triggered by RSI (ATR-adjusted)',
         indicators: ['RSI']
       };
     }
@@ -336,14 +483,16 @@ export class SignalGenerator {
     const prev = df[df.length - 2];
     const change = Math.abs(last.close - prev.close) / prev.close;
     if (change > 0.01) {
+      const side = last.close > prev.close ? 'buy' : 'sell';
+      const { stopLoss, takeProfit } = this.calculateATRAdjustedLevels(last.close, last.atr, side, riskMode);
       return {
         symbol,
-        side: last.close > prev.close ? 'buy' : 'sell',
+        side,
         confidence: 65,
         entryPrice: last.close,
-        stopLoss: last.close * 0.98,
-        takeProfit: last.close * 1.02,
-        reasoning: 'Alt Chaser: Price change > 1%',
+        stopLoss,
+        takeProfit,
+        reasoning: 'Alt Chaser: Price change > 1% (ATR-adjusted)',
         indicators: ['Price Action']
       };
     }
@@ -354,14 +503,15 @@ export class SignalGenerator {
     const last = df[df.length - 1];
     // Placeholder for probability score logic
     if (last.rsi_14 > 50) {
+      const { stopLoss, takeProfit } = this.calculateATRAdjustedLevels(last.close, last.atr, 'buy', riskMode);
       return {
         symbol,
         side: 'buy',
         confidence: 75,
         entryPrice: last.close,
-        stopLoss: last.close * 0.94, // 6% stop loss
-        takeProfit: last.close * 1.10,
-        reasoning: 'Chasing Dragons: Probability score maintained',
+        stopLoss,
+        takeProfit,
+        reasoning: 'Chasing Dragons: Probability score maintained (ATR-adjusted)',
         indicators: ['RSI']
       };
     }

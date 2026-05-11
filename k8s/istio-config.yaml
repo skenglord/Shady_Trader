@@ -1,0 +1,163 @@
+apiVersion: networking.istio.io/v1beta1
+kind: Gateway
+metadata:
+  name: shady-trader-gateway
+  namespace: default
+spec:
+  selector:
+    istio: ingressgateway
+  servers:
+  - port:
+      number: 80
+      name: http
+      protocol: HTTP
+    hosts:
+    - shady-trader.example.com
+  - port:
+      number: 443
+      name: https
+      protocol: HTTPS
+    tls:
+      mode: SIMPLE
+      credentialName: shady-trader-tls
+    hosts:
+    - shady-trader.example.com
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: VirtualService
+metadata:
+  name: shady-trader-vs
+  namespace: default
+spec:
+  hosts:
+  - shady-trader.example.com
+  gateways:
+  - shady-trader-gateway
+  http:
+  - match:
+    - uri:
+        prefix: "/api"
+    route:
+    - destination:
+        host: shady-trader-app
+        port:
+          number: 3000
+    timeout: 30s
+    retries:
+      attempts: 3
+      perTryTimeout: 10s
+  - match:
+    - uri:
+        prefix: "/"
+    route:
+    - destination:
+        host: shady-trader-app
+        port:
+          number: 3000
+    timeout: 30s
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: DestinationRule
+metadata:
+  name: shady-trader-dr
+  namespace: default
+spec:
+  host: shady-trader-app
+  trafficPolicy:
+    loadBalancer:
+      simple: LEAST_CONN
+    connectionPool:
+      tcp:
+        maxConnections: 100
+      http:
+        http1MaxPendingRequests: 50
+        maxRequestsPerConnection: 10
+    outlierDetection:
+      consecutive5xxErrors: 3
+      interval: 10s
+      baseEjectionTime: 30s
+
+---
+apiVersion: networking.istio.io/v1beta1
+kind: PeerAuthentication
+metadata:
+  name: shady-trader-pa
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: shady-trader-app
+  mtls:
+    mode: PERMISSIVE
+
+---
+apiVersion: security.istio.io/v1beta1
+kind: AuthorizationPolicy
+metadata:
+  name: shady-trader-authz
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: shady-trader-app
+  action: ALLOW
+  rules:
+  - from:
+    - source:
+        requestPrincipals: ["*"]
+    to:
+    - operation:
+        methods: ["GET"]
+        paths: ["/api/health", "/metrics"]
+  - from:
+    - source:
+        requestPrincipals: ["user/*"]
+    to:
+    - operation:
+        methods: ["GET", "POST"]
+        paths: ["/api/*"]
+  - from:
+    - source:
+        requestPrincipals: ["admin/*"]
+    to:
+    - operation:
+        methods: ["*"]
+        paths: ["/api/*"]
+
+---
+apiVersion: telemetry.istio.io/v1alpha1
+kind: Telemetry
+metadata:
+  name: shady-trader-telemetry
+  namespace: default
+spec:
+  selector:
+    matchLabels:
+      app: shady-trader-app
+  metrics:
+  - providers:
+    - name: prometheus
+    overrides:
+    - tagOverrides:
+        request_operation:
+          value: "istio_request_operation"
+      match:
+        metricMatch:
+          type: METRIC
+          metric: REQUEST_COUNT
+  tracing:
+  - providers:
+    - name: opentelemetry
+      opentelemetry:
+        service: opentelemetry-collector.default.svc.cluster.local
+        port: 4317
+  accessLogging:
+  - providers:
+    - name: envoy
+      envoy:
+        logName: accesslog
+        sink:
+          file:
+            path: /dev/stdout

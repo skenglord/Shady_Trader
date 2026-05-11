@@ -1,0 +1,225 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shady-trader-postgres
+  labels:
+    app: shady-trader
+    component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: shady-trader
+      component: database
+  template:
+    metadata:
+      labels:
+        app: shady-trader
+        component: database
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:15-alpine
+        ports:
+        - containerPort: 5432
+        env:
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: shady-trader-config
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: POSTGRES_PASSWORD
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+        - name: postgres-init
+          mountPath: /docker-entrypoint-initdb.d
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - $(POSTGRES_USER)
+            - -d
+            - $(POSTGRES_DB)
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - pg_isready
+            - -U
+            - $(POSTGRES_USER)
+            - -d
+            - $(POSTGRES_DB)
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-pvc
+      - name: postgres-init
+        configMap:
+          name: postgres-init-config
+      - name: fluent-bit-config
+        configMap:
+          name: fluent-bit-config
+      - name: varlogcontainers
+        hostPath:
+          path: /var/log/containers
+      - name: varlogpods
+        hostPath:
+          path: /var/log/pods
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: shady-trader-app
+  labels:
+    app: shady-trader
+    component: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: shady-trader
+      component: backend
+   template:
+     metadata:
+       labels:
+         app: shady-trader-app
+         component: backend
+       annotations:
+         prometheus.io/scrape: "true"
+         prometheus.io/port: "3000"
+         prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: shady-trader
+        image: shady-trader:latest
+        ports:
+        - containerPort: 3000
+        env:
+        - name: NODE_ENV
+          value: production
+        - name: USE_POSTGRES
+          value: "true"
+        - name: POSTGRES_HOST
+          value: shady-trader-postgres
+        - name: POSTGRES_PORT
+          value: "5432"
+        - name: POSTGRES_DB
+          valueFrom:
+            configMapKeyRef:
+              name: shady-trader-config
+              key: POSTGRES_DB
+        - name: POSTGRES_USER
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: POSTGRES_USER
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: POSTGRES_PASSWORD
+        - name: POSTGRES_MAX_CONNECTIONS
+          value: "20"
+        - name: REDIS_HOST
+          value: shady-trader-redis
+        - name: REDIS_PORT
+          value: "6379"
+        - name: GEMINI_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: GEMINI_API_KEY
+        - name: BINANCE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: BINANCE_API_KEY
+- name: BINANCE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: BINANCE_SECRET_KEY
+        - name: KRAKEN_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: KRAKEN_API_KEY
+        - name: KRAKEN_PRIVATE_KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: KRAKEN_PRIVATE_KEY
+        - name: CORS_ORIGIN
+          value: "*"
+        - name: API_TRADER_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: API_TRADER_TOKEN
+        - name: API_ADMIN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: API_ADMIN_TOKEN
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "500m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+         readinessProbe:
+           httpGet:
+             path: /api/health
+             port: 3000
+           initialDelaySeconds: 5
+           periodSeconds: 5
+       - name: fluent-bit
+         image: fluent/fluent-bit:2.2
+         ports:
+         - containerPort: 2020
+         volumeMounts:
+         - name: fluent-bit-config
+           mountPath: /fluent-bit/etc/
+         - name: varlogcontainers
+           mountPath: /var/log/containers
+           readOnly: true
+         - name: varlogpods
+           mountPath: /var/log/pods
+           readOnly: true
+         - name: varlibdockercontainers
+           mountPath: /var/lib/docker/containers
+           readOnly: true
+         # Session affinity for WebSocket sticky sessions
+        # This helps maintain WebSocket connections on the same pod
+        # Note: For true sticky sessions, configure at the ingress level

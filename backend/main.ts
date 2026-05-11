@@ -5,12 +5,22 @@ import { RegimeDetector, RegimeType } from './regime/detector.js';
 import { SignalGenerator } from './strategy/signal_generator.js';
 import { ShadowTrader } from './shadow/shadow_trader.js';
 import { BalanceManager } from './balance/manager.js';
-import { runQuery } from './database.js';
 import { MarketDataService } from './api/marketDataService.js';
 import { OptimizationEngine } from './strategy/optimization_engine.js';
+import { MonteCarloEngine } from './monte-carlo/engine/monte-carlo-engine.js';
+import { SlippageEngine, CostEstimator, LiquidityAnalyzer, SlippageCircuitBreaker } from './slippage/index.js';
+import { Decimal } from 'decimal.js';
+import { randomUUID } from 'crypto';
+import { getMarketDataQueue, getOptimizationQueue, getQueueHealth, initializeWorkers, closeQueues } from './job_queues.js';
 import fs from 'fs';
 import path from 'path';
 import { logger } from './logging/logger.js';
+import { runQuery } from './database.js';
+import paperTradingRouter from './paper-trading/paper-trading.controller.js';
+import { PaperTradingService } from './paper-trading/paper-trading-service.js';
+import { PaperTradingWebSocketHandler } from './paper-trading/websocket-handler.js';
+import { getServiceManager, StatelessServiceManager } from './stateless-manager.js';
+import Redis from 'ioredis';
 
 export class TradingEngine {
   exchange: ExchangeConnector | null;
@@ -22,18 +32,134 @@ export class TradingEngine {
   balanceManager: BalanceManager;
   marketDataService: MarketDataService;
   optimizationEngine: OptimizationEngine;
+  monteCarloEngine: MonteCarloEngine;
+  slippageEngine: {
+    engine: SlippageEngine;
+    costEstimator: CostEstimator;
+    liquidityAnalyzer: LiquidityAnalyzer;
+  } | null = null;
   wss: WebSocketServer;
   db: any; // Keep for now if used elsewhere, but remove from constructor
-  currentRegime: RegimeType = RegimeType.UNCERTAIN;
-  manualRegime: RegimeType | null = null;
-  isRunning: boolean = false;
-  symbol: string = 'BTC/USDT';
-  timeframe: string = '15m';
-  activeMode: string = 'moderate';
-  strategy: string = 'regime';
+  stateManager: StatelessServiceManager;
 
-  aiStrategySwitching: boolean = false;
+  // Default values (actual state stored in Redis)
+  private _currentRegime: RegimeType = RegimeType.UNCERTAIN;
+  private _manualRegime: RegimeType | null = null;
+  private _isRunning: boolean = false;
+  private _symbol: string = 'BTC/USDT';
+  private _timeframe: string = '15m';
+  private _activeMode: string = 'moderate';
+  private _strategy: string = 'regime';
+  private _aiStrategySwitching: boolean = false;
+
   static aiStrategySwitchingEnabled = true;
+
+  private async loadStateFromRedis(): Promise<void> {
+    try {
+      const state = await this.stateManager.getAllState();
+
+      this._currentRegime = state.currentRegime || RegimeType.UNCERTAIN;
+      this._manualRegime = state.manualRegime || null;
+      // Don't load isRunning from Redis - it's a runtime state managed locally
+      this._symbol = state.symbol || 'BTC/USDT';
+      this._timeframe = state.timeframe || '15m';
+      this._activeMode = state.activeMode || 'moderate';
+      this._strategy = state.strategy || 'regime';
+      this._aiStrategySwitching = state.aiStrategySwitching || false;
+
+      logger.info('Loaded state from Redis', { state });
+    } catch (error) {
+      logger.warn('Failed to load state from Redis, using defaults', { error: error.message });
+      // Redis failure is not critical - continue with defaults
+    }
+  }
+
+  // Stateful property getters/setters with Redis backing
+  get currentRegime(): RegimeType {
+    return this._currentRegime;
+  }
+
+  set currentRegime(value: RegimeType) {
+    this._currentRegime = value;
+    this.stateManager.setState('currentRegime', value).catch(() => {
+      // Redis failure - continue without state persistence
+    });
+  }
+
+  get manualRegime(): RegimeType | null {
+    return this._manualRegime;
+  }
+
+  set manualRegime(value: RegimeType | null) {
+    this._manualRegime = value;
+    this.stateManager.setState('manualRegime', value).catch(() => {
+      // Redis failure - continue without state persistence
+    });
+  }
+
+  get isRunning(): boolean {
+    return this._isRunning;
+  }
+
+  set isRunning(value: boolean) {
+    this._isRunning = value;
+    // Don't set isRunning in Redis - it's a local operational state
+  }
+
+  get symbol(): string {
+    return this._symbol;
+  }
+
+  set symbol(value: string) {
+    this._symbol = value;
+    this.stateManager.setState('symbol', value).catch(() => {
+      // Redis failure - continue without state persistence
+    });
+  }
+
+  get timeframe(): string {
+    return this._timeframe;
+  }
+
+  set timeframe(value: string) {
+    this._timeframe = value;
+    this.stateManager.setState('timeframe', value).catch(() => {
+      // Redis failure - continue without state persistence
+    });
+  }
+
+  get activeMode(): string {
+    return this._activeMode;
+  }
+
+  set activeMode(value: string) {
+    this._activeMode = value;
+    this.stateManager.setState('activeMode', value).catch(() => {
+      // Redis failure - continue without state persistence
+    });
+  }
+
+  get strategy(): string {
+    return this._strategy;
+  }
+
+  set strategy(value: string) {
+    this._strategy = value;
+    this.stateManager.setState('strategy', value).catch(() => {
+      // Redis failure - continue without state persistence
+    });
+  }
+
+  get aiStrategySwitching(): boolean {
+    return this._aiStrategySwitching;
+  }
+
+  set aiStrategySwitching(value: boolean) {
+    this._aiStrategySwitching = value;
+    this.stateManager.setState('aiStrategySwitching', value).catch(() => {
+      // Redis failure - continue without state persistence
+    });
+  }
   aiSignalGeneration: boolean = false;
   aiSentimentAnalysis: boolean = false;
   private marketPollInterval: NodeJS.Timeout | null = null;
@@ -50,9 +176,29 @@ export class TradingEngine {
     exchangeReason: 'not_initialized'
   };
 
-  constructor(wss: WebSocketServer) {
+  // Paper trading components
+  paperTradingService: PaperTradingService;
+  paperTradingWebSocketHandler: PaperTradingWebSocketHandler;
+
+  constructor(wss: WebSocketServer, redis?: Redis) {
     logger.info('TradingEngine constructor called', { service: 'TradingEngine' });
     this.wss = wss;
+
+    // Initialize state manager with Redis
+    const redisInstance = redis || new Redis({
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379'),
+      password: process.env.REDIS_PASSWORD || '',
+    });
+    // Handle Redis connection errors to prevent unhandled rejections
+    redisInstance.on('error', (err) => {
+      logger.warn('Redis connection error', { error: err.message });
+    });
+    this.stateManager = getServiceManager(redisInstance, 'trading-engine');
+
+    // Load initial state from Redis
+    this.loadStateFromRedis();
+
     this.exchange = null; // Initialize as null
     this.indicators = new IndicatorEngine();
     this.regimeDetector = new RegimeDetector();
@@ -61,44 +207,209 @@ export class TradingEngine {
     this.balanceManager = new BalanceManager();
     this.marketDataService = new MarketDataService();
     this.optimizationEngine = new OptimizationEngine(this.shadowTrader.riskManager);
+    this.monteCarloEngine = new MonteCarloEngine();
+
+    // Initialize paper trading components
+    this.paperTradingService = new PaperTradingService();
+    this.paperTradingWebSocketHandler = new PaperTradingWebSocketHandler(this.paperTradingService);
+
+    // Setup WebSocket handler for paper trading
+    this.setupPaperTradingWebSocket();
+
+    // Initialize slippage engine components
+    try {
+      const slippageEngine = new SlippageEngine();
+      const liquidityAnalyzer = new LiquidityAnalyzer(this.exchange);
+      const costEstimator = new CostEstimator(slippageEngine);
+
+      this.slippageEngine = {
+        engine: slippageEngine,
+        costEstimator,
+        liquidityAnalyzer
+      };
+
+      // Connect cost estimator to shadow trader
+      this.shadowTrader.costEstimator = costEstimator;
+
+      // Initialize circuit breaker
+      const circuitBreaker = new SlippageCircuitBreaker({
+        absoluteThreshold: new Decimal(0.1), // 10% max slippage
+        confidenceThreshold: 0.5,
+        spreadWideningThreshold: 5,
+        toxicityThreshold: 0.8,
+        liquidityVoidThreshold: 100 // Min depth
+      });
+      this.shadowTrader.slippageCircuitBreaker = circuitBreaker;
+
+      logger.info('Slippage engine initialized successfully', { service: 'TradingEngine' });
+    } catch (error: any) {
+      logger.warn('Failed to initialize slippage engine, continuing without it', {
+        service: 'TradingEngine',
+        error: error.message
+      });
+    }
 
     // Setup DB backup cron (every hour)
     // setInterval(() => {
     //   this.backupDatabase();
     // }, 60 * 60 * 1000);
 
-    this.startSchedulers();
+    this.setupSignalHandlers();
+  }
+
+  private isShuttingDown = false;
+
+  private setupSignalHandlers() {
+    process.on('SIGTERM', () => this.gracefulShutdown('SIGTERM'));
+    process.on('SIGINT', () => this.gracefulShutdown('SIGINT'));
+    logger.debug('Signal handlers registered', { service: 'TradingEngine' });
+  }
+
+  private setupPaperTradingWebSocket(): void {
+    this.wss.on('connection', (ws, req) => {
+      const url = req.url;
+      
+      // Check if this is a paper trading WebSocket connection
+      if (url && url.includes('paper-trading')) {
+        const clientId = randomUUID();
+        logger.info('Paper trading WebSocket connection established', { clientId, url });
+        this.paperTradingWebSocketHandler.handleConnection(ws, clientId);
+      }
+    });
+  }
+
+  async gracefulShutdown(signal: string) {
+    if (this.isShuttingDown) {
+      logger.warn('Shutdown already in progress, ignoring duplicate signal', { signal });
+      return;
+    }
+    this.isShuttingDown = true;
+    logger.info('Graceful shutdown initiated', { signal, service: 'TradingEngine' });
+
+    // Stop main loop
+    this.isRunning = false;
+
+    // Close job queues
+    await closeQueues();
+
+    // Close WebSocket connections gracefully
+    this.wss.clients.forEach((client) => {
+      if (client.readyState === 1) { // WebSocket.OPEN
+        client.close(1001, 'Server shutting down');
+      }
+    });
+    logger.info('WebSocket connections closed', { service: 'TradingEngine' });
+
+    // Wait for pending database operations (30s timeout)
+    await this.waitForPendingOperations(30000);
+
+    // Backup database before exit
+    try {
+      this.backupDatabase();
+      logger.info('Database backup completed', { service: 'TradingEngine' });
+    } catch (error) {
+      logger.error('Database backup failed during shutdown', { 
+        service: 'TradingEngine',
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
+    logger.info('Graceful shutdown complete', { signal, service: 'TradingEngine' });
+    process.exit(0);
+  }
+
+  private async waitForPendingOperations(timeoutMs: number): Promise<void> {
+    const start = Date.now();
+    // In a real implementation, we would track pending operations
+    // For now, we just wait a short time to allow any in-flight operations to complete
+    await new Promise(resolve => setTimeout(resolve, Math.min(1000, timeoutMs)));
+    logger.debug('Pending operations wait completed', { 
+      service: 'TradingEngine',
+      waitedMs: Date.now() - start 
+    });
+  }
+
+  private setupForcedShutdown() {
+    // Force shutdown after 60 seconds if graceful shutdown hangs
+    setTimeout(() => {
+      logger.error('Forced shutdown after timeout', { service: 'TradingEngine' });
+      process.exit(1);
+    }, 60000);
   }
 
   startSchedulers() {
-    if (!this.marketPollInterval) {
-      this.marketPollInterval = setInterval(() => {
-        this.marketDataService.fetchMarketData().catch(console.error);
-        this.marketDataService.fetchNews().catch(console.error);
-      }, 60 * 60 * 1000);
-      this.marketPollInterval.unref?.();
+    // Initialize workers with service dependencies
+    initializeWorkers(this.marketDataService, this.optimizationEngine);
+
+    // Schedule market data jobs (every hour)
+    const mdQueue = getMarketDataQueue();
+    if (mdQueue) {
+      mdQueue.add('fetch-market-data', {
+        symbol: this.symbol,
+        timeframe: this.timeframe
+      }, {
+        repeat: {
+          every: 60 * 60 * 1000, // 1 hour
+        },
+        attempts: 3,
+        backoff: {
+          type: 'exponential',
+          delay: 5000,
+        },
+      });
     }
 
-    if (!this.optimizationInterval) {
-      this.optimizationInterval = setInterval(() => {
-        this.optimizationEngine.optimize(this.currentRegime).catch(console.error);
-      }, 6 * 60 * 60 * 1000);
-      this.optimizationInterval.unref?.();
+    // Schedule optimization jobs (every 6 hours)
+    const optQueue = getOptimizationQueue();
+    if (optQueue) {
+      optQueue.add('optimize-strategy', {
+        symbol: this.symbol,
+        currentRegime: this.currentRegime
+      }, {
+        repeat: {
+          every: 6 * 60 * 60 * 1000, // 6 hours
+        },
+        attempts: 2,
+        backoff: {
+          type: 'exponential',
+          delay: 30000,
+        },
+      });
     }
 
+    // Run initial market data fetch
     this.marketDataService.fetchMarketData().catch(console.error);
     this.marketDataService.fetchNews().catch(console.error);
+
+    logger.info('Job queue schedulers started', { service: 'TradingEngine' });
   }
 
   stopSchedulers() {
-    if (this.marketPollInterval) {
-      clearInterval(this.marketPollInterval);
-      this.marketPollInterval = null;
-    }
-    if (this.optimizationInterval) {
-      clearInterval(this.optimizationInterval);
-      this.optimizationInterval = null;
-    }
+    // No-op - queues are now managed by closeQueues()
+    logger.debug('stopSchedulers called (queues use closeQueues)', { service: 'TradingEngine' });
+  }
+
+  // Method to get queue health for monitoring
+  async getQueueHealth() {
+    return await getQueueHealth();
+  }
+
+  async runMonteCarloSimulation(
+    portfolio: any,
+    parameters: any
+  ): Promise<any> {
+    const request = {
+      portfolio,
+      parameters
+    };
+    return await this.monteCarloEngine.simulate(request);
+  }
+
+  async runMonteCarloStressTest(
+    portfolio: any,
+    scenarios: any[]
+  ): Promise<any> {
+    return await this.monteCarloEngine.runStressTests(portfolio, scenarios);
   }
 
   async init() {
@@ -225,6 +536,7 @@ export class TradingEngine {
   }
 
   async start() {
+    // Initialize job queues (only if Redis is available)
     this.startSchedulers();
     this.isRunning = true;
     this.shadowTrader.reset();
@@ -233,24 +545,47 @@ export class TradingEngine {
     this.broadcast({ type: 'performance', data: this.shadowTrader.getPerformance() });
 
     while (this.isRunning) {
+      const cycleStart = Date.now();
       try {
         await this.runCycle();
       } catch (error: any) {
-        console.error('Error in trading cycle:', error);
+        logger.error('Error in trading cycle:', { error: error.message });
         this.broadcast({ type: 'error', data: { message: error.message } });
         // Add delay on error to prevent tight error loops
-        await new Promise(resolve => setTimeout(resolve, 5000));
+        await this.sleepWithTimeout(5000, 10000);
+        continue;
       }
-      
-      // Wait for next cycle with abortable sleep
-      await this.sleepAbortable(1000);
+
+      // Wait for next cycle with abortable sleep (max 30s timeout)
+      const cycleDuration = Date.now() - cycleStart;
+      const sleepTime = Math.max(0, 1000 - cycleDuration);
+      if (this.isRunning && sleepTime > 0) {
+        await this.sleepWithTimeout(sleepTime, 30000);
+      }
     }
+
+    // Ensure clean exit
+    this.isRunning = false;
+    logger.info('Trading engine loop exited naturally', { service: 'TradingEngine' });
   }
 
   private sleepAbortable(ms: number) {
     return new Promise(resolve => {
       const timeout = setTimeout(resolve, ms);
-      // Could add abort signal here
+      // Cleanup on abort could be added here if needed
+    });
+  }
+
+  private sleepWithTimeout(ms: number, timeoutMs: number = 30000): Promise<void> {
+    return new Promise((resolve) => {
+      const timeout = setTimeout(() => {
+        // Don't reject - just resolve to continue the loop
+        resolve();
+      }, timeoutMs);
+      const timer = setTimeout(() => {
+        clearTimeout(timeout);
+        resolve();
+      }, ms);
     });
   }
 
@@ -394,6 +729,18 @@ export class TradingEngine {
         VALUES (?, ?, ?, ?)
       `, [Date.now(), this.currentRegime, regimeResult.confidence, regimeResult.reasoning]);
 
+      // Audit log: regime change
+      try {
+        const auditId = randomUUID();
+        const timestamp = Date.now();
+        await runQuery(`
+          INSERT INTO audit_system_events (id, event_type, message, timestamp, severity, metadata)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `, [auditId, 'regime_change', `Regime changed to ${this.currentRegime}`, timestamp, 'info', JSON.stringify({ confidence: regimeResult.confidence, reasoning: regimeResult.reasoning })]);
+      } catch (error) {
+        console.error('Failed to log regime change audit:', error);
+      }
+
       this.broadcast({ type: 'regime', data: regimeResult });
 
       if (this.aiStrategySwitching && TradingEngine.aiStrategySwitchingEnabled) {
@@ -450,7 +797,7 @@ export class TradingEngine {
     }
 
     // 4. Generate signal
-    const signal = await this.signalGenerator.generateSignal(df, this.currentRegime, this.symbol, this.aiSignalGeneration, this.strategy);
+    const signal = await this.signalGenerator.generateSignal(df, this.currentRegime, this.symbol, this.aiSignalGeneration, this.strategy, this.activeMode);
     
     if (signal) {
       this.broadcast({ type: 'signal', data: signal });
@@ -563,7 +910,7 @@ export class TradingEngine {
         lastRegime = regimeResult.regime;
       }
 
-      const signal = await this.signalGenerator.generateSignal(slice, lastRegime, this.symbol, this.aiSignalGeneration, this.strategy);
+      const signal = await this.signalGenerator.generateSignal(slice, lastRegime, this.symbol, this.aiSignalGeneration, this.strategy, this.activeMode);
       
       if (signal) {
         console.log(`[Backtest] Signal generated at ${new Date(df[i].time).toISOString()}: ${signal.side} ${signal.symbol} confidence=${signal.confidence}`);
@@ -655,9 +1002,9 @@ export class TradingEngine {
 
 let engine: TradingEngine | null = null;
 
-export async function startTradingEngine(wss: WebSocketServer) {
+export async function startTradingEngine(wss: WebSocketServer, redis?: Redis) {
   if (!engine) {
-    engine = new TradingEngine(wss);
+    engine = new TradingEngine(wss, redis);
     await engine.init();
     // Start engine asynchronously
     engine.start().catch(console.error);

@@ -1,4 +1,5 @@
 import { runQuery } from '../database.js';
+import { randomUUID } from 'crypto';
 
 export interface Balances {
   mainBalance: number;
@@ -10,6 +11,38 @@ export interface Balances {
 
 export class BalanceManager {
   constructor() {}
+
+  private async logAuditBalance(
+    eventType: string,
+    beforeBalances: Balances,
+    afterBalances: Balances,
+    changeAmount: number,
+    reason: string,
+    metadata?: any
+  ) {
+    try {
+      const auditId = randomUUID();
+      const timestamp = Date.now();
+      const metadataJson = metadata ? JSON.stringify(metadata) : null;
+
+      await runQuery(`
+        INSERT INTO audit_balances (
+          id, balance_id, event_type, timestamp,
+          before_main_balance, before_bot_balance, before_active_balance,
+          after_main_balance, after_bot_balance, after_active_balance,
+          change_amount, reason, metadata
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        auditId, 'default', eventType, timestamp,
+        beforeBalances.mainBalance, beforeBalances.botBalance, beforeBalances.activeTradeBalance,
+        afterBalances.mainBalance, afterBalances.botBalance, afterBalances.activeTradeBalance,
+        changeAmount, reason, metadataJson
+      ]);
+    } catch (error) {
+      console.error('Failed to log audit balance:', error);
+      // Don't throw - audit logging shouldn't break balance operations
+    }
+  }
 
   async getBalances(): Promise<Balances> {
     const rows = await runQuery('SELECT * FROM balances WHERE id = ?', ['default'], 'all');
@@ -45,21 +78,37 @@ export class BalanceManager {
   async allocateToBot(amount: number) {
     const current = await this.getBalances();
     if (amount > current.mainBalance) throw new Error('Insufficient main balance');
-    
-    await this.updateBalances({
+
+    const updated = {
       mainBalance: current.mainBalance - amount,
-      botBalance: current.botBalance + amount
-    });
+      botBalance: current.botBalance + amount,
+      activeTradeBalance: current.activeTradeBalance,
+      totalPnl: current.totalPnl,
+      totalPnlPct: current.totalPnlPct
+    };
+
+    await this.updateBalances(updated);
+
+    // Audit log
+    await this.logAuditBalance('allocation', current, updated, amount, 'allocate_to_bot');
   }
 
   async withdrawFromBot(amount: number) {
     const current = await this.getBalances();
     if (amount > current.botBalance) throw new Error('Insufficient bot balance');
-    
-    await this.updateBalances({
+
+    const updated = {
       mainBalance: current.mainBalance + amount,
-      botBalance: current.botBalance - amount
-    });
+      botBalance: current.botBalance - amount,
+      activeTradeBalance: current.activeTradeBalance,
+      totalPnl: current.totalPnl,
+      totalPnlPct: current.totalPnlPct
+    };
+
+    await this.updateBalances(updated);
+
+    // Audit log
+    await this.logAuditBalance('withdrawal', current, updated, amount, 'withdraw_from_bot');
   }
 
   async halfBotBalance() {
@@ -86,25 +135,39 @@ export class BalanceManager {
     const newBotBalance = current.botBalance + tradeValue + pnl;
     const newActiveTradeBalance = Math.max(0, current.activeTradeBalance - tradeValue);
     const newTotalPnl = current.totalPnl + pnl;
-    
+
     // Calculate PnL % based on the total balance
     const totalBalance = current.mainBalance + current.botBalance;
     const newTotalPnlPct = totalBalance > 0 ? (newTotalPnl / totalBalance) * 100 : 0;
 
-    await this.updateBalances({
+    const updated = {
+      mainBalance: current.mainBalance,
       botBalance: newBotBalance,
       activeTradeBalance: newActiveTradeBalance,
       totalPnl: newTotalPnl,
       totalPnlPct: newTotalPnlPct
-    });
+    };
+
+    await this.updateBalances(updated);
+
+    // Audit log
+    await this.logAuditBalance('pnl_adjustment', current, updated, pnl, 'trade_result', { tradeValue });
   }
 
   async addActiveTrade(tradeValue: number) {
     const current = await this.getBalances();
     // Deduct trade value from bot balance and move to active trade balance
-    await this.updateBalances({
+    const updated = {
+      mainBalance: current.mainBalance,
       botBalance: current.botBalance - tradeValue,
-      activeTradeBalance: current.activeTradeBalance + tradeValue
-    });
+      activeTradeBalance: current.activeTradeBalance + tradeValue,
+      totalPnl: current.totalPnl,
+      totalPnlPct: current.totalPnlPct
+    };
+
+    await this.updateBalances(updated);
+
+    // Audit log
+    await this.logAuditBalance('active_trade_addition', current, updated, tradeValue, 'add_active_trade');
   }
 }

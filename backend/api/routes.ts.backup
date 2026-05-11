@@ -1,0 +1,63 @@
+    res.status(500).json({ error: 'Reconciliation failed' });
+  }
+});
+
+// Monte Carlo Simulation Routes
+apiRouter.post('/mc/simulate', requireRole('trader'), async (req, res) => {
+  try {
+    const { portfolio, parameters } = req.body;
+    
+    if (!portfolio || !parameters) {
+      return res.status(400).json({ error: 'Missing portfolio or parameters' });
+    }
+    
+    logger.info('Starting Monte Carlo simulation', {
+      requestId: req.requestId,
+      numPaths: parameters.numPaths,
+      model: parameters.model
+    });
+    
+    const result = await engine.runMonteCarloSimulation(portfolio, parameters);
+    
+    res.json(result);
+  } catch (error: any) {
+    logger.error('Monte Carlo simulation failed', {
+      requestId: req.requestId,
+      error: error.message
+    });
+    res.status(500).json({ error: 'Simulation failed', message: error.message });
+  }
+});
+
+apiRouter.post('/mc/stress', requireRole('trader'), async (req, res) => {
+  try {
+    const { portfolio, scenarios } = req.body;
+    
+    if (!portfolio || !scenarios) {
+      return res.status(400).json({ error: 'Missing portfolio or scenarios' });
+    }
+    
+    logger.info('Running stress tests', {
+      requestId: req.requestId,
+      numScenarios: scenarios.length
+    });
+    
+    const results = await engine.runMonteCarloStressTest(portfolio, scenarios);
+    
+    res.json({ results });
+  } catch (error: any) {
+    logger.error('Stress test failed', {
+      requestId: req.requestId,
+      error: error.message
+    });
+    res.status(500).json({ error: 'Stress test failed', message: error.message });
+  }
+});
+
+apiRouter.get('/mc/health', async (req, res) => {
+  res.json({
+    status: 'healthy',
+    service: 'monte-carlo',
+    timestamp: new Date().toISOString()
+  });
+});

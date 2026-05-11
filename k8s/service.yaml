@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: shady-trader-postgres
+  labels:
+    app: shady-trader
+    component: database
+spec:
+  selector:
+    app: shady-trader
+    component: database
+  ports:
+  - port: 5432
+    targetPort: 5432
+  clusterIP: None  # Headless service for direct pod access
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shady-trader-redis
+  labels:
+    app: shady-trader
+    component: redis
+spec:
+  selector:
+    app: shady-trader
+    component: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shady-trader-app
+  labels:
+    app: shady-trader
+    component: backend
+spec:
+  selector:
+    app: shady-trader
+    component: backend
+  ports:
+  - port: 3000
+    targetPort: 3000
+  type: LoadBalancer

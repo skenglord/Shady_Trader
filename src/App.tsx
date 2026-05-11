@@ -264,7 +264,7 @@ export default function App() {
                 <span class="text-gray-400">C <span class="text-white">${data.close.toFixed(2)}</span></span>
               </div>
               ${btTrade ? `
-                <div class="bg-indigo-500/20 border border-indigo-500/30 rounded p-2 text-xs">
+                <div class="bg-indigo-500 bg-opacity-20 border border-indigo-500 border-opacity-30 rounded p-2 text-xs">
                   <div class="font-bold text-indigo-300 mb-1">VIRTUAL TRADE: ${btTrade.side.toUpperCase()}</div>
                   <div class="text-gray-300 mb-1">${btTrade.reasoning}</div>
                   <div class="flex gap-2 text-[10px] text-gray-400">
@@ -773,11 +773,11 @@ export default function App() {
 
   const getRegimeColor = (regime: string) => {
     switch (regime) {
-      case 'strong_bull': return 'text-emerald-500 bg-emerald-500/10 border-emerald-500/20';
-      case 'weak_bull': return 'text-green-400 bg-green-400/10 border-green-400/20';
-      case 'bear': return 'text-red-500 bg-red-500/10 border-red-500/20';
-      case 'sideways': return 'text-blue-400 bg-blue-400/10 border-blue-400/20';
-      default: return 'text-gray-400 bg-gray-400/10 border-gray-400/20';
+      case 'strong_bull': return 'text-emerald-500 bg-emerald-500 bg-opacity-10 border border-emerald-500 border-opacity-20';
+      case 'weak_bull': return 'text-green-400 bg-green-400 bg-opacity-10 border border-green-400 border-opacity-20';
+      case 'bear': return 'text-red-500 bg-red-500 bg-opacity-10 border border-red-500 border-opacity-20';
+      case 'sideways': return 'text-blue-400 bg-blue-400 bg-opacity-10 border border-blue-400 border-opacity-20';
+      default: return 'text-gray-400 bg-gray-400 bg-opacity-10 border border-gray-400 border-opacity-20';
     }
   };
 

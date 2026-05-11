@@ -1,0 +1,183 @@
+---
+# Source: jaeger/templates/jaeger/jaeger-service-account.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: jaeger
+  labels:
+    helm.sh/chart: jaeger-4.7.0
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/instance: jaeger
+    app.kubernetes.io/version: "2.17.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: all-in-one
+automountServiceAccountToken: true
+---
+# Source: jaeger/templates/jaeger/jaeger-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  labels:
+    helm.sh/chart: jaeger-4.7.0
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/instance: jaeger
+    app.kubernetes.io/version: "2.17.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: all-in-one
+spec:
+  type: ClusterIP
+  ports:
+    # Agent Ports
+    - name: zk-compact-trft
+      port: 5775
+      protocol: UDP
+      targetPort: 5775
+    - name: config-rest
+      port: 5778
+      targetPort: 5778
+    - name: jg-compact-trft
+      port: 6831
+      protocol: UDP
+      targetPort: 6831
+    - name: jg-binary-trft
+      port: 6832
+      protocol: UDP
+      targetPort: 6832
+    # Collector Ports
+    - name: http-zipkin
+      port: 9411
+      targetPort: 9411
+      appProtocol: http
+    - name: grpc-http
+      port: 14250
+      targetPort: 14250
+      appProtocol: grpc
+    - name: c-tchan-trft
+      port: 14267
+      targetPort: 14267
+    - name: http-c-binary-trft
+      port: 14268
+      targetPort: 14268
+      appProtocol: http
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      appProtocol: grpc
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      appProtocol: http
+    # Query Ports
+    - name: http-query
+      port: 16686
+      targetPort: 16686
+    - name: grpc-query
+      port: 16685
+      targetPort: 16685
+    # Metrics Ports
+    - name: internal-metrics
+      port: 8888
+      targetPort: 8888
+      appProtocol: http
+    - name: span-metrics
+      port: 8889
+      targetPort: 8889
+      appProtocol: http
+  selector:
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/instance: jaeger
+    app.kubernetes.io/component: all-in-one
+---
+# Source: jaeger/templates/jaeger/jaeger-deploy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  labels:
+    helm.sh/chart: jaeger-4.7.0
+    app.kubernetes.io/name: jaeger
+    app.kubernetes.io/instance: jaeger
+    app.kubernetes.io/version: "2.17.0"
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/component: all-in-one
+    prometheus.io/port: "8888"
+    prometheus.io/scrape: "true"
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: jaeger
+      app.kubernetes.io/instance: jaeger
+      app.kubernetes.io/component: all-in-one
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: jaeger
+        app.kubernetes.io/instance: jaeger
+        app.kubernetes.io/component: all-in-one
+      annotations:
+        prometheus.io/port: "8888"
+        prometheus.io/scrape: "true"
+    spec:
+      
+      containers:
+        - env:
+          securityContext:
+            {}
+          image: jaegertracing/jaeger:2.17.0
+          imagePullPolicy: IfNotPresent
+          name: jaeger
+          args:
+          ports:
+            - containerPort: 5775
+              protocol: UDP
+            - containerPort: 6831
+              protocol: UDP
+            - containerPort: 6832
+              protocol: UDP
+            - containerPort: 5778
+              protocol: TCP
+            - containerPort: 16686
+              protocol: TCP
+            - containerPort: 16685
+              protocol: TCP
+            - containerPort: 9411
+              protocol: TCP
+            - containerPort: 4317
+              protocol: TCP
+            - containerPort: 4318
+              protocol: TCP
+            - containerPort: 13133
+              protocol: TCP
+            - containerPort: 8888
+              protocol: TCP
+          livenessProbe:
+            failureThreshold: 5
+            httpGet:
+              path: /status
+              port: 13133
+              scheme: HTTP
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            successThreshold: 1
+            timeoutSeconds: 1
+          readinessProbe:
+            failureThreshold: 3
+            httpGet:
+              path: /status
+              port: 13133
+              scheme: HTTP
+            initialDelaySeconds: 1
+            periodSeconds: 10
+            successThreshold: 1
+            timeoutSeconds: 1
+          volumeMounts:
+      securityContext:
+        fsGroup: 10001
+        runAsGroup: 10001
+        runAsUser: 10001
+      serviceAccountName: jaeger
+      volumes:

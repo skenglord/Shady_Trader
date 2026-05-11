@@ -1,0 +1,32 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-ingress-config
+  labels:
+    app: shady-trader
+    component: nginx-ingress
+data:
+  # Rate limiting zone configuration (defined at http level)
+  # limit_req_zone $binary_remote_addr zone=api_limit:10m rate=5r/s;
+  
+  # Load balancing configuration
+  upstream-zone-size: "256k"
+  upstream-keepalive: "32"
+
+  # Proxy settings
+  proxy-body-size: "10m"
+  proxy-read-timeout: "3600"
+  proxy-send-timeout: "3600"
+
+  # WebSocket support
+  proxy-protocol: ""
+
+  # Custom upstream configuration for least connections
+  upstream-conf: |
+    upstream shady_trader_app {
+      least_conn;
+      server shady-trader-app-1:3000;
+      server shady-trader-app-2:3000;
+      server shady-trader-app-3:3000;
+      keepalive 32;
+    }

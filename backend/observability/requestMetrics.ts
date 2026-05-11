@@ -24,7 +24,7 @@ function getOrCreateRouteMetrics(routeKey: string): RouteMetrics {
   return created;
 }
 
-export function recordApiRequest(routeKey: string, statusCode: number, latencyMs: number) {
+export function recordApiRequest(routeKey: string, method: string, statusCode: number, latencyMs: number) {
   totalRequests += 1;
   totalLatencyMs += latencyMs;
   maxLatencyMs = Math.max(maxLatencyMs, latencyMs);

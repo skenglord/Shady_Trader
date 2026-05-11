@@ -1,0 +1,22 @@
+{
+  "all": true,
+  "include": [
+    "backend/**/*.ts"
+  ],
+  "exclude": [
+    "**/*.test.ts",
+    "**/node_modules/**",
+    "**/coverage/**"
+  ],
+  "extension": [
+    ".ts"
+  ],
+  "reporter": [
+    "text",
+    "json-summary",
+    "html"
+  ],
+  "report-dir": "coverage",
+  "temp-dir": ".nyc_output",
+  "cache": true
+}

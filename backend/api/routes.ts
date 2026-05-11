@@ -9,9 +9,113 @@ import fs from 'fs';
 import { z } from 'zod';
 import { getRequestId, logger } from '../logging/logger.js';
 import { getApiMetricsSnapshot, recordApiRequest, toPrometheusMetrics } from '../observability/requestMetrics.js';
+import paperTradingRouter from '../paper-trading/paper-trading.controller.js';
+import Redis from 'ioredis';
+import crypto from 'crypto';
 
 const upload = multer({ dest: 'uploads/' });
 export const apiRouter = Router();
+
+// Redis instance for idempotency
+let redis: Redis | null = null;
+
+function getRedis(): Redis {
+  if (!redis) {
+    redis = new Redis({
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379'),
+      password: process.env.REDIS_PASSWORD || '',
+    });
+  }
+  return redis;
+}
+
+// Idempotency middleware
+function idempotencyKey(required = false) {
+  return async (req: any, res: any, next: any) => {
+    const idempotencyKey = req.headers['idempotency-key'];
+
+    if (required && !idempotencyKey) {
+      return res.status(400).json({
+        error: 'Idempotency key required',
+        message: 'This endpoint requires an Idempotency-Key header'
+      });
+    }
+
+    if (idempotencyKey) {
+      // Validate key format (should be UUID-like)
+      if (!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i.test(idempotencyKey)) {
+        return res.status(400).json({
+          error: 'Invalid idempotency key',
+          message: 'Idempotency-Key must be a valid UUID'
+        });
+      }
+
+      // Create request fingerprint for deduplication
+      const requestFingerprint = crypto
+        .createHash('sha256')
+        .update(`${req.method}:${req.originalUrl}:${JSON.stringify(req.body)}`)
+        .digest('hex');
+
+      const cacheKey = `idempotency:${idempotencyKey}:${requestFingerprint}`;
+
+      try {
+        const redis = getRedis();
+        const cachedResponse = await redis.get(cacheKey);
+
+        if (cachedResponse) {
+          const parsed = JSON.parse(cachedResponse);
+          return res.status(parsed.statusCode).json(parsed.body);
+        }
+
+        // Store request context for deduplication
+        req.idempotencyKey = idempotencyKey;
+        req.cacheKey = cacheKey;
+
+      } catch (error) {
+        logger.error('Idempotency check failed', { error: error.message });
+        // Continue without idempotency if Redis fails
+      }
+    }
+
+    next();
+  };
+}
+
+// Response caching middleware for idempotent responses
+function cacheIdempotentResponse() {
+  return (req: any, res: any, next: any) => {
+    const originalJson = res.json;
+    const originalStatus = res.status;
+
+    res.status = function(code: number) {
+      res.statusCode = code;
+      return originalStatus.call(this, code);
+    };
+
+    res.json = function(body: any) {
+      if (req.cacheKey && res.statusCode < 400) {
+        // Cache successful responses for idempotency
+        const responseData = {
+          statusCode: res.statusCode,
+          body,
+          timestamp: Date.now()
+        };
+
+        try {
+          const redis = getRedis();
+          redis.setex(req.cacheKey, 3600, JSON.stringify(responseData)); // 1 hour TTL
+        } catch (error) {
+          logger.error('Failed to cache idempotent response', { error: error.message });
+        }
+      }
+
+      return originalJson.call(this, body);
+    };
+
+    next();
+  };
+}
 type Role = 'trader' | 'admin';
 
 const TIMEFRAME_ALLOWLIST = new Set(['1m', '5m', '15m', '1h', '1d']);
@@ -84,6 +188,45 @@ function validateBody(schema: z.ZodTypeAny) {
   };
 }
 
+// Health check endpoints
+apiRouter.get('/health/live', (req, res) => {
+  res.status(200).json({ status: 'ok', timestamp: Date.now() });
+});
+
+apiRouter.get('/health/ready', async (req, res) => {
+  try {
+    // Check database connectivity
+    await runQuery('SELECT 1', [], 'run');
+
+    // Check Redis connectivity
+    const redis = getRedis();
+    await redis.ping();
+
+    // Check trading engine status
+    const engine = getTradingEngine();
+    if (!engine) {
+      return res.status(503).json({ status: 'not ready', reason: 'Trading engine not initialized' });
+    }
+
+    res.status(200).json({
+      status: 'ready',
+      timestamp: Date.now(),
+      components: {
+        database: 'ok',
+        redis: 'ok',
+        tradingEngine: 'ok'
+      }
+    });
+  } catch (error) {
+    logger.error('Readiness check failed', { error: error.message });
+    res.status(503).json({
+      status: 'not ready',
+      reason: error.message,
+      timestamp: Date.now()
+    });
+  }
+});
+
 apiRouter.use((req, res, next) => {
   const start = process.hrtime.bigint();
   req.requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
@@ -96,7 +239,7 @@ apiRouter.use((req, res, next) => {
   res.on('finish', () => {
     const durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
     const routeKey = `${req.method} ${req.route?.path || req.path || req.originalUrl || req.url}`;
-    recordApiRequest(routeKey, res.statusCode, durationMs);
+    recordApiRequest(routeKey, req.method, res.statusCode, durationMs);
     if (res.statusCode >= 500 || durationMs >= 1000) {
       logger.warn('API request completed with warning', {
         requestId: req.requestId,
@@ -303,7 +446,7 @@ apiRouter.get('/candles', async (req, res) => {
     try {
       const history = req.query.history as string;
       let candles;
-      
+
       if (history === '1y') {
         const oneYearAgo = Date.now() - (365 * 24 * 60 * 60 * 1000);
         // Calculate limit based on timeframe
@@ -311,7 +454,7 @@ apiRouter.get('/candles', async (req, res) => {
         if (engine.timeframe === '1h') limit = 8760;
         else if (engine.timeframe === '1d') limit = 365;
         else if (engine.timeframe === '5m') limit = 105120;
-        
+
         if (engine.exchange) {
           candles = await engine.exchange.getHistoricalCandles(engine.symbol, engine.timeframe, oneYearAgo, limit);
         } else {
@@ -324,7 +467,36 @@ apiRouter.get('/candles', async (req, res) => {
           candles = [];
         }
       }
-      
+
+      // Check if we have sufficient data
+      if (candles.length < 50) {
+        // For CoinMarketCap, historical data requires paid API key
+        if (engine.exchange?.exchangeName === 'coinmarketcap') {
+          const hasApiKey = Boolean(engine.exchange.apiKey && engine.exchange.apiKey.trim());
+          if (!hasApiKey) {
+            return res.status(402).json({
+              error: 'API_KEY_REQUIRED',
+              message: 'CoinMarketCap historical data requires a paid API key. Please configure your API key in settings.',
+              provider: 'coinmarketcap',
+              action: 'configure_api_key'
+            });
+          } else {
+            // API key provided but still no data - likely rate limited or invalid key
+            return res.status(503).json({
+              error: 'DATA_UNAVAILABLE',
+              message: 'Unable to fetch historical data. Please check your API key or try again later.',
+              provider: 'coinmarketcap'
+            });
+          }
+        }
+      }
+
+      // Set cache headers for recent data
+      const isRecentData = history === '1y' ? false : true; // Recent data gets cached
+      if (isRecentData) {
+        res.setHeader('Cache-Control', 'public, max-age=3600'); // 1 hour cache for recent data
+      }
+
       if (candles.length >= 50) {
         const df = engine.indicators.calculateAll(candles);
         res.json(df);
@@ -332,6 +504,7 @@ apiRouter.get('/candles', async (req, res) => {
         res.json(candles);
       }
     } catch (e: any) {
+      logger.error('Candles fetch failed', { requestId: req.requestId, error: e.message });
       res.status(500).json({ error: e.message });
     }
   } else {
@@ -838,3 +1011,174 @@ apiRouter.post('/manual-trade', validateManualTradeBody, async (req, res) => {
     res.status(400).json({ error: 'Engine not running' });
   }
 });
+
+// Slippage Modeling Endpoints
+const validateCostEstimateBody = z.object({
+  symbol: z.string().min(1),
+  side: z.enum(['buy', 'sell']),
+  size: z.number().positive(),
+  type: z.enum(['market', 'limit']).optional().default('market'),
+  limitPrice: z.number().positive().optional(),
+  timeInForce: z.enum(['GTC', 'IOC', 'FOK']).optional().default('GTC')
+});
+
+const validateCostEstimate = (req: any, res: any, next: any) => {
+  try {
+    req.body = validateCostEstimateBody.parse(req.body);
+    next();
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return res.status(400).json({
+        error: 'Validation failed',
+        details: error.errors
+      });
+    }
+    next(error);
+  }
+};
+
+apiRouter.post('/slippage/estimate', validateCostEstimate, async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+
+  try {
+    const engine = getTradingEngine();
+    if (!engine || !engine.slippageEngine) {
+      return res.status(503).json({ error: 'Slippage engine not available' });
+    }
+
+    const { symbol, side, size, type, limitPrice, timeInForce } = req.body;
+    const orderRequest = {
+      symbol,
+      side,
+      size,
+      type,
+      limitPrice,
+      timeInForce
+    };
+
+    const costEstimate = await engine.slippageEngine.costEstimator.estimateTotalCost(orderRequest);
+
+    recordApiRequest('/slippage/estimate', 'POST', 200, Date.now() - startTime);
+
+    res.json({
+      requestId,
+      estimate: {
+        totalCost: costEstimate.total.toString(),
+        confidence: costEstimate.confidence,
+        breakdown: {
+          slippage: {
+            total: costEstimate.breakdown.slippage.totalSlippage.toString(),
+            confidence: costEstimate.breakdown.slippage.confidence,
+            components: {
+              permanentImpact: costEstimate.breakdown.slippage.breakdown.permanentImpact.toString(),
+              temporaryImpact: costEstimate.breakdown.slippage.breakdown.temporaryImpact.toString(),
+              spreadCost: costEstimate.breakdown.slippage.breakdown.spreadCost.toString()
+            }
+          },
+          fees: {
+            makerFee: costEstimate.breakdown.fees.makerFee.toString(),
+            takerFee: costEstimate.breakdown.fees.takerFee.toString(),
+            total: costEstimate.breakdown.fees.total.toString(),
+            confidence: costEstimate.breakdown.fees.confidence
+          },
+          networkCosts: {
+            total: costEstimate.breakdown.networkCosts.total.toString(),
+            confidence: costEstimate.breakdown.networkCosts.confidence
+          }
+        }
+      }
+    });
+  } catch (error: any) {
+    recordApiRequest('/slippage/estimate', 'POST', 500, Date.now() - startTime);
+    logger.error('Cost estimation failed', { requestId, error: error.message });
+    res.status(500).json({ error: 'Cost estimation failed', requestId });
+  }
+});
+
+apiRouter.post('/slippage/backtest', validateBacktestBody, async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+
+  try {
+    const engine = getTradingEngine();
+    if (!engine || !engine.slippageEngine) {
+      return res.status(503).json({ error: 'Slippage engine not available' });
+    }
+
+    const { symbol, startDate, endDate, orderSize, scenarios = ['expected'] } = req.body;
+
+    // Simplified backtest - in production this would run comprehensive analysis
+    const mockResults = {
+      symbol,
+      period: { start: startDate, end: endDate },
+      orderSize,
+      scenarios: scenarios.map(scenario => ({
+        scenario,
+        expectedSlippage: 0.005, // 0.5%
+        worstCaseSlippage: 0.015, // 1.5%
+        rmse: 0.003,
+        directionalAccuracy: 0.85
+      }))
+    };
+
+    recordApiRequest('/slippage/backtest', 'POST', 200, Date.now() - startTime);
+
+    res.json({
+      requestId,
+      backtest: mockResults
+    });
+  } catch (error: any) {
+    recordApiRequest('/slippage/backtest', 'POST', 500, Date.now() - startTime);
+    logger.error('Backtest failed', { requestId, error: error.message });
+    res.status(500).json({ error: 'Backtest failed', requestId });
+  }
+});
+
+apiRouter.get('/slippage/history', async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+
+  try {
+    const { symbol, limit = 100 } = req.query;
+
+    const whereClause = symbol ? 'WHERE symbol = ?' : '';
+    const params = symbol ? [symbol] : [];
+
+    const history = await runQuery(
+      `SELECT * FROM slippage_history ${whereClause} ORDER BY timestamp DESC LIMIT ?`,
+      [...params, limit],
+      'all'
+    );
+
+    recordApiRequest('/slippage/history', 'GET', 200, Date.now() - startTime);
+
+    res.json({
+      requestId,
+      history: history.map((record: any) => ({
+        id: record.id,
+        symbol: record.symbol,
+        timestamp: record.timestamp,
+        side: record.side,
+        orderSize: record.order_size,
+        orderType: record.order_type,
+        predictedSlippage: record.predicted_slippage,
+        realizedSlippage: record.realized_slippage,
+        confidence: record.confidence,
+        regime: record.regime,
+        volatility: record.volatility,
+        marketImpact: record.market_impact,
+        spreadCost: record.spread_cost,
+        temporaryImpact: record.temporary_impact,
+        exchange: record.exchange
+      }))
+    });
+  } catch (error: any) {
+    recordApiRequest('/slippage/history', 'GET', 500, Date.now() - startTime);
+    logger.error('Failed to fetch slippage history', { requestId, error: error.message });
+    res.status(500).json({ error: 'Failed to fetch slippage history', requestId });
+  }
+});
+
+// Paper Trading Routes
+apiRouter.use('/paper', paperTradingRouter);

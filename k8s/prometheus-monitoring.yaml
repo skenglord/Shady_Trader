@@ -1,0 +1,61 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: shady-trader-servicemonitor
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: shady-trader-app
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+  - port: http
+    path: /api/diagnostics/metrics
+    interval: 60s
+    scrapeTimeout: 30s
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: shady-trader-alerts
+  namespace: monitoring
+spec:
+  groups:
+  - name: shady-trader
+    rules:
+    - alert: ShadyTraderHighCPUUsage
+      expr: rate(container_cpu_usage_seconds_total{pod=~"shady-trader-app-.*"}[5m]) > 0.8
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High CPU usage on Shady Trader pod"
+        description: "CPU usage is above 80% for 5 minutes"
+    - alert: ShadyTraderHighMemoryUsage
+      expr: container_memory_usage_bytes{pod=~"shady-trader-app-.*"} / container_spec_memory_limit_bytes > 0.9
+      for: 5m
+      labels:
+        severity: warning
+      annotations:
+        summary: "High memory usage on Shady Trader pod"
+        description: "Memory usage is above 90% for 5 minutes"
+    - alert: ShadyTraderPodDown
+      expr: up{job="shady-trader-service"} == 0
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "Shady Trader pod is down"
+        description: "Shady Trader service is not responding"
+    - alert: ShadyTraderHighErrorRate
+      expr: rate(http_requests_total{status=~"5..", job="shady-trader-service"}[5m]) / rate(http_requests_total{job="shady-trader-service"}[5m]) > 0.1
+      for: 5m
+      labels:
+        severity: critical
+      annotations:
+        summary: "High error rate on Shady Trader service"
+        description: "Error rate is above 10% for 5 minutes"

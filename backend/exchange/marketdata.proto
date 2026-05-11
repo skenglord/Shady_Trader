@@ -1,0 +1,66 @@
+syntax = "proto3";
+
+package marketdata;
+
+message Candle {
+  string symbol = 1;
+  uint64 time = 2;
+  double open = 3;
+  double high = 4;
+  double low = 5;
+  double close = 6;
+  double volume = 7;
+  double ema_9 = 8;
+  double ema_21 = 9;
+  double ema_50 = 10;
+  double rsi_14 = 11;
+  double bb_upper = 12;
+  double bb_middle = 13;
+  double bb_lower = 14;
+  double vwap = 15;
+  double adx = 16;
+  double stoch_rsi_k = 17;
+  double stoch_rsi_d = 18;
+  double macd_line = 19;
+  double signal_line = 20;
+  double macd_histogram = 21;
+  double volume_sma_20 = 22;
+  double volume_ratio = 23;
+  double atr = 24;
+}
+
+message Trade {
+  string id = 1;
+  string symbol = 2;
+  string side = 3;
+  double amount = 4;
+  double price = 5;
+  string status = 6;
+  uint64 timestamp = 7;
+  string risk_mode = 8;
+  double pnl = 9;
+  double exit_price = 10;
+  uint64 exit_timestamp = 11;
+  double leverage = 12;
+  double stop_loss = 13;
+  double take_profit = 14;
+}
+
+message OrderBookEntry {
+  double price = 1;
+  double quantity = 2;
+}
+
+message OrderBook {
+  string symbol = 1;
+  uint64 timestamp = 2;
+  repeated OrderBookEntry bids = 3;
+  repeated OrderBookEntry asks = 4;
+}
+
+message MarketDataBatch {
+  repeated Candle candles = 1;
+  repeated Trade trades = 2;
+  OrderBook orderbook = 3;
+  uint64 batch_timestamp = 4;
+}

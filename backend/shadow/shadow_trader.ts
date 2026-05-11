@@ -1,9 +1,15 @@
 import { RiskMode, RiskManager } from '../risk/manager.js';
 import { runQuery } from '../database.js';
+import { randomUUID } from 'crypto';
+import { CostEstimator, OrderRequest, SlippageCircuitBreaker } from '../slippage/index.js';
+import { Decimal } from 'decimal.js';
 
 export class ShadowTrader {
   portfolios: Record<RiskMode, { balance: number, initialBalance: number, openTrades: any[] }>;
   riskManager: RiskManager;
+  costEstimator?: CostEstimator;
+  slippageCircuitBreaker?: SlippageCircuitBreaker;
+  private runnerStates: Map<string, { tradeId: string, originalAmount: number, remainingAmount: number, partialExits: number, maxPartialExits: number, lastExitPrice: number, cumulativeExited: number }> = new Map();
 
   constructor() {
     this.portfolios = {
@@ -15,6 +21,34 @@ export class ShadowTrader {
       [RiskMode.AI_ENHANCED]: { balance: 100000, initialBalance: 100000, openTrades: [] }
     };
     this.riskManager = new RiskManager();
+  }
+
+  private async logAuditTrade(
+    tradeId: string,
+    eventType: string,
+    riskMode: string,
+    leverage: number,
+    symbol: string,
+    side: string,
+    amount: number,
+    price: number,
+    exitReason?: string,
+    pnl?: number,
+    metadata?: any
+  ) {
+    try {
+      const auditId = randomUUID();
+      const timestamp = Date.now();
+      const metadataJson = metadata ? JSON.stringify(metadata) : null;
+
+      await runQuery(`
+        INSERT INTO audit_trades (id, trade_id, event_type, timestamp, risk_mode, leverage, symbol, side, amount, price, exit_reason, pnl, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [auditId, tradeId, eventType, timestamp, riskMode, leverage, symbol, side, amount, price, exitReason || null, pnl || null, metadataJson]);
+    } catch (error) {
+      console.error(`Failed to log audit trade ${tradeId}:`, error);
+      // Don't throw - audit logging shouldn't break trading
+    }
   }
 
   async init() {
@@ -85,8 +119,53 @@ export class ShadowTrader {
       }
 
       // Calculate position size with dynamic multiplier from MD Part 5.1
-      const positionSize = this.riskManager.calculatePositionSize(effectiveBalance, signal.entryPrice, signal.stopLoss, mode as RiskMode, signal.confidence);
+      let positionSize = this.riskManager.calculatePositionSize(effectiveBalance, signal.entryPrice, signal.stopLoss, mode as RiskMode, signal.confidence);
       if (positionSize <= 0) continue;
+
+      // Cost estimation and circuit breaker check for active mode
+      if (mode === activeMode && this.costEstimator && this.slippageCircuitBreaker) {
+        const orderRequest: OrderRequest = {
+          symbol: signal.symbol,
+          side: signal.side as 'buy' | 'sell',
+          size: new Decimal(positionSize),
+          type: 'market',
+          timeInForce: 'GTC'
+        };
+
+        const costEstimate = await this.costEstimator.estimateTotalCost(orderRequest);
+        const marketState = {
+          timestamp: Date.now(),
+          midPrice: new Decimal(signal.entryPrice),
+          spread: new Decimal(signal.entryPrice * 0.001), // Mock spread
+          volatility: 0.02, // Mock volatility
+          depth: {
+            bidVolume: new Decimal(1000),
+            askVolume: new Decimal(1000),
+            bidLevels: 10,
+            askLevels: 10,
+            vpin: 0.1
+          },
+          regime: 'normal' as any
+        };
+
+        const breakerAction = this.slippageCircuitBreaker.evaluateBreaker(costEstimate, marketState);
+
+        if (breakerAction.action === 'reject') {
+          console.log(`Shadow Trader [${mode}]: Trade rejected by circuit breaker - ${breakerAction.reason}`);
+          continue;
+        }
+
+        if (breakerAction.action === 'delay') {
+          console.log(`Shadow Trader [${mode}]: Trade delayed by circuit breaker - ${breakerAction.reason}`);
+          // In production, would implement delay logic
+          continue;
+        }
+
+        if (breakerAction.action === 'scale_down' && breakerAction.scaleFactor) {
+          positionSize *= breakerAction.scaleFactor;
+          console.log(`Shadow Trader [${mode}]: Position size scaled down to ${positionSize} - ${breakerAction.reason}`);
+        }
+      }
 
       // Adjust TP/SL based on mode config
       const config = this.riskManager.getConfig(mode as RiskMode);
@@ -148,11 +227,26 @@ export class ShadowTrader {
         balanceManager.addActiveTrade(trade.amount * trade.price / trade.leverage);
       }
 
-      // Save to DB
-      await runQuery(`
-        INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage, stop_loss, take_profit)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit]);
+       // Save to DB
+       await runQuery(`
+         INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage, stop_loss, take_profit)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit]);
+
+       // Audit log: trade open
+       await this.logAuditTrade(
+         trade.id,
+         'open',
+         trade.risk_mode,
+         trade.leverage,
+         trade.symbol,
+         trade.side,
+         trade.amount,
+         trade.price,
+         undefined,
+         undefined,
+         { stopLoss: trade.stopLoss, takeProfit: trade.takeProfit, confidence: signal.confidence, regime }
+       );
     }
   }
 
@@ -212,6 +306,21 @@ export class ShadowTrader {
               const tradeCost = closeAmount * trade.price / trade.leverage;
               balanceManager.recordTradeResult(partialPnl, tradeCost);
             }
+
+            // Audit log: partial exit
+            await this.logAuditTrade(
+              trade.id,
+              'partial_exit',
+              mode,
+              trade.leverage,
+              trade.symbol,
+              trade.side,
+              closeAmount,
+              currentPrice,
+              'runner',
+              partialPnl,
+              { remainingAmount: trade.amount, totalExited: closeAmount, profitPct }
+            );
           }
 
           // Part 2.1: Early Exit Feature
@@ -302,13 +411,29 @@ export class ShadowTrader {
              }
            }
            
-           // Update DB
-           await runQuery(`
-             UPDATE shadow_trades
-             SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
-             WHERE id = ?
-           `, [pnl, currentPrice, Date.now(), trade.id]);
-           console.log(`Shadow Trader [${mode}]: Trade ${trade.id} closed due to ${exitReason}. PnL: ${pnl.toFixed(2)}`);
+            // Update DB
+            await runQuery(`
+              UPDATE shadow_trades
+              SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
+              WHERE id = ?
+            `, [pnl, currentPrice, Date.now(), trade.id]);
+
+            // Audit log: trade close
+            await this.logAuditTrade(
+              trade.id,
+              'close',
+              mode,
+              trade.leverage,
+              trade.symbol,
+              trade.side,
+              trade.amount,
+              currentPrice,
+              exitReason,
+              pnl,
+              { candlesHeld: trade.candlesHeld, profitPct, liquidationThreshold: leverage ? 1 / leverage - maintenanceMargin : null }
+            );
+
+            console.log(`Shadow Trader [${mode}]: Trade ${trade.id} closed due to ${exitReason}. PnL: ${pnl.toFixed(2)}`);
          } else {
            newOpenTrades.push(trade);
          }
@@ -359,13 +484,28 @@ export class ShadowTrader {
            }
          }
 
-         const result = await runQuery(`
-           UPDATE shadow_trades
-           SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
-           WHERE id = ?
-         `, [pnl, currentPrice, Date.now(), trade.id]);
-         
-         portfolio.openTrades.splice(tradeIndex, 1);
+          const result = await runQuery(`
+            UPDATE shadow_trades
+            SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
+            WHERE id = ?
+          `, [pnl, currentPrice, Date.now(), trade.id]);
+
+          // Audit log: trade close (manual)
+          await this.logAuditTrade(
+            trade.id,
+            'close',
+            mode,
+            trade.leverage,
+            trade.symbol,
+            trade.side,
+            trade.amount,
+            currentPrice,
+            'manual_close',
+            pnl,
+            { candlesHeld: trade.candlesHeld }
+          );
+
+          portfolio.openTrades.splice(tradeIndex, 1);
          return true;
        }
      }
