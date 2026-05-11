@@ -121,6 +121,7 @@ export class PaperTradingService {
         }
       }
     }, 100); // Match every 100ms
+    this.orderMatchingInterval.unref();
   }
 
   private startPriceUpdates(): void {
@@ -151,6 +152,7 @@ export class PaperTradingService {
         }
       }
     }, 100); // Update every 100ms
+    this.priceUpdateInterval.unref();
   }
 
   private startIdempotencyCleanup(): void {
@@ -162,6 +164,7 @@ export class PaperTradingService {
         }
       }
     }, 60 * 60 * 1000); // Clean up every hour
+    this.idempotencyCleanupInterval.unref();
   }
 
   private handleOrderFill(order: PaperOrder): void {

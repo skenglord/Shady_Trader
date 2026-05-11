@@ -133,8 +133,14 @@ async function startServer() {
    // Initialize database
    await initDatabase();
    
-   // Seed database with mock data
-   seedDatabase();
+   // Seed database with mock data (best-effort, do not crash startup)
+   try {
+     await seedDatabase();
+   } catch (error: any) {
+     logger.warn('Database seed skipped due to unavailable schema', {
+       error: error?.message || 'unknown'
+     });
+   }
 
   // Schedule daily backup
   performBackup(); // Run once on startup

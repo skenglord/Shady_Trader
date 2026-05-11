@@ -32,6 +32,7 @@ export class PositionReconciliationEngine {
         logger.error('Reconciliation cycle failed', { error: error.message });
       }
     }, intervalMs);
+    this.reconciliationInterval.unref?.();
 
     logger.info('Position reconciliation engine started', { intervalMs });
   }

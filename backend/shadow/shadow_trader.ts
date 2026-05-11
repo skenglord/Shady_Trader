@@ -56,7 +56,12 @@ export class ShadowTrader {
   }
 
   async reset() {
-    await runQuery(`DELETE FROM shadow_trades`);
+    try {
+      await runQuery(`DELETE FROM shadow_trades`);
+    } catch (error: any) {
+      console.warn('ShadowTrader reset skipped: shadow_trades table unavailable', error?.message || error);
+      return;
+    }
     for (const mode of Object.values(RiskMode)) {
       this.portfolios[mode as RiskMode] = { balance: 100000, initialBalance: 100000, openTrades: [] };
       console.log(`[ShadowTrader] Resetting ${mode} to 100000`);
@@ -65,10 +70,15 @@ export class ShadowTrader {
 
   async loadState() {
     for (const mode of Object.values(RiskMode)) {
-      const openTrades = await runQuery(`
+      let openTrades: any[] = [];
+      try {
+        openTrades = await runQuery(`
         SELECT * FROM shadow_trades
         WHERE risk_mode = ? AND status = 'open'
       `, [mode], 'all');
+      } catch {
+        openTrades = [];
+      }
       
       this.portfolios[mode].openTrades = openTrades.map((t: any) => ({
         ...t,
@@ -76,10 +86,15 @@ export class ShadowTrader {
         takeProfit: t.take_profit
       }));
 
-      const result = await runQuery(`
+      let result: any[] = [];
+      try {
+        result = await runQuery(`
         SELECT SUM(pnl) as totalPnl FROM shadow_trades
         WHERE risk_mode = ? AND status = 'closed'
       `, [mode], 'all');
+      } catch {
+        result = [];
+      }
       
       const totalPnl = result[0]?.totalPnl || 0;
       this.portfolios[mode].balance = this.portfolios[mode].initialBalance + totalPnl;

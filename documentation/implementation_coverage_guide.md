@@ -423,3 +423,17 @@ graph TD
 *Document generated: 2026-05-08*
 *Source: AGENTS.md lines 65-125*
 *Total implementations audited: 56*
+## Test & Coverage Audit Update (2026-05-11)
+
+### Current execution findings
+- `tests/api/*` suites pass when run individually after unref'ing paper-trading service background timers.
+- `tests/backup/backup.test.ts` fails in `cleanupOldBackups should remove excess backups` due to fixture drift (missing source DB file before repeated backup creation), resulting in inflated backup counts.
+- `tests/database/data-partitioner.test.ts` uses `expect(...)` APIs while running on Node's `node:test` + `assert` stack, causing `ReferenceError: expect is not defined` failures.
+- `tests/core/engine.test.ts` and deep-deterministic suites exhibit hangs from repeated Redis connection retries/open handles during constructor-heavy test loops without a local Redis stub.
+
+### Coverage-extension recommendations
+1. Standardize test framework assertions (Node `assert` only, or configure Vitest/Jest globals) and refactor mixed-style suites first (`tests/database/data-partitioner.test.ts`).
+2. Add deterministic Redis mock/fake adapter for engine/router tests to prevent network retries and hanging handles.
+3. Harden backup tests with explicit temp DB fixture lifecycle (`beforeEach` recreate source db, afterEach cleanup) and deterministic timestamps.
+4. Add per-suite timeout + handle diagnostics (`--test-reporter=spec`, `--test-name-pattern`, `--test-timeout`) in CI matrix to detect hangs early.
+5. Expand branch tests around readiness/idempotency paths under Redis unavailable scenarios to increase infrastructure-failure coverage.

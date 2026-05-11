@@ -23,7 +23,7 @@ describe('backup', async () => {
   });
 
   test('performBackup should create backup with timestamp', async () => {
-    const { performBackup } = await import('../../backend/backup.js');
+    const { performBackup } = await loadBackupModule();
     
     await performBackup();
     
@@ -37,7 +37,7 @@ describe('backup', async () => {
   });
 
   test('performBackup should handle errors gracefully', async () => {
-    const { performBackup } = await import('../../backend/backup.js');
+    const { performBackup } = await loadBackupModule();
 
     // Remove the database file to trigger error
     await fs.unlink(path.join(tempDir, 'trading.db'));
@@ -60,7 +60,7 @@ describe('backup', async () => {
 
     // Manually call cleanup by importing the module and triggering cleanup
     // Since the module uses process.cwd() at load time, we need to create the files first
-    const { performBackup } = await import('../../backend/backup.js');
+    const { performBackup } = await loadBackupModule();
     
     // Create a valid database file so performBackup succeeds
     await fs.writeFile(path.join(tempDir, 'trading.db'), 'valid db content');
@@ -75,7 +75,7 @@ describe('backup', async () => {
   });
 
   test('cleanupOldBackups should handle empty backup directory', async () => {
-    const { performBackup } = await import('../../backend/backup.js');
+    const { performBackup } = await loadBackupModule();
 
     // Create empty backup directory
     const backupDir = path.join(tempDir, 'backups');
@@ -85,3 +85,6 @@ describe('backup', async () => {
     await assert.doesNotReject(async () => await performBackup());
   });
 });
+  async function loadBackupModule() {
+    return import(`../../backend/backup.js?ts=${Date.now()}-${Math.random()}`);
+  }
