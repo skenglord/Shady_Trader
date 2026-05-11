@@ -132,6 +132,14 @@ export class ExchangeConnector {
     this.reconciliationEngine.startReconciliation(30000); // 30 second intervals
   }
 
+  shutdown() {
+    if (this.updateInterval) {
+      clearInterval(this.updateInterval);
+      this.updateInterval = null;
+    }
+    this.reconciliationEngine.stopReconciliation();
+  }
+
   getCapabilities() {
     return this.executionAdapter.capabilities;
   }

@@ -25,6 +25,13 @@ function getRedis(): Redis {
       host: process.env.REDIS_HOST || 'localhost',
       port: parseInt(process.env.REDIS_PORT || '6379'),
       password: process.env.REDIS_PASSWORD || '',
+      lazyConnect: true,
+      maxRetriesPerRequest: 1,
+      enableOfflineQueue: false,
+      retryStrategy: () => null,
+    });
+    redis.on('error', (error) => {
+      logger.warn('Idempotency Redis unavailable', { error: error?.message || 'unknown' });
     });
   }
   return redis;
