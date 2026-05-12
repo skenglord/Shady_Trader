@@ -231,7 +231,6 @@ export class PaperTradingService {
 
     // Create position (use same ID as order for simplicity)
     const position = this.positionTracker.openPosition({
-      id: orderId,
       symbol: request.symbol,
       side: request.side,
       quantity,

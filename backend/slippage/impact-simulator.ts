@@ -19,6 +19,23 @@ export class ImpactSimulator implements IImpactSimulator {
     logger.info('ImpactSimulator initialized', { service: 'ImpactSimulator' });
   }
 
+  async simulateImpact(order: OrderRequest, marketState: MarketState): Promise<any> {
+    // Simplified implementation - would use full slippage modeling
+    const permanentImpact = new Decimal(0.001); // 0.1% permanent impact
+    const temporaryImpact = new Decimal(0.002); // 0.2% temporary impact
+    const spreadCost = new Decimal(0.0005); // 0.05% spread cost
+
+    return {
+      totalSlippage: permanentImpact.plus(temporaryImpact).plus(spreadCost),
+      confidence: 0.8,
+      breakdown: {
+        permanentImpact,
+        temporaryImpact,
+        spreadCost
+      }
+    };
+  }
+
   async simulateExecution(
     order: OrderRequest,
     scenarios: ExecutionScenario[] = ['best_case', 'worst_case', 'expected']

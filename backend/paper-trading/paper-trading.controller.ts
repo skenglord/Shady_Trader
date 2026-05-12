@@ -34,7 +34,7 @@ paperTradingRouter.use((req, res, next) => {
   res.on('finish', () => {
     const durationMs = Number(process.hrtime.bigint() - start) / 1_000_000;
     const routeKey = `${req.method} ${req.route?.path || req.path || req.originalUrl || req.url}`;
-    recordApiRequest(routeKey, res.statusCode, durationMs);
+    recordApiRequest(routeKey, req.method, res.statusCode, durationMs);
     
     if (res.statusCode >= 500 || durationMs >= 1000) {
       logger.warn('Paper trading API request completed with warning', {

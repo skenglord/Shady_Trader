@@ -19,6 +19,20 @@ export class LiquidityAnalyzer implements ILiquidityAnalyzer {
     logger.info('LiquidityAnalyzer initialized', { service: 'LiquidityAnalyzer' });
   }
 
+  async analyzeLiquidity(symbol: string, timestamp: number): Promise<any> {
+    // Simplified implementation - would analyze real order book data
+    return {
+      effectiveDepth: new Decimal(75),
+      resiliencyScore: 4.5,
+      slippageProfile: [{
+        size: new Decimal(1),
+        expectedSlippage: new Decimal(0.003),
+        confidence: 0.85
+      }],
+      tier: 'medium' as const
+    };
+  }
+
   async analyzeDepth(
     symbol: string,
     orderSize: Decimal,

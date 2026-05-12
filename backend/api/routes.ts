@@ -6,14 +6,64 @@ import { RegimeType } from '../regime/detector.js';
 import multer from 'multer';
 import { parse } from 'csv-parse';
 import fs from 'fs';
-import { z } from 'zod';
-import { getRequestId, logger } from '../logging/logger.js';
-import { getApiMetricsSnapshot, recordApiRequest, toPrometheusMetrics } from '../observability/requestMetrics.js';
-import paperTradingRouter from '../paper-trading/paper-trading.controller.js';
-import Redis from 'ioredis';
-import crypto from 'crypto';
 
 const upload = multer({ dest: 'uploads/' });
+import { z } from 'zod';
+import { getRequestId, logger } from '../logging/logger.js';
+import axios from 'axios';
+import paperTradingRouter from '../paper-trading/paper-trading.controller.js';
+import { recordApiRequest, getApiMetricsSnapshot, toPrometheusMetrics } from '../observability/requestMetrics.js';
+
+// Fallback function to fetch historical data from CoinGecko
+async function fetchCoinGeckoHistoricalData(symbol: string, timeframe: string, days: number) {
+  try {
+    // Map symbol to CoinGecko ID
+    const coinId = symbol === 'BTC/USDT' ? 'bitcoin' : symbol === 'ETH/USDT' ? 'ethereum' : 'bitcoin';
+
+    // Map timeframe to CoinGecko days parameter
+    let cgDays = '365';
+    if (days === 30) cgDays = '30';
+    else if (days === 7) cgDays = '7';
+    else if (days === 1) cgDays = '1';
+
+    const response = await axios.get(`https://api.coingecko.com/api/v3/coins/${coinId}/ohlc`, {
+      params: {
+        vs_currency: 'usd',
+        days: cgDays
+      },
+      timeout: 10000
+    });
+
+    if (response.data && Array.isArray(response.data)) {
+      // Convert CoinGecko OHLC format [timestamp, open, high, low, close] to our format
+      const candles = response.data.map((ohlc: number[]) => ({
+        time: ohlc[0],
+        open: ohlc[1],
+        high: ohlc[2],
+        low: ohlc[3],
+        close: ohlc[4],
+        volume: 0 // CoinGecko free tier doesn't provide volume
+      }));
+
+      // Sort by time ascending
+      candles.sort((a, b) => a.time - b.time);
+
+      // Resample to requested timeframe if needed
+      if (timeframe !== '1d') {
+        // For now, return daily data. Could implement resampling later
+        return candles;
+      }
+
+      return candles;
+    }
+
+    return null;
+  } catch (error: any) {
+    logger.error('CoinGecko historical data fetch failed', { error: error.message, symbol, timeframe, days });
+    return null;
+  }
+}
+
 export const apiRouter = Router();
 
 // Redis instance for idempotency
@@ -494,12 +544,29 @@ apiRouter.get('/candles', async (req, res) => {
         if (engine.exchange?.exchangeName === 'coinmarketcap') {
           const hasApiKey = Boolean(engine.exchange.apiKey && engine.exchange.apiKey.trim());
           if (!hasApiKey) {
-            return res.status(402).json({
-              error: 'API_KEY_REQUIRED',
-              message: 'CoinMarketCap historical data requires a paid API key. Please configure your API key in settings.',
-              provider: 'coinmarketcap',
-              action: 'configure_api_key'
-            });
+            // Fallback to CoinGecko for free historical data
+            logger.info('Falling back to CoinGecko for historical data', { requestId: req.requestId });
+            try {
+              const fallbackCandles = await fetchCoinGeckoHistoricalData(engine.symbol, engine.timeframe, history === '1y' ? 365 : 30);
+              if (fallbackCandles && fallbackCandles.length >= 50) {
+                candles = fallbackCandles;
+                logger.info('Successfully fetched fallback data from CoinGecko', { requestId: req.requestId, count: candles.length });
+              } else {
+                return res.status(402).json({
+                  error: 'API_KEY_REQUIRED',
+                  message: 'CoinMarketCap historical data requires a paid API key. Please configure your API key in settings.',
+                  provider: 'coinmarketcap',
+                  action: 'configure_api_key'
+                });
+              }
+            } catch (fallbackError: any) {
+              logger.error('CoinGecko fallback failed', { requestId: req.requestId, error: fallbackError.message });
+              return res.status(503).json({
+                error: 'DATA_UNAVAILABLE',
+                message: 'Unable to fetch historical data from any source. Please try again later.',
+                provider: 'fallback_failed'
+              });
+            }
           } else {
             // API key provided but still no data - likely rate limited or invalid key
             return res.status(503).json({
@@ -611,8 +678,8 @@ apiRouter.post('/settings', validateSettingsBody, async (req, res) => {
   const settings = req.body;
   
   for (const [key, value] of Object.entries(settings)) {
-    // Skip API keys and exchange settings
-    if (['apiKey', 'apiSecret', 'apiPassword', 'exchange', 'apiProviders'].includes(key)) {
+    // Skip API keys and sensitive settings
+    if (['apiKey', 'apiSecret', 'apiPassword', 'apiProviders'].includes(key)) {
       continue;
     }
     await runQuery(`
@@ -634,8 +701,8 @@ apiRouter.get('/settings', async (req, res) => {
   
   const result: Record<string, string> = {};
   for (const row of settings as any[]) {
-    // Skip API keys and exchange settings in response
-    if (['apiKey', 'apiSecret', 'apiPassword', 'exchange', 'apiProviders'].includes(row.key)) {
+    // Skip API keys and sensitive settings in response
+    if (['apiKey', 'apiSecret', 'apiPassword', 'apiProviders'].includes(row.key)) {
       continue;
     }
     result[row.key] = row.value;

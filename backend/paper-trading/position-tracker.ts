@@ -45,7 +45,7 @@ export class PaperPositionTracker {
   constructor() {}
 
   public openPosition(position: Omit<PaperPosition, 'id' | 'status' | 'candlesHeld' | 'openedAt'>): PaperPosition {
-    const id = 'id' in position ? position.id : randomUUID();
+    const id = randomUUID();
     const newPosition: PaperPosition = {
       ...position,
       id,

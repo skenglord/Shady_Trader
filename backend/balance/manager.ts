@@ -46,13 +46,13 @@ export class BalanceManager {
 
   async getBalances(): Promise<Balances> {
     const rows = await runQuery('SELECT * FROM balances WHERE id = ?', ['default'], 'all');
-    const row = rows[0];
+    const row = rows[0] || {};
     const b = {
-      mainBalance: row.main_balance,
-      botBalance: row.bot_balance,
-      activeTradeBalance: row.active_trade_balance,
-      totalPnl: row.total_pnl,
-      totalPnlPct: row.total_pnl_pct
+      mainBalance: row.main_balance ?? 100000,
+      botBalance: row.bot_balance ?? 0,
+      activeTradeBalance: row.active_trade_balance ?? 0,
+      totalPnl: row.total_pnl ?? 0,
+      totalPnlPct: row.total_pnl_pct ?? 0
     };
     console.log(`[BalanceManager] getBalances: botBalance=${b.botBalance}`);
     return b;

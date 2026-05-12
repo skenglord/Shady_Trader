@@ -104,13 +104,13 @@ export class SignalGenerator {
     }
   }
 
-  generateStreamingSignal(
+  async generateStreamingSignal(
     symbol: string,
     regime: RegimeType,
     useAI: boolean = false,
     strategy: string = 'regime',
     riskMode: string = 'moderate'
-  ): Signal | null {
+  ): Promise<Signal | null> {
     const buffer = this.streamingBuffers.get(symbol);
     if (!buffer || buffer.length < 50) {
       return null; // Need minimum data for indicators
@@ -135,24 +135,24 @@ export class SignalGenerator {
     let signal: Signal | null = null;
     
     if (strategy === 'shotgun') {
-      signal = this._shotgunStrategy(df, symbol);
+      signal = this._shotgunStrategy(df, symbol, riskMode);
     } else if (strategy === 'alt_chaser') {
-      signal = this._altChaserStrategy(df, symbol);
+      signal = this._altChaserStrategy(df, symbol, riskMode);
     } else if (strategy === 'chasing_dragons') {
-      signal = this._chasingDragonsStrategy(df, symbol);
+      signal = this._chasingDragonsStrategy(df, symbol, riskMode);
     } else {
       switch (regime) {
         case RegimeType.STRONG_BULL:
-          signal = this._strongBullStrategy(df, symbol);
+          signal = this._strongBullStrategy(df, symbol, riskMode);
           break;
         case RegimeType.WEAK_BULL:
-          signal = this._weakBullStrategy(df, symbol);
+          signal = this._weakBullStrategy(df, symbol, riskMode);
           break;
         case RegimeType.BEAR:
-          signal = this._bearStrategy(df, symbol);
+          signal = this._bearStrategy(df, symbol, riskMode);
           break;
         case RegimeType.SIDEWAYS:
-          signal = this._sidewaysStrategy(df, symbol);
+          signal = this._sidewaysStrategy(df, symbol, riskMode);
           break;
         default:
           return null;
@@ -247,7 +247,7 @@ export class SignalGenerator {
     return signal;
   }
 
-  _strongBullStrategy(df: any[], symbol: string): Signal | null {
+  _strongBullStrategy(df: any[], symbol: string, riskMode: string): Signal | null {
     const data = df[df.length - 1];
     let score = 0;
     const indicators: string[] = [];
@@ -300,7 +300,7 @@ export class SignalGenerator {
     return null;
   }
 
-  _weakBullStrategy(df: any[], symbol: string): Signal | null {
+  _weakBullStrategy(df: any[], symbol: string, riskMode: string): Signal | null {
     const data = df[df.length - 1];
     let score = 0;
     const indicators: string[] = [];
@@ -351,7 +351,7 @@ export class SignalGenerator {
     return null;
   }
 
-  _bearStrategy(df: any[], symbol: string): Signal | null {
+  _bearStrategy(df: any[], symbol: string, riskMode: string): Signal | null {
     const data = df[df.length - 1];
     let score = 0;
     const indicators: string[] = [];
@@ -399,7 +399,7 @@ export class SignalGenerator {
     return null;
   }
 
-  _sidewaysStrategy(df: any[], symbol: string): Signal | null {
+  _sidewaysStrategy(df: any[], symbol: string, riskMode: string): Signal | null {
     const data = df[df.length - 1];
     let score = 0;
     let side: 'buy' | 'sell' = 'buy';
@@ -457,7 +457,7 @@ export class SignalGenerator {
     return null;
   }
 
-  _shotgunStrategy(df: any[], symbol: string): Signal | null {
+  _shotgunStrategy(df: any[], symbol: string, riskMode: string): Signal | null {
     // Shotgun: Buy/sell 0.5s before candle end, close 10s after.
     // This needs to be triggered at specific times.
     // For now, let's just return a signal if indicators align.
@@ -478,7 +478,7 @@ export class SignalGenerator {
     return null;
   }
 
-  _altChaserStrategy(df: any[], symbol: string): Signal | null {
+  _altChaserStrategy(df: any[], symbol: string, riskMode: string): Signal | null {
     const last = df[df.length - 1];
     const prev = df[df.length - 2];
     const change = Math.abs(last.close - prev.close) / prev.close;
@@ -499,7 +499,7 @@ export class SignalGenerator {
     return null;
   }
 
-  _chasingDragonsStrategy(df: any[], symbol: string): Signal | null {
+  _chasingDragonsStrategy(df: any[], symbol: string, riskMode: string): Signal | null {
     const last = df[df.length - 1];
     // Placeholder for probability score logic
     if (last.rsi_14 > 50) {

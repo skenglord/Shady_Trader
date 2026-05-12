@@ -1,5 +1,6 @@
-import Fastify from 'fastify';
-import WebSocket from 'ws';
+// Note: This controller is designed for Fastify but the main app uses Express
+// import Fastify from 'fastify';
+// import WebSocket from 'ws';
 import { RollingOptimizer, OptimizationResult } from './rolling-optimizer';
 import { OverfittingDetector, OverfittingDiagnostic } from './overfitting-detector';
 import { StatisticalValidator, ValidationReport } from './statistical-validator';

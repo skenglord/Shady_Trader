@@ -158,6 +158,7 @@ export class ShadowTrader {
             askVolume: new Decimal(1000),
             bidLevels: 10,
             askLevels: 10,
+            totalDepth: new Decimal(2000), // bidVolume + askVolume
             vpin: 0.1
           },
           regime: 'normal' as any

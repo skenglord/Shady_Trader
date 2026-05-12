@@ -1,9 +1,22 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickSeries, LineSeries, CrosshairMode, createSeriesMarkers, ISeriesMarkersPluginApi } from 'lightweight-charts';
-import { Activity, TrendingUp, TrendingDown, Minus, AlertCircle, Settings, Play, Square, X, Maximize2, Calendar, History, Info } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, Minus, AlertCircle, Settings, Play, Square, X, Maximize2, Calendar, History, Info, ExternalLink } from 'lucide-react';
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
 const APP_URL = '';
+
+function getProviderDocsUrl(provider: string): string {
+  const docs: Record<string, string> = {
+    coinmarketcap: 'https://coinmarketcap.com/api/documentation/v1/',
+    coingecko: 'https://docs.coingecko.com/reference/coins-id-ohlc',
+    cryptocompare: 'https://min-api.cryptocompare.com/documentation/key=Historical&cat=dataHistoday',
+    binance: 'https://binance-docs.github.io/apidocs/spot/en/#kline-candlestick-data',
+    kraken: 'https://docs.kraken.com/rest/endpoints/public/OHLC',
+    okx: 'https://www.okx.com/docs-v5/en/#market-data',
+    coinbase: 'https://docs.cloud.coinbase.com/exchange/reference/exchangerestapi_getproductcandles'
+  };
+  return docs[provider] || 'https://example.com';
+}
 
 const InfoButton = ({ text, position = "left-full ml-2 top-0" }: { text: string, position?: string }) => (
   <div className="info-container relative inline-block ml-1">
@@ -1919,21 +1932,21 @@ export default function App() {
       {/* Settings Modal */}
       {showSettings && (
         <div 
-          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50"
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
           onClick={() => setShowSettings(false)}
         >
           <div 
-            className="bg-[#1e1e1e] border border-white/10 rounded-xl w-full max-w-md p-6"
+            className="bg-[#1e1e1e] border border-white/10 rounded-xl w-full max-w-lg max-h-[90vh] flex flex-col"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex justify-between items-center mb-6">
+            <div className="flex justify-between items-center p-4 border-b border-white/5 flex-shrink-0">
               <h2 className="text-xl font-bold">System Settings</h2>
               <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-white">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
-            <div className="space-y-4">
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-400 mb-1">Trading Pair</label>
                 <select 
@@ -2017,12 +2030,124 @@ export default function App() {
               </div>
 
               <div className="pt-4 border-t border-white/5">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-medium text-gray-300">Market Data Provider</h3>
+                  <a 
+                    href={getProviderDocsUrl(settings.exchange)}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1"
+                  >
+                    Docs
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-400 mb-1">Exchange/Provider</label>
+                    <select
+                      value={settings.exchange}
+                      onChange={(e) => setSettings({ ...settings, exchange: e.target.value })}
+                      className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                    >
+                      <option value="coinmarketcap">CoinMarketCap</option>
+                      <option value="coingecko">CoinGecko</option>
+                      <option value="cryptocompare">CryptoCompare</option>
+                      <option value="binance">Binance</option>
+                      <option value="kraken">Kraken</option>
+                      <option value="okx">OKX</option>
+                      <option value="coinbase">Coinbase</option>
+                    </select>
+                  </div>
+
+                  {settings.exchange === 'coinmarketcap' && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1">CoinMarketCap API Key</label>
+                      <input
+                        type="password"
+                        value={settings.apiKey}
+                        onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
+                        placeholder="Enter your CoinMarketCap Pro API key"
+                        className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Requires Pro plan for historical OHLCV data. Get your key at <a href="https://pro.coinmarketcap.com" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">pro.coinmarketcap.com</a></p>
+                    </div>
+                  )}
+
+                  {settings.exchange === 'coingecko' && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1">CoinGecko API Key (Optional)</label>
+                      <input
+                        type="password"
+                        value={settings.apiKey}
+                        onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
+                        placeholder="Enter your CoinGecko API key"
+                        className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Free tier available. Get your key at <a href="https://www.coingecko.com/en/api" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">coingecko.com/en/api</a></p>
+                    </div>
+                  )}
+
+                  {settings.exchange === 'cryptocompare' && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1">CryptoCompare API Key</label>
+                      <input
+                        type="password"
+                        value={settings.apiKey}
+                        onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
+                        placeholder="Enter your CryptoCompare API key"
+                        className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Get your key at <a href="https://min-api.cryptocompare.com" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">min-api.cryptocompare.com</a></p>
+                    </div>
+                  )}
+
+                  {(settings.exchange === 'binance' || settings.exchange === 'kraken' || settings.exchange === 'okx' || settings.exchange === 'coinbase') && (
+                    <>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-400 mb-1">API Key</label>
+                        <input
+                          type="password"
+                          value={settings.apiKey}
+                          onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
+                          placeholder={`Enter your ${settings.exchange} API key`}
+                          className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-gray-400 mb-1">API Secret</label>
+                        <input
+                          type="password"
+                          value={settings.apiSecret}
+                          onChange={(e) => setSettings({ ...settings, apiSecret: e.target.value })}
+                          placeholder={`Enter your ${settings.exchange} API secret`}
+                          className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                        />
+                      </div>
+                      {settings.exchange === 'coinbase' && (
+                        <div>
+                          <label className="block text-xs font-medium text-gray-400 mb-1">API Passphrase</label>
+                          <input
+                            type="password"
+                            value={settings.apiPassword || ''}
+                            onChange={(e) => setSettings({ ...settings, apiPassword: e.target.value })}
+                            placeholder="Enter your Coinbase API passphrase"
+                            className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                          />
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+
+              <div className="pt-4 border-t border-white/5">
                 <h3 className="text-sm font-medium text-gray-300 mb-3">System Configuration</h3>
                 <div className="space-y-3">
                   <div>
                     <label className="block text-xs font-medium text-gray-400 mb-1">Base URL</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       value={settings.baseUrl}
                       onChange={(e) => setSettings({ ...settings, baseUrl: e.target.value })}
                       placeholder="https://api.example.com"
@@ -2031,8 +2156,8 @@ export default function App() {
                   </div>
                   <div>
                     <label className="block text-xs font-medium text-gray-400 mb-1">WebSocket URL</label>
-                    <input 
-                      type="text" 
+                    <input
+                      type="text"
                       value={settings.wsUrl}
                       onChange={(e) => setSettings({ ...settings, wsUrl: e.target.value })}
                       placeholder="wss://ws.example.com"
@@ -2096,15 +2221,14 @@ export default function App() {
                   </div>
                 </div>
               </div>
-
-              <div className="pt-4 border-t border-white/5">
-                <button 
-                  onClick={saveSettings}
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded-lg transition-colors"
-                >
-                  Save Changes
-                </button>
-              </div>
+            </div>
+            <div className="p-4 border-t border-white/5 flex-shrink-0">
+              <button 
+                onClick={saveSettings}
+                className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded-lg transition-colors"
+              >
+                Save Changes
+              </button>
             </div>
           </div>
         </div>
