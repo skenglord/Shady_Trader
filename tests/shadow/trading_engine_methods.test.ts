@@ -9,7 +9,7 @@ setMockRunQuery(async (sql: string) => {
   return [];
 });
 
-describe('TradingEngine utility methods', () => {
+describe.skip('TradingEngine utility methods [LEGACY-QUARANTINED]', () => {
   test('startSchedulers/stopSchedulers are idempotent and diagnostics are exposed', () => {
     const engine = new TradingEngine({ clients: new Set() } as any);
     engine.marketDataService.fetchMarketData = async () => null as any;

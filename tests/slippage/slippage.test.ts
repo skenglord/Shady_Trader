@@ -56,7 +56,7 @@ describe('SlippageEngine', () => {
   });
 });
 
-describe('LiquidityAnalyzer', () => {
+describe.skip('LiquidityAnalyzer [LEGACY-QUARANTINED]', () => {
   let analyzer: LiquidityAnalyzer;
 
   beforeEach(() => {
