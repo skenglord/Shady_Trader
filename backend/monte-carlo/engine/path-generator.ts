@@ -118,20 +118,20 @@ export class PathGenerator {
   private boxMuller(): number {
     let z1 = 0;
     let generate = false;
-    
+
     if (!generate) {
-      const u1 = this.rng();
-      const u2 = this.rng();
-      
+      const u1 = this.random();
+      const u2 = this.random();
+
       const r = Math.sqrt(-2.0 * Math.log(u1));
       const theta = 2.0 * Math.PI * u2;
-      
+
       z1 = r * Math.cos(theta);
       generate = true;
     } else {
       generate = false;
     }
-    
+
     return z1;
   }
 

@@ -1,5 +1,5 @@
 // Correlation Matrix Engine - Cholesky Decomposition and Stress Testing
-import { Matrix } from 'ml-matrix';
+import { Matrix, CholeskyDecomposition, EigenvalueDecomposition } from 'ml-matrix';
 
 export class CorrelationMatrix {
   private covMatrix: Matrix;
@@ -129,9 +129,10 @@ export class CorrelationMatrix {
     if (this.cholFactor) {
       return this.cholFactor;
     }
-    
+
     try {
-      this.cholFactor = Matrix.cholesky(this.covMatrix);
+      const chol = new CholeskyDecomposition(this.covMatrix);
+      this.cholFactor = (chol as any).L;
       return this.cholFactor;
     } catch (error) {
       // Fallback: use eigenvalue correction
@@ -145,9 +146,9 @@ export class CorrelationMatrix {
   private choleskyWithCorrection(): Matrix {
     const corrected = this.covMatrix.clone();
     const minEigenval = 1e-8;
-    
+
     // Compute eigendecomposition
-    const eig = Matrix.eigenvalueDecomposition(corrected);
+    const eig = new EigenvalueDecomposition(corrected);
     const eigenvals = eig.realEigenvalues;
     const eigenvecs = eig.eigenvectorMatrix;
     
@@ -159,7 +160,7 @@ export class CorrelationMatrix {
     const correctedCov = eigenvecs.mmul(Lambda).mmul(eigenvecs.transpose());
     
     this.covMatrix = correctedCov;
-    this.cholFactor = Matrix.cholesky(correctedCov);
+    this.cholFactor = (new CholeskyDecomposition(correctedCov) as any).L;
     this.eigenvals = clipped;
     this.eigenvecs = eigenvecs;
     
@@ -253,7 +254,7 @@ export class CorrelationMatrix {
    */
   isPositiveDefinite(tolerance: number = 1e-8): boolean {
     try {
-      const eig = Matrix.eigenvalueDecomposition(this.covMatrix);
+      const eig = new EigenvalueDecomposition(this.covMatrix);
       const minEigenval = Math.min(...eig.realEigenvalues);
       return minEigenval > tolerance;
     } catch {
@@ -265,7 +266,7 @@ export class CorrelationMatrix {
    * Get condition number
    */
   getConditionNumber(): number {
-    const eig = this.covMatrix.eigenvalueDecomposition();
+    const eig = new EigenvalueDecomposition(this.covMatrix);
     const eigenvals = eig.realEigenvalues;
     const maxEig = Math.max(...eigenvals);
     const minEig = Math.min(...eigenvals);

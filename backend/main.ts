@@ -184,20 +184,31 @@ export class TradingEngine {
     logger.info('TradingEngine constructor called', { service: 'TradingEngine' });
     this.wss = wss;
 
-    // Initialize state manager with Redis
-    const redisInstance = redis || new Redis({
-      host: process.env.REDIS_HOST || 'localhost',
-      port: parseInt(process.env.REDIS_PORT || '6379'),
-      password: process.env.REDIS_PASSWORD || '',
-      lazyConnect: true,
-      maxRetriesPerRequest: 1,
-      enableOfflineQueue: false,
-      retryStrategy: () => null,
-    });
+    // Initialize state manager with Redis (handle gracefully if unavailable)
+    let redisInstance: Redis | undefined;
+    if (redis && redis.status === 'ready') {
+      redisInstance = redis;
+    } else if (!redis) {
+      try {
+        redisInstance = new Redis({
+          host: process.env.REDIS_HOST || 'localhost',
+          port: parseInt(process.env.REDIS_PORT || '6379'),
+          password: process.env.REDIS_PASSWORD || '',
+          lazyConnect: true,
+          maxRetriesPerRequest: 1,
+          enableOfflineQueue: false,
+          retryStrategy: () => null,
+        });
+      } catch (e) {
+        logger.warn('Redis unavailable', { error: e instanceof Error ? e.message : String(e) });
+      }
+    }
     // Handle Redis connection errors to prevent unhandled rejections
-    redisInstance.on('error', (err) => {
-      logger.warn('Redis connection error', { error: err.message });
-    });
+    if (redisInstance) {
+      redisInstance.on('error', (err) => {
+        logger.warn('Redis connection error', { error: err.message });
+      });
+    }
     this.stateManager = getServiceManager(redisInstance, 'trading-engine');
 
     // Load initial state from Redis
@@ -546,7 +557,14 @@ export class TradingEngine {
     this.shadowTrader.reset();
     logger.info('Trading engine started and reset', { service: 'TradingEngine' });
     this.broadcast({ type: 'status', data: { isRunning: true } });
-    this.broadcast({ type: 'performance', data: this.shadowTrader.getPerformance() });
+
+    // Broadcast initial performance (async, don't wait)
+    this.shadowTrader.getPerformance().then(perf => {
+      this.broadcast({ type: 'performance', data: perf });
+    }).catch(err => {
+      logger.warn('Failed to get initial performance', { error: err.message });
+      this.broadcast({ type: 'performance', data: {} });
+    });
 
     while (this.isRunning) {
       const cycleStart = Date.now();

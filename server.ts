@@ -25,11 +25,15 @@ import Redis from 'ioredis';
 const sdk = new NodeSDK({
   serviceName: 'shady-trader',
   traceExporter: new OTLPTraceExporter({
-    url: process.env.OTLP_ENDPOINT || 'http://tempo:4317'
+    url: process.env.OTLP_ENDPOINT || 'http://localhost:4317'
   }),
   instrumentations: [getNodeAutoInstrumentations()],
 });
-sdk.start();
+try {
+  sdk.start();
+} catch (e) {
+  logger.warn('OpenTelemetry initialization failed', { error: e instanceof Error ? e.message : String(e) });
+}
 
 async function startServer() {
   // Validate environment variables
@@ -84,18 +88,39 @@ async function startServer() {
   app.use(cors(corsOptions));
 
   // Redis setup for sessions and state management
-  const redis = new Redis({
-    host: process.env.REDIS_HOST || 'localhost',
-    port: parseInt(process.env.REDIS_PORT || '6379'),
-    password: process.env.REDIS_PASSWORD || '',
-  });
-
-  // Session store
-  const sessionStore = new RedisStore({
-    client: redis,
-    prefix: 'session:',
-    ttl: 3600, // 1 hour
-  });
+  let redis: Redis | null = null;
+  let sessionStore: RedisStore | undefined;
+  try {
+    const redisInstance = new Redis({
+      host: process.env.REDIS_HOST || 'localhost',
+      port: parseInt(process.env.REDIS_PORT || '6379'),
+      password: process.env.REDIS_PASSWORD || '',
+      connectTimeout: 2000,
+      retryStrategy: () => null, // Don't retry
+    });
+    // Test connection
+    await new Promise<void>((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('Redis connection timeout')), 2000);
+      redisInstance.on('connect', () => {
+        clearTimeout(timeout);
+        resolve();
+      });
+      redisInstance.on('error', (err: Error) => {
+        clearTimeout(timeout);
+        reject(err);
+      });
+    });
+    redis = redisInstance;
+    // Session store
+    sessionStore = new RedisStore({
+      client: redis,
+      prefix: 'session:',
+      ttl: 3600, // 1 hour
+    });
+    logger.info('Redis connected successfully', { service: 'server' });
+  } catch (error: any) {
+    logger.warn('Redis unavailable, using memory store', { error: error.message, service: 'server' });
+  }
 
   // Session middleware
   app.use(session({
@@ -163,6 +188,17 @@ async function startServer() {
   }, apiRouter);
 
   const server = createServer(app);
+  server.on('error', (error: NodeJS.ErrnoException) => {
+    logger.error('HTTP server failed to start', {
+      code: error.code,
+      message: error.message,
+      port: PORT
+    });
+    if (error.code === 'EADDRINUSE') {
+      console.error(`Port ${PORT} is already in use. Set PORT to a free value and retry.`);
+    }
+    process.exit(1);
+  });
   
   // Setup WebSocket with sticky session support for load balancing
   const wss = new WebSocketServer({ 

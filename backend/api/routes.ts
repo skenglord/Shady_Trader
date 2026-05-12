@@ -205,14 +205,18 @@ apiRouter.get('/health/ready', async (req, res) => {
     // Check database connectivity
     await runQuery('SELECT 1', [], 'run');
 
-    // Check Redis connectivity
-    const redis = getRedis();
-    await redis.ping();
-
     // Check trading engine status
     const engine = getTradingEngine();
     if (!engine) {
       return res.status(503).json({ status: 'not ready', reason: 'Trading engine not initialized' });
+    }
+
+    let redisStatus: 'ok' | 'degraded' = 'ok';
+    try {
+      const redis = getRedis();
+      await redis.ping();
+    } catch {
+      redisStatus = 'degraded';
     }
 
     res.status(200).json({
@@ -220,7 +224,7 @@ apiRouter.get('/health/ready', async (req, res) => {
       timestamp: Date.now(),
       components: {
         database: 'ok',
-        redis: 'ok',
+        redis: redisStatus,
         tradingEngine: 'ok'
       }
     });
@@ -380,11 +384,20 @@ apiRouter.get('/diagnostics/health', async (req, res) => {
   const latestMarketData = await engine.marketDataService.getLatestMarketData();
   const marketMetrics = engine.marketDataService.getMetrics();
   const apiMetrics = getApiMetricsSnapshot();
+  let redisStatus: 'ok' | 'degraded' = 'ok';
+  try {
+    await getRedis().ping();
+  } catch {
+    redisStatus = 'degraded';
+  }
   return res.json({
     uptimeSec: Math.floor(process.uptime()),
     requestId: req.requestId,
     isRunning: engine.isRunning,
     startup: engine.getStartupDiagnostics(),
+    infrastructure: {
+      redis: redisStatus
+    },
     api: apiMetrics,
     marketData: {
       hasCachedData: Boolean(latestMarketData),

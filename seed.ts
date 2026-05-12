@@ -1,13 +1,14 @@
 import { runQuery } from './backend/database.js';
 
 export async function seedDatabase() {
-  // Check if already seeded
+  // Check if already seeded. Skip if shadow_trades OR candles have data
+  // to avoid re-seeding when partial data exists (e.g. after manual DB reset)
   const countResult = await runQuery('SELECT COUNT(*) as count FROM shadow_trades', [], 'all');
   const count = (countResult as any)[0] as { count: number };
   const candleCountResult = await runQuery('SELECT COUNT(*) as count FROM candles', [], 'all');
   const candleCount = (candleCountResult as any)[0] as { count: number };
-  
-  if (count.count > 0 && candleCount.count > 0) return;
+
+  if (count.count > 0 || candleCount.count > 0) return;
 
   console.log('Seeding database with mock data...');
 

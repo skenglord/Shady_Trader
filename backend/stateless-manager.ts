@@ -2,15 +2,16 @@ import Redis from 'ioredis';
 import { logger } from './logging/logger.js';
 
 export class StatelessServiceManager {
-  private redis: Redis;
+  private redis?: Redis;
   private serviceKey: string;
 
-  constructor(redis: Redis, serviceName: string) {
+  constructor(redis: Redis | undefined, serviceName: string) {
     this.redis = redis;
     this.serviceKey = `service:${serviceName}`;
   }
 
   async getState(key: string): Promise<any> {
+    if (!this.redis) return null;
     try {
       const data = await this.redis.get(`${this.serviceKey}:${key}`);
       return data ? JSON.parse(data) : null;
@@ -21,6 +22,7 @@ export class StatelessServiceManager {
   }
 
   async setState(key: string, value: any, ttl?: number): Promise<void> {
+    if (!this.redis) return;
     try {
       const data = JSON.stringify(value);
       if (ttl) {
@@ -35,6 +37,7 @@ export class StatelessServiceManager {
   }
 
   async deleteState(key: string): Promise<void> {
+    if (!this.redis) return;
     try {
       await this.redis.del(`${this.serviceKey}:${key}`);
     } catch (error) {
@@ -43,6 +46,7 @@ export class StatelessServiceManager {
   }
 
   async getAllState(): Promise<Record<string, any>> {
+    if (!this.redis) return {};
     try {
       const keys = await this.redis.keys(`${this.serviceKey}:*`);
       if (keys.length === 0) return {};
@@ -70,6 +74,9 @@ export class StatelessServiceManager {
 
   // Atomic state updates with Lua scripts
   async updateStateAtomically(key: string, updateFn: (currentValue: any) => any): Promise<any> {
+    if (!this.redis) {
+      return updateFn(null);
+    }
     const script = `
       local key = KEYS[1]
       local current = redis.call('GET', key)
@@ -94,6 +101,7 @@ export class StatelessServiceManager {
 
   // Pub/Sub for state change notifications
   async publishStateChange(key: string, oldValue: any, newValue: any): Promise<void> {
+    if (!this.redis) return;
     try {
       await this.redis.publish(`${this.serviceKey}:changes`, JSON.stringify({
         key,
@@ -107,6 +115,7 @@ export class StatelessServiceManager {
   }
 
   async subscribeToStateChanges(callback: (change: any) => void): Promise<void> {
+    if (!this.redis) return;
     const subscriber = this.redis.duplicate();
 
     try {
@@ -158,7 +167,9 @@ export class StatelessServiceManager {
 const serviceManagers = new Map<string, StatelessServiceManager>();
 
 export function getServiceManager(redis: Redis, serviceName: string): StatelessServiceManager {
-  const key = `${redis.options.host}:${redis.options.port}:${serviceName}`;
+  const host = redis?.options?.host || 'memory';
+  const port = redis?.options?.port || 'none';
+  const key = `${host}:${port}:${serviceName}`;
   if (!serviceManagers.has(key)) {
     serviceManagers.set(key, new StatelessServiceManager(redis, serviceName));
   }

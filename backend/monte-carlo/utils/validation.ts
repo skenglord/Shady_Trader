@@ -1,5 +1,5 @@
 // Monte Carlo Utilities and Validation
-import { Matrix } from 'ml-matrix';
+import { Matrix, EigenvalueDecomposition } from 'ml-matrix';
 
 /**
  * Validate correlation matrix is positive definite
@@ -11,7 +11,7 @@ export function validateCorrelationMatrix(matrix: number[][]): {
 } {
   try {
     const mat = new Matrix(matrix);
-    const eig = Matrix.eigenvalueDecomposition(mat);
+    const eig = new EigenvalueDecomposition(mat);
     const eigenvals = eig.realEigenvalues;
     
     const minEigenval = Math.min(...eigenvals);
@@ -37,18 +37,18 @@ export function validateCorrelationMatrix(matrix: number[][]): {
  */
 export function ensurePositiveDefinite(matrix: number[][]): number[][] {
   const mat = new Matrix(matrix);
-  const eig = mat.eigenvalueDecomposition();
+  const eig = (mat as any).eigenvalueDecomposition();
   const eigenvals = eig.realEigenvalues;
   const eigenvecs = eig.eigenvectorMatrix;
-  
+
   // Clip negative eigenvalues
   const minEigenval = 1e-8;
   const clipped = eigenvals.map(val => Math.max(val, minEigenval));
-  
+
   // Reconstruct matrix
   const Lambda = Matrix.diag(clipped);
   const corrected = eigenvecs.mmul(Lambda).mmul(eigenvecs.transpose());
-  
+
   return corrected.to2DArray();
 }
 
