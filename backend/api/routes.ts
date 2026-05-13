@@ -640,10 +640,10 @@ apiRouter.post('/optimize', async (req, res) => {
   }
 });
 
-apiRouter.get('/performance', (req, res) => {
+apiRouter.get('/performance', async (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
-    const performance = engine.shadowTrader.getPerformance();
+    const performance = await engine.shadowTrader.getPerformance();
     res.json(performance);
   } else {
     res.status(500).json({ error: 'Engine not initialized' });
@@ -786,7 +786,7 @@ apiRouter.post('/risk-configs/reset', (req, res) => {
   }
 });
 
-import { GoogleGenAI, Type } from '@google/genai';
+import OpenAI from 'openai';
 
 let aiRecommendationsEnabled = true;
 
@@ -814,38 +814,27 @@ apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
   }
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not set.");
-    }
-    const ai = new GoogleGenAI({ apiKey });
+    const openai = new OpenAI({
+      baseURL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
+      apiKey: 'ollama'
+    });
+    
     const prompt = `You are an expert quantitative trader. The current market regime is "${currentRegime}". 
     The current risk configurations for different modes are:
     ${JSON.stringify(currentConfigs, null, 2)}
     
     Please analyze the market regime and recommend adjustments to the risk configurations (maxRiskPerTrade, maxDrawdown, confidenceThreshold, tpMultiplier, slMultiplier, leverage) for each mode to optimize performance in this regime.
-    Return the updated configurations in JSON format.`;
+    Return the updated configurations in JSON format matching the keys of the input.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3-flash-preview",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: {
-          type: Type.OBJECT,
-          properties: {
-            ultra_conservative: { type: Type.OBJECT, properties: { maxRiskPerTrade: { type: Type.NUMBER }, maxDrawdown: { type: Type.NUMBER }, confidenceThreshold: { type: Type.NUMBER }, tpMultiplier: { type: Type.NUMBER }, slMultiplier: { type: Type.NUMBER }, leverage: { type: Type.NUMBER } } },
-            conservative: { type: Type.OBJECT, properties: { maxRiskPerTrade: { type: Type.NUMBER }, maxDrawdown: { type: Type.NUMBER }, confidenceThreshold: { type: Type.NUMBER }, tpMultiplier: { type: Type.NUMBER }, slMultiplier: { type: Type.NUMBER }, leverage: { type: Type.NUMBER } } },
-            moderate: { type: Type.OBJECT, properties: { maxRiskPerTrade: { type: Type.NUMBER }, maxDrawdown: { type: Type.NUMBER }, confidenceThreshold: { type: Type.NUMBER }, tpMultiplier: { type: Type.NUMBER }, slMultiplier: { type: Type.NUMBER }, leverage: { type: Type.NUMBER } } },
-            aggressive: { type: Type.OBJECT, properties: { maxRiskPerTrade: { type: Type.NUMBER }, maxDrawdown: { type: Type.NUMBER }, confidenceThreshold: { type: Type.NUMBER }, tpMultiplier: { type: Type.NUMBER }, slMultiplier: { type: Type.NUMBER }, leverage: { type: Type.NUMBER } } },
-            degen: { type: Type.OBJECT, properties: { maxRiskPerTrade: { type: Type.NUMBER }, maxDrawdown: { type: Type.NUMBER }, confidenceThreshold: { type: Type.NUMBER }, tpMultiplier: { type: Type.NUMBER }, slMultiplier: { type: Type.NUMBER }, leverage: { type: Type.NUMBER } } }
-          }
-        }
-      }
+    const response = await openai.chat.completions.create({
+      model: process.env.OLLAMA_MODEL || "llama3",
+      response_format: { type: "json_object" },
+      messages: [{ role: "user", content: prompt }]
     });
 
-    if (response.text) {
-      const recommendedConfigs = JSON.parse(response.text);
+    const text = response.choices[0].message.content;
+    if (text) {
+      const recommendedConfigs = JSON.parse(text);
       
       // Merge recommended configs with existing descriptions and maxConcurrentPositions
       for (const mode of Object.keys(currentConfigs)) {
@@ -859,11 +848,9 @@ apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
       throw new Error("No response from AI");
     }
   } catch (error: any) {
-    if (error.message && error.message.includes("API_KEY_INVALID")) {
-      console.error("AI Recommendation failed: Invalid API Key. Disabling AI features.");
-      aiRecommendationsEnabled = false;
-    } else {
-      console.error("AI Recommendation failed:", error);
+    console.error("AI Risk Recommendation failed:", error.message);
+    if (error.message && error.message.includes("fetch failed")) {
+       aiRecommendationsEnabled = false;
     }
     // Fallback to simple logic
     for (const mode of Object.values(RiskMode)) {

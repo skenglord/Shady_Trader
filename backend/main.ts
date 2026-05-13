@@ -767,43 +767,38 @@ export class TradingEngine {
 
       if (this.aiStrategySwitching && TradingEngine.aiStrategySwitchingEnabled) {
         try {
-          const apiKey = process.env.GEMINI_API_KEY;
-          if (!apiKey) {
-            console.warn("AI Strategy Switch skipped: GEMINI_API_KEY is not set.");
-          } else {
-            const { GoogleGenAI } = await import('@google/genai');
-            const ai = new GoogleGenAI({ apiKey });
-            const prompt = `You are an expert quantitative trader. The market regime has just changed to "${this.currentRegime}" with ${regimeResult.confidence}% confidence. 
-            Reasoning: ${regimeResult.reasoning}
-            
-            Based on this new regime, which risk mode should the trading bot switch to?
-            Available modes: "ultra_conservative", "conservative", "moderate", "aggressive", "degen".
-            
-            Return ONLY the mode name as a plain string.`;
+          const { default: OpenAI } = await import('openai');
+          const openai = new OpenAI({
+            baseURL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
+            apiKey: 'ollama'
+          });
 
-            const response = await ai.models.generateContent({
-              model: "gemini-3-flash-preview",
-              contents: prompt,
-            });
+          const prompt = `You are an expert quantitative trader. The market regime has just changed to "${this.currentRegime}" with ${regimeResult.confidence}% confidence. 
+          Reasoning: ${regimeResult.reasoning}
+          
+          Based on this new regime, which risk mode should the trading bot switch to?
+          Available modes: "ultra_conservative", "conservative", "moderate", "aggressive", "degen".
+          
+          Return ONLY the mode name as a plain string.`;
 
-            if (response.text) {
-              const newMode = response.text.trim().toLowerCase().replace(/[^a-z_]/g, '');
-              const validModes = ["ultra_conservative", "conservative", "moderate", "aggressive", "degen"];
-              if (validModes.includes(newMode)) {
-                this.activeMode = newMode;
-                await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
-                this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
-                console.log(`AI switched strategy to ${newMode}`);
-              }
+          const response = await openai.chat.completions.create({
+            model: process.env.OLLAMA_MODEL || "llama3",
+            messages: [{ role: "user", content: prompt }]
+          });
+
+          const text = response.choices[0].message.content;
+          if (text) {
+            const newMode = text.trim().toLowerCase().replace(/[^a-z_]/g, '');
+            const validModes = ["ultra_conservative", "conservative", "moderate", "aggressive", "degen"];
+            if (validModes.includes(newMode)) {
+              this.activeMode = newMode;
+              await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
+              this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
+              console.log(`AI switched strategy to ${newMode}`);
             }
           }
         } catch (error: any) {
-          if (error.message && error.message.includes("API_KEY_INVALID")) {
-            console.error("AI Strategy Switch failed: Invalid API Key. Disabling AI features.");
-            TradingEngine.aiStrategySwitchingEnabled = false;
-          } else {
-            console.error("AI Strategy Switch failed:", error);
-          }
+          console.error("AI Strategy Switch failed:", error.message);
           // Fallback
           let newMode = 'moderate';
           if (this.currentRegime === 'strong_bull' || this.currentRegime === 'bear') {

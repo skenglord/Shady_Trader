@@ -3,5 +3,20 @@
   "snapshot": false,
   "indexing": {
     "enabled": true
+  },
+  "mcp": {
+    "composer-trade": {
+      "type": "local",
+      "command": [
+        "uvx",
+        "composer-trade-mcp==0.1.4",
+        "--hash",
+        "sha256:37d8fcfd6ddc9c8155633f755159f3fcb1a63e7acc2a32513613341a851c84e2"
+      ],
+      "environment": {
+        "COMPOSER_API_KEY": "{{COMPOSER_API_KEY}}",
+        "COMPOSER_SECRET_KEY": "{{COMPOSER_SECRET_KEY}}"
+      }
+    }
   }
 }

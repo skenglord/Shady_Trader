@@ -1,13 +1,9 @@
 import { runQuery } from '../database.js';
 import { RiskMode, RiskManager } from '../risk/manager.js';
-import { GoogleGenAI, Type } from '@google/genai';
+import OpenAI from 'openai';
 
 type QueryFn = (query: string, params?: any[], mode?: 'all' | 'get' | 'run') => Promise<any>;
-type AiClientFactory = (apiKey: string) => {
-  models: {
-    generateContent: (input: any) => Promise<{ text?: string | null }>;
-  };
-};
+type AiClientFactory = (apiKey: string) => OpenAI;
 
 export class OptimizationEngine {
   private riskManager: RiskManager;
@@ -25,7 +21,10 @@ export class OptimizationEngine {
   ) {
     this.riskManager = riskManager;
     this.queryFn = deps.queryFn || runQuery;
-    this.aiClientFactory = deps.aiClientFactory || ((apiKey: string) => new GoogleGenAI({ apiKey }) as any);
+    this.aiClientFactory = deps.aiClientFactory || ((apiKey: string) => new OpenAI({
+      baseURL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
+      apiKey: 'ollama'
+    }));
   }
 
   async bayesianOptimize(regime: string): Promise<any> {

@@ -42,22 +42,21 @@ export class RegimeDetector {
 
     if (useAI && RegimeDetector.aiEnabled) {
       try {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-          console.warn("AI Regime Analysis skipped: GEMINI_API_KEY is not set.");
-        } else {
-          const { GoogleGenAI } = await import('@google/genai');
-          const ai = new GoogleGenAI({ apiKey });
-          
-          // Use provided market context or default to mock
-          const context = marketContext || {
-            btc_dominance: "52%",
-            fear_greed_index: 45,
-            major_news: "Market awaiting key economic data",
-            all_news: ["Market awaiting key economic data"]
-          };
+        const { default: OpenAI } = await import('openai');
+        const openai = new OpenAI({
+          baseURL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
+          apiKey: 'ollama', // required but ignored by ollama
+        });
+        
+        // Use provided market context or default to mock
+        const context = marketContext || {
+          btc_dominance: "52%",
+          fear_greed_index: 45,
+          major_news: "Market awaiting key economic data",
+          all_news: ["Market awaiting key economic data"]
+        };
 
-          const prompt = `You are analyzing trading system performance and news sentiment for regime validation.
+        const prompt = `You are analyzing trading system performance and news sentiment for regime validation.
 Current regime detected by rule-based algorithm: ${regime}
 Rule-based confidence: ${confidence}%
 
@@ -75,42 +74,39 @@ Output JSON only:
 {
   "regime_validation": "correct" | "misclassified",
   "news_sentiment": "bullish" | "bearish" | "neutral",
-  "sentiment_score": number (-1.0 to 1.0),
+  "sentiment_score": 0.0,
   "performance_explanation": "string (1 sentence)",
   "external_factors": ["string"],
-  "recommended_action": "continue" | "reduce_risk" | "halt" | "switch",
-  "confidence": number (0-100)
+  "recommended_action": "continue",
+  "confidence": 80
 }`;
 
-          const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json"
-            }
-          });
+        const response = await openai.chat.completions.create({
+          model: process.env.OLLAMA_MODEL || "llama3",
+          response_format: { type: "json_object" },
+          messages: [{ role: "user", content: prompt }]
+        });
 
-          if (response.text) {
-            aiValidation = JSON.parse(response.text);
-            reasoning = `AI Analysis: ${aiValidation.performance_explanation} Sentiment: ${aiValidation.news_sentiment} (${aiValidation.sentiment_score}). Rec: ${aiValidation.recommended_action}.`;
+        const text = response.choices[0].message.content;
+        if (text) {
+          aiValidation = JSON.parse(text);
+          reasoning = `AI Analysis: ${aiValidation.performance_explanation} Sentiment: ${aiValidation.news_sentiment} (${aiValidation.sentiment_score}). Rec: ${aiValidation.recommended_action}.`;
 
-            // Adjust confidence based on sentiment alignment
-            if (aiValidation.news_sentiment === 'bullish' && (regime === RegimeType.STRONG_BULL || regime === RegimeType.WEAK_BULL)) {
-              confidence = Math.min(100, confidence + 5);
-            } else if (aiValidation.news_sentiment === 'bearish' && regime === RegimeType.BEAR) {
-              confidence = Math.min(100, confidence + 5);
-            } else if (aiValidation.news_sentiment !== 'neutral') {
-              // Dissonance between technicals and news
-              confidence = Math.max(50, confidence - 10);
-            }
+          // Adjust confidence based on sentiment alignment
+          if (aiValidation.news_sentiment === 'bullish' && (regime === RegimeType.STRONG_BULL || regime === RegimeType.WEAK_BULL)) {
+            confidence = Math.min(100, confidence + 5);
+          } else if (aiValidation.news_sentiment === 'bearish' && regime === RegimeType.BEAR) {
+            confidence = Math.min(100, confidence + 5);
+          } else if (aiValidation.news_sentiment !== 'neutral') {
+            // Dissonance between technicals and news
+            confidence = Math.max(50, confidence - 10);
           }
         }
       } catch (e: any) {
-        if (e.message && e.message.includes("API_KEY_INVALID")) {
-          console.error("AI Regime Analysis failed: Invalid API Key. Disabling AI features.");
-          RegimeDetector.aiEnabled = false;
-        } else {
-          console.error("AI Regime Analysis failed:", e);
+        console.error("AI Regime Analysis failed:", e.message);
+        // If Ollama is down, we might want to disable AI
+        if (e.message && e.message.includes("fetch failed")) {
+           RegimeDetector.aiEnabled = false;
         }
       }
     }

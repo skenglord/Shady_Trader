@@ -54,13 +54,16 @@ services:
       POSTGRES_MAX_CONNECTIONS: 10
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      GEMINI_API_KEY: ${GEMINI_API_KEY}
+      OLLAMA_BASE_URL: http://host.docker.internal:11434/v1
+      OLLAMA_MODEL: llama3
       BINANCE_API_KEY: ${BINANCE_API_KEY}
       BINANCE_SECRET_KEY: ${BINANCE_SECRET_KEY}
       KRAKEN_API_KEY: ${KRAKEN_API_KEY}
       KRAKEN_PRIVATE_KEY: ${KRAKEN_PRIVATE_KEY}
     ports:
       - "3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy

@@ -1,0 +1,2782 @@
+{
+  "config": {
+    "configFile": "/home/creekz/Projects/Shady_Trader/playwright.config.ts",
+    "rootDir": "/home/creekz/Projects/Shady_Trader/tests/playwright",
+    "forbidOnly": false,
+    "fullyParallel": false,
+    "globalSetup": null,
+    "globalTeardown": null,
+    "globalTimeout": 0,
+    "grep": {},
+    "grepInvert": null,
+    "maxFailures": 0,
+    "metadata": {
+      "actualWorkers": 1
+    },
+    "preserveOutput": "always",
+    "projects": [
+      {
+        "outputDir": "/home/creekz/Projects/Shady_Trader/test-results",
+        "repeatEach": 1,
+        "retries": 1,
+        "metadata": {
+          "actualWorkers": 1
+        },
+        "id": "chromium",
+        "name": "chromium",
+        "testDir": "/home/creekz/Projects/Shady_Trader/tests/playwright",
+        "testIgnore": [],
+        "testMatch": [
+          "**/*.@(spec|test).?(c|m)[jt]s?(x)"
+        ],
+        "timeout": 60000
+      }
+    ],
+    "quiet": false,
+    "reporter": [
+      [
+        "list",
+        null
+      ],
+      [
+        "html",
+        {
+          "outputFolder": "playwright-report",
+          "open": "never"
+        }
+      ],
+      [
+        "json",
+        {
+          "outputFile": "playwright-results.json"
+        }
+      ]
+    ],
+    "reportSlowTests": {
+      "max": 5,
+      "threshold": 300000
+    },
+    "shard": null,
+    "tags": [],
+    "updateSnapshots": "missing",
+    "updateSourceMethod": "patch",
+    "version": "1.60.0",
+    "workers": 1,
+    "webServer": null
+  },
+  "suites": [
+    {
+      "title": "trading-system.spec.ts",
+      "file": "trading-system.spec.ts",
+      "column": 0,
+      "line": 0,
+      "specs": [],
+      "suites": [
+        {
+          "title": "1 · System Health & Startup",
+          "file": "trading-system.spec.ts",
+          "line": 32,
+          "column": 6,
+          "specs": [
+            {
+              "title": "liveness probe returns 200 ok",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 680,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:13.859Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--c4283-veness-probe-returns-200-ok-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--c4283-veness-probe-returns-200-ok-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-7448fbc1f55ea745908c",
+              "file": "trading-system.spec.ts",
+              "line": 34,
+              "column": 3
+            },
+            {
+              "title": "readiness probe returns ready with component statuses",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 186,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:14.623Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--42e15-ady-with-component-statuses-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--42e15-ady-with-component-statuses-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-08f4396fda9a92efc362",
+              "file": "trading-system.spec.ts",
+              "line": 41,
+              "column": 3
+            },
+            {
+              "title": "/api/status returns engine state",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 153,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:14.820Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--2bc15-status-returns-engine-state-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--2bc15-status-returns-engine-state-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-6b3182b7fd6abc30ba7d",
+              "file": "trading-system.spec.ts",
+              "line": 51,
+              "column": 3
+            },
+            {
+              "title": "diagnostics/health returns uptime and components",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 157,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:14.984Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--e03ea-turns-uptime-and-components-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--e03ea-turns-uptime-and-components-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-2d0d6f61f68784b5ede4",
+              "file": "trading-system.spec.ts",
+              "line": 59,
+              "column": 3
+            },
+            {
+              "title": "diagnostics/metrics returns Prometheus text",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 149,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:15.152Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--622e4-ics-returns-Prometheus-text-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--622e4-ics-returns-Prometheus-text-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-cefafc4d8917ee298e8e",
+              "file": "trading-system.spec.ts",
+              "line": 67,
+              "column": 3
+            },
+            {
+              "title": "startup diagnostics are accessible",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 159,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:15.313Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--9346d--diagnostics-are-accessible-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-1-·-System--9346d--diagnostics-are-accessible-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-97116e1f5fb8c039d25f",
+              "file": "trading-system.spec.ts",
+              "line": 76,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "2 · Market Data & Live Candles",
+          "file": "trading-system.spec.ts",
+          "line": 87,
+          "column": 6,
+          "specs": [
+            {
+              "title": "market/data endpoint returns data object",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 153,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:15.484Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--f3d50-ndpoint-returns-data-object-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--f3d50-ndpoint-returns-data-object-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-928aef4500d7d6bbf781",
+              "file": "trading-system.spec.ts",
+              "line": 89,
+              "column": 3
+            },
+            {
+              "title": "market/news endpoint returns array or null",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 156,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:15.647Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--6ccd5-point-returns-array-or-null-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--6ccd5-point-returns-array-or-null-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-a3f6584b250b3e6c79b2",
+              "file": "trading-system.spec.ts",
+              "line": 95,
+              "column": 3
+            },
+            {
+              "title": "candles endpoint returns OHLCV data (CoinGecko fallback)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 166,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:15.815Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--a5b3e-CV-data-CoinGecko-fallback--chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--a5b3e-CV-data-CoinGecko-fallback--chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-c565990980bd12076e96",
+              "file": "trading-system.spec.ts",
+              "line": 104,
+              "column": 3
+            },
+            {
+              "title": "candles with 1y history query is accepted",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 147,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:15.992Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--03bfd-y-history-query-is-accepted-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--03bfd-y-history-query-is-accepted-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-288cd5f25fc9dbe92e98",
+              "file": "trading-system.spec.ts",
+              "line": 122,
+              "column": 3
+            },
+            {
+              "title": "market/refresh triggers data fetch",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3119,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:16.149Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--2094b-refresh-triggers-data-fetch-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--2094b-refresh-triggers-data-fetch-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-2262f71b36fee3aac1d8",
+              "file": "trading-system.spec.ts",
+              "line": 127,
+              "column": 3
+            },
+            {
+              "title": "regime history returns ordered records",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 179,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:19.278Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--b8f38-ory-returns-ordered-records-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--b8f38-ory-returns-ordered-records-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-7b96a43249b52a69bfc4",
+              "file": "trading-system.spec.ts",
+              "line": 133,
+              "column": 3
+            },
+            {
+              "title": "trades history returns recent trades",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 187,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:19.472Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--0ff5e-story-returns-recent-trades-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-2-·-Market--0ff5e-story-returns-recent-trades-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-38f033d67ef36a07e5da",
+              "file": "trading-system.spec.ts",
+              "line": 139,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "3 · Trading Engine Lifecycle",
+          "file": "trading-system.spec.ts",
+          "line": 156,
+          "column": 6,
+          "specs": [
+            {
+              "title": "can stop a running engine",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 211,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:19.671Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-3-·-Trading-e12bd-e-can-stop-a-running-engine-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-3-·-Trading-e12bd-e-can-stop-a-running-engine-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-bb554947dc740248e001",
+              "file": "trading-system.spec.ts",
+              "line": 158,
+              "column": 3
+            },
+            {
+              "title": "can start a stopped engine",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1165,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:19.894Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-3-·-Trading-16e7c--can-start-a-stopped-engine-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-3-·-Trading-16e7c--can-start-a-stopped-engine-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-2ab6597d0870052adec1",
+              "file": "trading-system.spec.ts",
+              "line": 172,
+              "column": 3
+            },
+            {
+              "title": "double-starting engine returns 400",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 155,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:21.070Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-3-·-Trading-4085c-starting-engine-returns-400-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-3-·-Trading-4085c-starting-engine-returns-400-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-83b5badef77ad051d1e8",
+              "file": "trading-system.spec.ts",
+              "line": 190,
+              "column": 3
+            },
+            {
+              "title": "double-stopping engine returns 400",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 658,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:21.235Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-3-·-Trading-7c333-stopping-engine-returns-400-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-3-·-Trading-7c333-stopping-engine-returns-400-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-9d2a3f7a90f0f73a1ff8",
+              "file": "trading-system.spec.ts",
+              "line": 201,
+              "column": 3
+            },
+            {
+              "title": "engine restarts cleanly after stop",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1788,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:21.906Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-3-·-Trading-bb949-restarts-cleanly-after-stop-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-3-·-Trading-bb949-restarts-cleanly-after-stop-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-2dfba95921323da14201",
+              "file": "trading-system.spec.ts",
+              "line": 212,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "4 · Backtesting",
+          "file": "trading-system.spec.ts",
+          "line": 226,
+          "column": 6,
+          "specs": [
+            {
+              "title": "backtest mode: ultra_conservative",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 151,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:23.704Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-15abf-est-mode-ultra-conservative-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-15abf-est-mode-ultra-conservative-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-35c39d48dc5a2a4ac081",
+              "file": "trading-system.spec.ts",
+              "line": 254,
+              "column": 5
+            },
+            {
+              "title": "backtest mode: conservative",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 182,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:23.864Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-mode-conservative-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-mode-conservative-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-c5e7961135e64d94993b",
+              "file": "trading-system.spec.ts",
+              "line": 254,
+              "column": 5
+            },
+            {
+              "title": "backtest mode: moderate",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 151,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:24.055Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-mode-moderate-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-mode-moderate-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-5b4cb36c6299ab1a1124",
+              "file": "trading-system.spec.ts",
+              "line": 254,
+              "column": 5
+            },
+            {
+              "title": "backtest mode: aggressive",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 171,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:24.214Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-mode-aggressive-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-mode-aggressive-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-61001534a88ca2858dbf",
+              "file": "trading-system.spec.ts",
+              "line": 254,
+              "column": 5
+            },
+            {
+              "title": "backtest mode: degen",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 168,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:24.394Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-mode-degen-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-mode-degen-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-f35df8759b3c15950d35",
+              "file": "trading-system.spec.ts",
+              "line": 254,
+              "column": 5
+            },
+            {
+              "title": "backtest mode: ai_enhanced",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 155,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:24.570Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-mode-ai-enhanced-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-mode-ai-enhanced-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-94bd96d02b3fe34101d7",
+              "file": "trading-system.spec.ts",
+              "line": 254,
+              "column": 5
+            },
+            {
+              "title": "backtest strategy: regime_based (moderate mode)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 158,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:24.733Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-23a96-regime-based-moderate-mode--chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-23a96-regime-based-moderate-mode--chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-93608c4ea122160e7c8d",
+              "file": "trading-system.spec.ts",
+              "line": 280,
+              "column": 5
+            },
+            {
+              "title": "backtest strategy: shotgun (moderate mode)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 160,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:24.899Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-649ef-tegy-shotgun-moderate-mode--chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-649ef-tegy-shotgun-moderate-mode--chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-eeb208f98019e147934d",
+              "file": "trading-system.spec.ts",
+              "line": 280,
+              "column": 5
+            },
+            {
+              "title": "backtest strategy: chasing_dragons (moderate mode)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 196,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:25.067Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-25a35-sing-dragons-moderate-mode--chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-25a35-sing-dragons-moderate-mode--chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-c9d78758c67614d241e8",
+              "file": "trading-system.spec.ts",
+              "line": 280,
+              "column": 5
+            },
+            {
+              "title": "backtest strategy: alt_chaser (moderate mode)",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 157,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:25.271Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-bde85-y-alt-chaser-moderate-mode--chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-bde85-y-alt-chaser-moderate-mode--chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-cb089bd824aad944c9bf",
+              "file": "trading-system.spec.ts",
+              "line": 280,
+              "column": 5
+            },
+            {
+              "title": "backtest rejects invalid time range",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 149,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:25.444Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-6cd95--rejects-invalid-time-range-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtes-6cd95--rejects-invalid-time-range-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-cd5d51ddeb8efb4e8d2a",
+              "file": "trading-system.spec.ts",
+              "line": 291,
+              "column": 3
+            },
+            {
+              "title": "backtest rejects invalid mode",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 155,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:25.601Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-rejects-invalid-mode-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-4-·-Backtesting-backtest-rejects-invalid-mode-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-60bc756caf7e832c08fb",
+              "file": "trading-system.spec.ts",
+              "line": 301,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "5 · Paper Trading",
+          "file": "trading-system.spec.ts",
+          "line": 316,
+          "column": 6,
+          "specs": [
+            {
+              "title": "paper order book initializes for BTC/USDT",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 155,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:25.765Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-5-·-Paper-T-4e611-ok-initializes-for-BTC-USDT-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-5-·-Paper-T-4e611-ok-initializes-for-BTC-USDT-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-7bc5b1818c0a9346b27c",
+              "file": "trading-system.spec.ts",
+              "line": 318,
+              "column": 3
+            },
+            {
+              "title": "paper positions list is accessible",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 159,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:25.928Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-5-·-Paper-T-e2fd0-ositions-list-is-accessible-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-5-·-Paper-T-e2fd0-ositions-list-is-accessible-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-92ca48bc2c82e89ee7d0",
+              "file": "trading-system.spec.ts",
+              "line": 328,
+              "column": 3
+            },
+            {
+              "title": "place a paper BUY order and verify creation",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 159,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:26.096Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-5-·-Paper-T-0011a-Y-order-and-verify-creation-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-5-·-Paper-T-0011a-Y-order-and-verify-creation-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-821ad8913be422b704a9",
+              "file": "trading-system.spec.ts",
+              "line": 336,
+              "column": 3
+            },
+            {
+              "title": "place a paper SELL order",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 161,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:26.264Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-5-·-Paper-Trading-place-a-paper-SELL-order-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-5-·-Paper-Trading-place-a-paper-SELL-order-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-d6fd2b446fc0eaead816",
+              "file": "trading-system.spec.ts",
+              "line": 354,
+              "column": 3
+            },
+            {
+              "title": "cancel an open paper order",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 149,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:26.436Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-5-·-Paper-Trading-cancel-an-open-paper-order-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-5-·-Paper-Trading-cancel-an-open-paper-order-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-6ef004ec66982b3edbc7",
+              "file": "trading-system.spec.ts",
+              "line": 365,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "6 · Shadow Portfolio Performance",
+          "file": "trading-system.spec.ts",
+          "line": 389,
+          "column": 6,
+          "specs": [
+            {
+              "title": "performance endpoint returns all 6 modes",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 156,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:26.596Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--71b07-ndpoint-returns-all-6-modes-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--71b07-ndpoint-returns-all-6-modes-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-d1ccc9018607432f577d",
+              "file": "trading-system.spec.ts",
+              "line": 391,
+              "column": 3
+            },
+            {
+              "title": "each mode has expected performance fields",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 157,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:26.762Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--a88c6-expected-performance-fields-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--a88c6-expected-performance-fields-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-2a2390514d2db234b1c5",
+              "file": "trading-system.spec.ts",
+              "line": 407,
+              "column": 3
+            },
+            {
+              "title": "open positions returns array",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 158,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:26.927Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--3be43-pen-positions-returns-array-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--3be43-pen-positions-returns-array-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-c8eed57b96ef9ae415eb",
+              "file": "trading-system.spec.ts",
+              "line": 425,
+              "column": 3
+            },
+            {
+              "title": "risk configs returns all 6 mode configs",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 163,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:27.095Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--312d7--returns-all-6-mode-configs-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--312d7--returns-all-6-mode-configs-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-0e448eb386a67407fd77",
+              "file": "trading-system.spec.ts",
+              "line": 431,
+              "column": 3
+            },
+            {
+              "title": "risk config has correct structure for each mode",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 154,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:27.266Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--fd66f-ect-structure-for-each-mode-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--fd66f-ect-structure-for-each-mode-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-172997eeacaf59c94e7b",
+              "file": "trading-system.spec.ts",
+              "line": 442,
+              "column": 3
+            },
+            {
+              "title": "risk configs can be reset to defaults",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 231,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:27.427Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--a292f-gs-can-be-reset-to-defaults-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-6-·-Shadow--a292f-gs-can-be-reset-to-defaults-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-426eecd470be738a9703",
+              "file": "trading-system.spec.ts",
+              "line": 452,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "7 · Settings & Configuration",
+          "file": "trading-system.spec.ts",
+          "line": 465,
+          "column": 6,
+          "specs": [
+            {
+              "title": "GET /settings returns current settings",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 161,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:27.667Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-018b8-gs-returns-current-settings-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-018b8-gs-returns-current-settings-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-5eefa83e603d48f03e84",
+              "file": "trading-system.spec.ts",
+              "line": 467,
+              "column": 3
+            },
+            {
+              "title": "can update a non-sensitive setting",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 210,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:27.838Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-3fc40-ate-a-non-sensitive-setting-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-3fc40-ate-a-non-sensitive-setting-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-30de9c089f1a2736a747",
+              "file": "trading-system.spec.ts",
+              "line": 476,
+              "column": 3
+            },
+            {
+              "title": "cannot update sensitive settings via /settings",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 201,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:28.063Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-46d2b-itive-settings-via-settings-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-46d2b-itive-settings-via-settings-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-ed82ad822cfaea09df49",
+              "file": "trading-system.spec.ts",
+              "line": 484,
+              "column": 3
+            },
+            {
+              "title": "timeframe can be changed to 5m",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 212,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:28.277Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-7464c-eframe-can-be-changed-to-5m-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-7464c-eframe-can-be-changed-to-5m-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-8101280cece280631f14",
+              "file": "trading-system.spec.ts",
+              "line": 492,
+              "column": 3
+            },
+            {
+              "title": "timeframe can be changed to 1h",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 220,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:28.500Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-41ea0-eframe-can-be-changed-to-1h-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-41ea0-eframe-can-be-changed-to-1h-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-d9e1a53adc27ef264280",
+              "file": "trading-system.spec.ts",
+              "line": 503,
+              "column": 3
+            },
+            {
+              "title": "invalid timeframe is rejected",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 214,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:28.737Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-7d77b-valid-timeframe-is-rejected-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-7d77b-valid-timeframe-is-rejected-chromium/video.webm"
+                        },
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-7-·-Setting-7d77b-valid-timeframe-is-rejected-chromium/test-finished-2.png"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-598be72447344cebbb2e",
+              "file": "trading-system.spec.ts",
+              "line": 511,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "8 · Slippage Engine",
+          "file": "trading-system.spec.ts",
+          "line": 533,
+          "column": 6,
+          "specs": [
+            {
+              "title": "slippage estimate endpoint returns cost breakdown",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 219,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:29.050Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-8-·-Slippag-42230-oint-returns-cost-breakdown-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-8-·-Slippag-42230-oint-returns-cost-breakdown-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-b87a6e2d8eacb4639ddb",
+              "file": "trading-system.spec.ts",
+              "line": 535,
+              "column": 3
+            },
+            {
+              "title": "slippage history endpoint returns records",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 168,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:29.286Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-8-·-Slippag-5913b-ry-endpoint-returns-records-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-8-·-Slippag-5913b-ry-endpoint-returns-records-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-9c73c82f2044061b3e8d",
+              "file": "trading-system.spec.ts",
+              "line": 557,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "9 · Monte Carlo & Stress Tests",
+          "file": "trading-system.spec.ts",
+          "line": 572,
+          "column": 6,
+          "specs": [
+            {
+              "title": "monte-carlo endpoint is reachable",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 162,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:29.463Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-9-·-Monte-C-7d094-carlo-endpoint-is-reachable-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-9-·-Monte-C-7d094-carlo-endpoint-is-reachable-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-19d1a3fa6c8d57cc42a6",
+              "file": "trading-system.spec.ts",
+              "line": 574,
+              "column": 3
+            },
+            {
+              "title": "stress-test endpoint is reachable",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 159,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:29.633Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-9-·-Monte-C-28741--test-endpoint-is-reachable-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-9-·-Monte-C-28741--test-endpoint-is-reachable-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-c981491627884b3a2141",
+              "file": "trading-system.spec.ts",
+              "line": 584,
+              "column": 3
+            }
+          ]
+        },
+        {
+          "title": "10 · Frontend UI Smoke Tests",
+          "file": "trading-system.spec.ts",
+          "line": 596,
+          "column": 6,
+          "specs": [
+            {
+              "title": "app loads and shows main dashboard",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 1046,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:29.801Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-a0429-ds-and-shows-main-dashboard-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-a0429-ds-and-shows-main-dashboard-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-d8ee9fde7056b4ceef87",
+              "file": "trading-system.spec.ts",
+              "line": 598,
+              "column": 3
+            },
+            {
+              "title": "dashboard renders without JS errors",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 3010,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:30.856Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-079b3-d-renders-without-JS-errors-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-079b3-d-renders-without-JS-errors-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-0992339df43247023102",
+              "file": "trading-system.spec.ts",
+              "line": 606,
+              "column": 3
+            },
+            {
+              "title": "chart/trading area is visible",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4081,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:33.874Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-56119-art-trading-area-is-visible-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-56119-art-trading-area-is-visible-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-0bed30a132324fe7999a",
+              "file": "trading-system.spec.ts",
+              "line": 618,
+              "column": 3
+            },
+            {
+              "title": "performance data loads on page",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4117,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:37.964Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-ca1a1-formance-data-loads-on-page-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-ca1a1-formance-data-loads-on-page-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-f53bde006e6f27e84b21",
+              "file": "trading-system.spec.ts",
+              "line": 630,
+              "column": 3
+            },
+            {
+              "title": "settings button/gear is accessible",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4103,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:42.089Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-25551-s-button-gear-is-accessible-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-25551-s-button-gear-is-accessible-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-ae0365b6bac63201f342",
+              "file": "trading-system.spec.ts",
+              "line": 641,
+              "column": 3
+            },
+            {
+              "title": "regime indicator is shown on dashboard",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4118,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:46.200Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-cd0b0-cator-is-shown-on-dashboard-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-cd0b0-cator-is-shown-on-dashboard-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-b93470c96dc2be8106ea",
+              "file": "trading-system.spec.ts",
+              "line": 657,
+              "column": 3
+            },
+            {
+              "title": "shadow portfolio modes are displayed",
+              "ok": true,
+              "tags": [],
+              "tests": [
+                {
+                  "timeout": 60000,
+                  "annotations": [],
+                  "expectedStatus": "passed",
+                  "projectId": "chromium",
+                  "projectName": "chromium",
+                  "results": [
+                    {
+                      "workerIndex": 0,
+                      "parallelIndex": 0,
+                      "status": "passed",
+                      "duration": 4137,
+                      "errors": [],
+                      "stdout": [],
+                      "stderr": [],
+                      "retry": 0,
+                      "startTime": "2026-05-12T21:40:50.327Z",
+                      "annotations": [],
+                      "attachments": [
+                        {
+                          "name": "screenshot",
+                          "contentType": "image/png",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-43113-rtfolio-modes-are-displayed-chromium/test-finished-1.png"
+                        },
+                        {
+                          "name": "video",
+                          "contentType": "video/webm",
+                          "path": "/home/creekz/Projects/Shady_Trader/test-results/trading-system-10-·-Fronte-43113-rtfolio-modes-are-displayed-chromium/video.webm"
+                        }
+                      ]
+                    }
+                  ],
+                  "status": "expected"
+                }
+              ],
+              "id": "fba4349c804574c95df6-9cebe7781cbcd120889d",
+              "file": "trading-system.spec.ts",
+              "line": 666,
+              "column": 3
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "errors": [],
+  "stats": {
+    "startTime": "2026-05-12T21:40:13.286Z",
+    "duration": 41233.634000000005,
+    "expected": 58,
+    "skipped": 0,
+    "unexpected": 0,
+    "flaky": 0
+  }
+}

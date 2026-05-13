@@ -176,8 +176,11 @@ export class SignalGenerator {
             console.error('[AI Circuit Breaker] Tripped due to missing API key');
           }
         } else {
-          const { GoogleGenAI } = await import('@google/genai');
-          const ai = new GoogleGenAI({ apiKey });
+          const { default: OpenAI } = await import('openai');
+          const openai = new OpenAI({
+            baseURL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
+            apiKey: 'ollama'
+          });
           
           const lastCandles = df.slice(-5).map(c => ({
             time: new Date(c.time).toISOString(),
@@ -196,16 +199,15 @@ export class SignalGenerator {
           Return a JSON object:
           { "confirmed": boolean, "reasoning": "string" }`;
 
-          const response = await ai.models.generateContent({
-            model: "gemini-3-flash-preview",
-            contents: prompt,
-            config: {
-              responseMimeType: "application/json"
-            }
+          const response = await openai.chat.completions.create({
+            model: process.env.OLLAMA_MODEL || "llama3",
+            response_format: { type: "json_object" },
+            messages: [{ role: "user", content: prompt }]
           });
 
-          if (response.text) {
-            const aiResult = JSON.parse(response.text);
+          const text = response.choices[0].message.content;
+          if (text) {
+            const aiResult = JSON.parse(text);
             SignalGenerator.aiHealth.totalRequests++;
             SignalGenerator.aiHealth.successfulConfirmations++;
             SignalGenerator.aiHealth.consecutiveFailures = 0;
