@@ -241,6 +241,25 @@ npm run test:coverage
 2. **Graceful Degradation**: Verified Redis-offline startup path with database and engine still reporting ready while Redis is marked `degraded`
 3. **Verification Gap Closed**: TypeScript linting and the full automated test suite are now green (53/53 tests passing). The system is CI-ready for production.
 
+### Explicit Rules for LLM Utilization
+
+**Permitted Use Cases**:
+- *Sentiment Scoring*: Transforming natural language news headlines into bounded scalar sentiment scores [-1.0 to 1.0].
+- *Narrative Generation*: Generating human-readable explanations of market regimes and performance for UI display only.
+- *Contextual Probability Multiplier (Meta-Labeling)*: Adjusting the quantitative model's probability via a constrained multiplier (e.g., -0.4 to 0.4) based on news context.
+
+**Prohibited Use Cases**:
+- *Quantitative Analysis*: No direct analysis of OHLCV arrays, order book depth, or technical indicators by the LLM.
+- *Synchronous Trade Execution Gates*: The LLM must never block the critical trading path. All LLM inputs must be read from an asynchronous cache.
+- *Risk Management & Halts*: The LLM cannot make capital preservation decisions, position sizing adjustments, or recommend system halts.
+- *Hyperparameter Optimization*: The LLM cannot be used for parameter tuning (use Bayesian Optimization engines like Optuna instead).
+
+**Operational Guardrails**:
+- *Strict Typed Validation*: All LLM outputs must pass through a Zod schema validation layer with retry logic.
+- *Retry & Fallback Loops*: Transient LLM failures or parsing errors must gracefully degrade to neutral values (e.g., sentiment = 0.0) without crashing the system or halting trades.
+- *Asynchronous Updates*: LLM processing (sentiment, narrative) must run in background workers with configurable TTL caches (e.g., Redis) and must not delay cycle ticks.
+- *Data Privacy*: No sensitive user account data, API keys, or exact portfolio balances may be included in LLM prompts. Only anonymized market data and public news may be processed by the LLM.
+
 ### Agent Operational Instructions
 
 **TradingEngine Agent**:

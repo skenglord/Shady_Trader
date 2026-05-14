@@ -1,6 +1,11 @@
 import { runQuery } from '../database.js';
 import { RiskMode, RiskManager } from '../risk/manager.js';
 import OpenAI from 'openai';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+import path from 'path';
+
+const execAsync = promisify(exec);
 
 type QueryFn = (query: string, params?: any[], mode?: 'all' | 'get' | 'run') => Promise<any>;
 type AiClientFactory = (apiKey: string) => OpenAI;
@@ -28,40 +33,32 @@ export class OptimizationEngine {
   }
 
   async bayesianOptimize(regime: string): Promise<any> {
-    // Simplified optimization: Grid search with random sampling
-    const paramBounds = {
-      stopLoss: [0.005, 0.05], // 0.5% to 5%
-      takeProfit: [0.01, 0.1],  // 1% to 10%
-      confidenceThreshold: [0.6, 0.9], // 60% to 90%
-      leverage: [1, 5] // 1x to 5x
-    };
+    const pythonScript = path.resolve(process.cwd(), 'backend/optimization/bayesian_optimizer.py');
+    
+    // Fetch recent optimization history to feed as warm-start
+    const recentTrials = await this.queryFn(`
+      SELECT params, score FROM optimization_trials
+      WHERE regime = ? ORDER BY timestamp DESC LIMIT 50
+    `, [regime], 'all');
 
-    let bestParams: number[] = [];
-    let bestScore = -Infinity;
-
-    // Random search over parameter space
-    for (let i = 0; i < 20; i++) {
-      const params = [
-        Math.random() * (paramBounds.stopLoss[1] - paramBounds.stopLoss[0]) + paramBounds.stopLoss[0],
-        Math.random() * (paramBounds.takeProfit[1] - paramBounds.takeProfit[0]) + paramBounds.takeProfit[0],
-        Math.random() * (paramBounds.confidenceThreshold[1] - paramBounds.confidenceThreshold[0]) + paramBounds.confidenceThreshold[0],
-        Math.random() * (paramBounds.leverage[1] - paramBounds.leverage[0]) + paramBounds.leverage[0]
-      ];
-
-      const score = await this.evaluateParameters(regime, params);
-
-      if (score > bestScore) {
-        bestScore = score;
-        bestParams = params;
-      }
+    try {
+      const { stdout } = await execAsync(`python3 ${pythonScript}`, {
+        input: JSON.stringify(recentTrials),
+        timeout: 10000
+      });
+      
+      const bestParams = JSON.parse(stdout);
+      return bestParams;
+    } catch (error) {
+      console.error("Python optimization failed:", error);
+      // Fallback defaults
+      return {
+        stopLoss: 0.02,
+        takeProfit: 0.05,
+        confidenceThreshold: 0.75,
+        leverage: 2.0
+      };
     }
-
-    return {
-      stopLoss: bestParams[0],
-      takeProfit: bestParams[1],
-      confidenceThreshold: bestParams[2],
-      leverage: bestParams[3]
-    };
   }
 
   private async evaluateParameters(regime: string, params: number[]): Promise<number> {

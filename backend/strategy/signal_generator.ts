@@ -8,8 +8,14 @@ export interface Signal {
   stopLoss: number;
   takeProfit: number;
   reasoning: string;
-  indicators: string[]; // List of indicators that triggered the signal
-  aiWarning?: boolean; // Flag for non-critical AI errors
+  indicators: string[];
+  aiWarning?: boolean;
+  // ML Meta-labeling fields
+  mlScore?: number;
+  mlDirection?: 'buy' | 'sell';
+  mlReasoning?: string;
+  mlDisagreement?: boolean;
+  topFeatures?: [string, number][];
 }
 
 export class SignalGenerator {
@@ -161,87 +167,62 @@ export class SignalGenerator {
 
     if (signal && useAI && SignalGenerator.aiEnabled && !SignalGenerator.aiHealth.circuitBreakerTripped) {
       try {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) {
-          console.warn("AI Signal Confirmation skipped: GEMINI_API_KEY is not set.");
+        const mlPrediction = await (async () => {
+          const { getPrediction } = await import('../ml/predictor.js');
+          const { getCachedAdjustment } = await import('../ml/gemma_adjuster.js');
+          const { scoreEnsemble } = await import('../ml/ensemble_scorer.js');
+
+          const regimeName = regime === RegimeType.STRONG_BULL ? 'strong_bull'
+            : regime === RegimeType.WEAK_BULL ? 'weak_bull'
+            : regime === RegimeType.BEAR ? 'bear'
+            : regime === RegimeType.SIDEWAYS ? 'sideways'
+            : 'uncertain';
+
+          const prediction = await getPrediction(df, symbol, regimeName);
+          if (prediction.fallback) return null;
+
+          const gemmaAdj = await getCachedAdjustment();
+          const ensemble = scoreEnsemble({
+            mlPrediction: prediction,
+            gemmaAdjustment: gemmaAdj,
+            regimeConfidence: 70,
+            regimeName,
+            cachedSentiment: 0
+          });
+
+          return { ensemble, prediction };
+        })();
+
+        if (mlPrediction) {
+          const { ensemble, prediction } = mlPrediction;
           SignalGenerator.aiHealth.totalRequests++;
-          SignalGenerator.aiHealth.failedConfirmations++;
-          SignalGenerator.aiHealth.consecutiveFailures++;
-          SignalGenerator.aiHealth.lastFailureReason = 'GEMINI_API_KEY not configured';
-          signal.aiWarning = true;
-          // Disable AI features when no key is configured
-          SignalGenerator.aiEnabled = false;
-          if (SignalGenerator.aiHealth.consecutiveFailures >= 3) {
-            SignalGenerator.aiHealth.circuitBreakerTripped = true;
-            console.error('[AI Circuit Breaker] Tripped due to missing API key');
+          SignalGenerator.aiHealth.successfulConfirmations++;
+
+          if (ensemble.direction !== signal.side) {
+            signal.confidence = Math.max(0, signal.confidence - 20);
+            signal.mlDisagreement = true;
+          } else {
+            const boost = Math.round((ensemble.finalScore - 0.5) * 40);
+            signal.confidence = Math.min(100, signal.confidence + boost);
           }
-        } else {
-          const { default: OpenAI } = await import('openai');
-          const openai = new OpenAI({
-            baseURL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
-            apiKey: 'ollama'
-          });
-          
-          const lastCandles = df.slice(-5).map(c => ({
-            time: new Date(c.time).toISOString(),
-            open: c.open,
-            high: c.high,
-            low: c.low,
-            close: c.close,
-            volume: c.volume
-          }));
 
-          const prompt = `You are a quantitative trading system. A base algorithm has generated a ${signal.side.toUpperCase()} signal for ${symbol} based on ${signal.indicators.join(', ')}.
-          Entry: ${signal.entryPrice}, Stop Loss: ${signal.stopLoss}, Take Profit: ${signal.takeProfit}.
-          Recent price action: ${JSON.stringify(lastCandles)}
-          
-          Do you confirm this trade? If the macro structure looks poor, reject it.
-          Return a JSON object:
-          { "confirmed": boolean, "reasoning": "string" }`;
-
-          const response = await openai.chat.completions.create({
-            model: process.env.OLLAMA_MODEL || "llama3",
-            response_format: { type: "json_object" },
-            messages: [{ role: "user", content: prompt }]
-          });
-
-          const text = response.choices[0].message.content;
-          if (text) {
-            const aiResult = JSON.parse(text);
-            SignalGenerator.aiHealth.totalRequests++;
-            SignalGenerator.aiHealth.successfulConfirmations++;
-            SignalGenerator.aiHealth.consecutiveFailures = 0;
-            if (!aiResult.confirmed) {
-              console.log(`AI rejected signal for ${symbol}: ${aiResult.reasoning}`);
-              return null; // Block trade when AI rejects
-            } else {
-              signal.reasoning = `AI Confirmed: ${aiResult.reasoning}`;
-            }
-          }
+          signal.mlScore = ensemble.finalScore;
+          signal.mlDirection = ensemble.direction;
+          signal.mlReasoning = ensemble.reasoning;
+          signal.topFeatures = prediction.topFeatures;
         }
       } catch (e: any) {
         SignalGenerator.aiHealth.totalRequests++;
         SignalGenerator.aiHealth.failedConfirmations++;
         SignalGenerator.aiHealth.consecutiveFailures++;
         SignalGenerator.aiHealth.lastFailureReason = e.message || String(e);
-        
-        if (e.message && e.message.includes("API_KEY_INVALID")) {
-          console.error("AI Signal Confirmation failed: Invalid API Key. Disabling AI features.");
-          SignalGenerator.aiEnabled = false;
+
+        signal.aiWarning = true;
+        signal.reasoning += ` [ML Evaluation Failed: ${e.message}]`;
+
+        if (SignalGenerator.aiHealth.consecutiveFailures >= 5) {
           SignalGenerator.aiHealth.circuitBreakerTripped = true;
-          return null; // Block trade when AI key is invalid and AI is required
-        } else {
-          console.error("AI Signal Confirmation failed:", e);
-          // Non-critical AI error: add warning flag to signal, allow trade to proceed
-          signal.aiWarning = true;
-          signal.reasoning += ` [AI Confirmation Failed: ${e.message}]`;
-          
-          // Circuit breaker: trip after 5 consecutive failures
-          if (SignalGenerator.aiHealth.consecutiveFailures >= 5) {
-            SignalGenerator.aiHealth.circuitBreakerTripped = true;
-            console.error(`[AI Circuit Breaker] Tripped after ${SignalGenerator.aiHealth.consecutiveFailures} consecutive failures. AI features disabled temporarily.`);
-            SignalGenerator.aiEnabled = false;
-          }
+          SignalGenerator.aiEnabled = false;
         }
       }
     }

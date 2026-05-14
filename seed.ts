@@ -12,7 +12,7 @@ export async function seedDatabase() {
 
   console.log('Seeding database with mock data...');
 
-  const modes = ['ultra_conservative', 'conservative', 'moderate', 'aggressive', 'degen'];
+  const modes = ['ultra_conservative', 'conservative', 'moderate', 'aggressive', 'degen', 'ai_enhanced'];
   const symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'];
   const sides = ['buy', 'sell'];
   const now = Date.now();

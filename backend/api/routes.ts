@@ -13,6 +13,7 @@ import { getRequestId, logger } from '../logging/logger.js';
 import axios from 'axios';
 import paperTradingRouter from '../paper-trading/paper-trading.controller.js';
 import { recordApiRequest, getApiMetricsSnapshot, toPrometheusMetrics } from '../observability/requestMetrics.js';
+import { getMLHealth } from '../ml/index.js';
 
 // Fallback function to fetch historical data from CoinGecko
 async function fetchCoinGeckoHistoricalData(symbol: string, timeframe: string, days: number) {
@@ -324,7 +325,10 @@ const adminRoutes = [
   '/backtest',
   '/kill',
   '/import-csv',
-  '/diagnostics'
+  '/diagnostics',
+  '/ml/status',
+  '/ml/accuracy',
+  '/ml/predictions'
 ];
 
 const traderRoutes = [
@@ -453,7 +457,10 @@ apiRouter.get('/diagnostics/health', async (req, res) => {
       hasCachedData: Boolean(latestMarketData),
       lastUpdated: latestMarketData?.last_updated || null,
       metrics: marketMetrics
-    }
+    },
+    ml: await getMLHealth().catch(() => ({
+      enabled: false, modelsReady: false, gemmaCache: false, modelCount: 0
+    }))
   });
 });
 
@@ -467,6 +474,56 @@ apiRouter.get('/diagnostics/metrics', async (req, res) => {
   const payload = toPrometheusMetrics(marketMetrics);
   res.setHeader('content-type', 'text/plain; version=0.0.4; charset=utf-8');
   return res.send(payload);
+});
+
+// ML endpoints (admin-protected)
+apiRouter.get('/ml/status', async (req, res) => {
+  const models = await runQuery(
+    `SELECT symbol, regime, accuracy, drift_score, training_rows,
+            trained_at, last_drift_check, is_active
+     FROM ml_models
+     WHERE is_active = 1
+     ORDER BY symbol, regime`
+  );
+  res.json({
+    ml_enabled: process.env.ML_ENABLED === 'true',
+    models,
+    confidence_threshold: process.env.ML_CONFIDENCE_THRESHOLD
+  });
+});
+
+apiRouter.get('/ml/accuracy', async (req, res) => {
+  const symbol = (req.query.symbol as string) || 'BTC/USDT';
+  const days = (req.query.days as string) || '7';
+  const accuracy = await runQuery(
+    `SELECT
+       regime,
+       COUNT(*) as total,
+       SUM(was_correct) as correct,
+       ROUND(AVG(was_correct)*100, 1) as accuracy_pct,
+       ROUND(AVG(ABS(xgb_probability - 0.5)), 3) as avg_confidence,
+       ROUND(AVG(gemma_adjustment), 3) as avg_gemma_adj
+     FROM ml_predictions
+     WHERE symbol = ?
+       AND actual_direction IS NOT NULL
+       AND created_at > datetime('now', ? || ' days')
+     GROUP BY regime`,
+    [symbol, `-${days}`]
+  );
+  res.json(accuracy);
+});
+
+apiRouter.get('/ml/predictions', async (req, res) => {
+  const symbol = (req.query.symbol as string) || 'BTC/USDT';
+  const limit = parseInt((req.query.limit as string) || '50', 10);
+  const predictions = await runQuery(
+    `SELECT * FROM ml_predictions
+     WHERE symbol = ?
+     ORDER BY created_at DESC
+     LIMIT ?`,
+    [symbol, limit]
+  );
+  res.json(predictions);
 });
 
 apiRouter.post('/start', (req, res) => {

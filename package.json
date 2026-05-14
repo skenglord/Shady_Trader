@@ -24,7 +24,12 @@
     "k8s:deploy": "kubectl apply -f k8s/",
     "k8s:undeploy": "kubectl delete -f k8s/",
     "migrate:postgres": "tsx scripts/migrate-to-postgres.ts",
-    "migrate:slippage": "tsx scripts/migrate-slippage-schema.ts"
+    "migrate:slippage": "tsx scripts/migrate-slippage-schema.ts",
+    "ml:ingest": "tsx scripts/bulk_ingest_candles.ts",
+    "ml:train": "tsx scripts/train_models.ts",
+    "ml:status": "tsx -e \"import('./backend/ml/index').then(m => m.getMLHealth().then(console.log))\"",
+    "ml:check-py": "python3 -c \"import xgboost, sklearn, shap, joblib, scipy; print('Python ML deps OK')\"",
+    "ml:setup": "npm run ml:check-py && npm run ml:ingest && npm run ml:train"
   },
   "dependencies": {
     "@google/genai": "^1.52.0",
@@ -80,6 +85,7 @@
     "tailwindcss": "^4.1.14",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2",
-    "vite": "^8.0.10"
+    "vite": "^8.0.10",
+    "vitest": "^4.1.6"
   }
 }

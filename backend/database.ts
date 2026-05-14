@@ -163,6 +163,63 @@ export async function initDatabase() {
           depth_volatility REAL NOT NULL,
           exchange TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS ml_models (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          regime TEXT NOT NULL,
+          symbol TEXT NOT NULL,
+          model_path TEXT NOT NULL,
+          feature_count INTEGER NOT NULL,
+          accuracy REAL,
+          precision_score REAL,
+          recall_score REAL,
+          sharpe_improvement REAL,
+          training_rows INTEGER,
+          trained_at TEXT NOT NULL,
+          is_active INTEGER DEFAULT 1,
+          drift_score REAL DEFAULT 0.0,
+          last_drift_check TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS ml_predictions (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          symbol TEXT NOT NULL,
+          regime TEXT NOT NULL,
+          candle_time TEXT NOT NULL,
+          xgb_probability REAL NOT NULL,
+          gemma_adjustment REAL DEFAULT 0.0,
+          final_score REAL NOT NULL,
+          predicted_direction TEXT NOT NULL,
+          actual_direction TEXT,
+          actual_return REAL,
+          was_correct INTEGER,
+          top_features TEXT,
+          created_at TEXT DEFAULT (datetime('now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_ml_predictions_symbol_time
+          ON ml_predictions(symbol, candle_time);
+
+        CREATE INDEX IF NOT EXISTS idx_ml_models_regime_active
+          ON ml_models(regime, is_active);
+
+        CREATE TABLE IF NOT EXISTS shadow_trades (
+          id TEXT PRIMARY KEY,
+          symbol TEXT NOT NULL,
+          side TEXT NOT NULL,
+          amount REAL NOT NULL,
+          price REAL NOT NULL,
+          status TEXT NOT NULL,
+          timestamp INTEGER NOT NULL,
+          risk_mode TEXT NOT NULL,
+          pnl REAL,
+          exit_price REAL,
+          exit_timestamp INTEGER,
+          leverage REAL DEFAULT 1,
+          stop_loss REAL,
+          take_profit REAL,
+          close_reason TEXT DEFAULT NULL
+        );
       `);
 
       mockRunQuery = async (sql: string, params: any[] = [], type: 'run' | 'all' = 'run'): Promise<any> => {
