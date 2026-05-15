@@ -51,6 +51,7 @@ export class TradingEngine {
   private _activeMode: string = 'moderate';
   private _strategy: string = 'regime';
   private _aiStrategySwitching: boolean = false;
+  private _lastBroadcastCandleTime: number = 0;
 
   static aiStrategySwitchingEnabled = true;
 
@@ -579,9 +580,10 @@ export class TradingEngine {
       }
 
       // Wait for next cycle with abortable sleep (max 30s timeout)
+      // Always wait at least 1 second to prevent tight loop from hammering the server
       const cycleDuration = Date.now() - cycleStart;
-      const sleepTime = Math.max(0, 1000 - cycleDuration);
-      if (this.isRunning && sleepTime > 0) {
+      const sleepTime = Math.max(1000, 1000 - cycleDuration); // Ensure minimum 1s even if cycle is fast
+      if (this.isRunning) {
         await this.sleepWithTimeout(sleepTime, 30000);
       }
     }
@@ -839,12 +841,15 @@ export class TradingEngine {
     const performance = this.shadowTrader.getPerformance();
     
     this.broadcast({ type: 'performance', data: performance });
-    
+
     const balances = this.balanceManager.getBalances();
     this.broadcast({ type: 'balances', data: balances });
-    
-    // Broadcast latest candle for chart
-    this.broadcast({ type: 'candle', data: df[df.length - 1] });
+
+    // Broadcast latest candle for chart - always, so frontend can update current candle price
+    const latestCandle = df[df.length - 1];
+    if (latestCandle) {
+      this.broadcast({ type: 'candle', data: latestCandle });
+    }
   }
 
   broadcast(message: any) {

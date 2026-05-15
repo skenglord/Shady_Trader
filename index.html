@@ -4,6 +4,24 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>My Google AI Studio App</title>
+    <script>
+      // Log ALL errors to console before crash
+      window.onerror = function(msg, url, line, col, error) {
+        console.error('WINDOW ERROR:', msg, 'line:', line, 'col:', col, 'error:', error);
+        // Store in sessionStorage for later retrieval
+        const errors = JSON.parse(sessionStorage.getItem('jsErrors') || '[]');
+        errors.push({ msg, url, line, col, error: String(error), time: Date.now() });
+        sessionStorage.setItem('jsErrors', JSON.stringify(errors.slice(-10)));
+        return false; // Let default handler run too
+      };
+      window.onunhandledrejection = function(e) {
+        console.error('UNHANDLED REJECTION:', e.reason);
+        const errors = JSON.parse(sessionStorage.getItem('jsErrors') || '[]');
+        errors.push({ reason: String(e.reason), time: Date.now(), type: 'rejection' });
+        sessionStorage.setItem('jsErrors', JSON.stringify(errors.slice(-10)));
+      };
+      console.log('Error handler installed');
+    </script>
   </head>
   <body>
     <div id="root"></div>

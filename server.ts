@@ -234,4 +234,17 @@ async function startServer() {
   });
 }
 
+// Global error handlers to prevent silent crashes
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  logger.error('Uncaught Exception in server', { error: error.message, stack: error.stack });
+  // Exit with non-zero to signal crash but don't exit immediately to allow logging
+  setTimeout(() => process.exit(1), 1000);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  logger.error('Unhandled Promise Rejection', { reason: String(reason) });
+});
+
 startServer();

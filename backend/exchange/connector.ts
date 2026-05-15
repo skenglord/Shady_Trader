@@ -399,8 +399,9 @@ export class ExchangeConnector {
       }
 
       const price = this.currentPrice || 50000;
-      const now = Date.now();
+      // Use a consistent epoch aligned to timeframe boundaries to prevent new candles every cycle
       const msPerCandle = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '1d': 86400000 }[timeframe] || 3600000;
+      const now = Math.floor(Date.now() / msPerCandle) * msPerCandle;
 
       rows = Array.from({ length: limit }).map((_, i) => {
         const time = now - (limit - 1 - i) * msPerCandle;

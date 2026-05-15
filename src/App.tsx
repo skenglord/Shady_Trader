@@ -144,6 +144,7 @@ export default function App() {
   const candlesDataRef = useRef<any[]>([]);
   const backtestTradesRef = useRef<any[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
+  const lastBroadcastCandleTimeRef = useRef<number>(0);
 
   useEffect(() => {
     backtestTradesRef.current = backtestTrades;
@@ -189,38 +190,55 @@ export default function App() {
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
-      lastMessageTimeRef.current = Date.now();
-      setIsDataPassing(true);
-      const data = JSON.parse(event.data);
-      if (data.type === 'status') {
-        setStatus(prev => ({ ...prev, ...data.data }));
-      } else if (data.type === 'regime') {
-        setStatus(prev => ({ ...prev, currentRegime: data.data.regime }));
-        setRegimeReasoning(data.data.reasoning || '');
-        setLiveRegimeChanges(prev => [...prev, { time: Date.now(), regime: data.data.regime }]);
-      } else if (data.type === 'performance') {
-        setPerformance(data.data);
-      } else if (data.type === 'candle') {
-        if (seriesRef.current && !showBacktestUI) {
-          const c = data.data;
-          setCurrentPrice(c.close);
-          const time = Math.floor(Number(c.time) / 1000);
-          if (!isNaN(time)) {
-            seriesRef.current.update({
-              time: time as any,
-              open: c.open,
-              high: c.high,
-              low: c.low,
-              close: c.close,
-            });
+      try {
+        lastMessageTimeRef.current = Date.now();
+        setIsDataPassing(true);
+        const data = JSON.parse(event.data);
+        if (data.type === 'status') {
+          setStatus(prev => ({ ...prev, ...data.data }));
+        } else if (data.type === 'regime') {
+          setStatus(prev => ({ ...prev, currentRegime: data.data.regime }));
+          setRegimeReasoning(data.data.reasoning || '');
+          setLiveRegimeChanges(prev => [...prev, { time: Date.now(), regime: data.data.regime }]);
+        } else if (data.type === 'performance') {
+          setPerformance(data.data);
+        } else if (data.type === 'candle') {
+          if (seriesRef.current && !showBacktestUI && data.data) {
+            const c = data.data;
+            setCurrentPrice(c.close);
+            const time = Math.floor(Number(c.time) / 1000);
+            if (!isNaN(time) && time > 0) {
+              const existingIdx = candlesDataRef.current.findIndex(candle => Number(candle.time) === time);
+              if (existingIdx >= 0) {
+                seriesRef.current.update({
+                  time: time as any,
+                  open: c.open,
+                  high: c.high,
+                  low: c.low,
+                  close: c.close,
+                });
+              } else if (time > lastBroadcastCandleTimeRef.current) {
+                candlesDataRef.current.push({ time, open: c.open, high: c.high, low: c.low, close: c.close });
+                lastBroadcastCandleTimeRef.current = time;
+                seriesRef.current.update({
+                  time: time as any,
+                  open: c.open,
+                  high: c.high,
+                  low: c.low,
+                  close: c.close,
+                });
+              }
+            }
           }
+        } else if (data.type === 'signal') {
+          fetchTrades();
+        } else if (data.type === 'ai_mode_switch') {
+          setActiveMode(data.data.mode);
+        } else if (data.type === 'balances') {
+          updateBalances(data.data);
         }
-      } else if (data.type === 'signal') {
-        fetchTrades();
-      } else if (data.type === 'ai_mode_switch') {
-        setActiveMode(data.data.mode);
-      } else if (data.type === 'balances') {
-        updateBalances(data.data);
+      } catch (err) {
+        console.warn('WebSocket error:', err);
       }
     };
 
@@ -796,7 +814,8 @@ export default function App() {
       await fetch(`${APP_URL}/api/timeframe`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
+          'Content-Type': 'application/json',
+          'x-api-token': 'dev_token_123'
         },
         body: JSON.stringify({ timeframe: tf })
       });
