@@ -100,13 +100,13 @@ export default function App() {
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [backtestTrades, setBacktestTrades] = useState<any[]>([]);
   const [isBacktesting, setIsBacktesting] = useState(false);
-  const [balances, setBalances] = useState({
-    mainBalance: 0,
-    botBalance: 0,
-    activeTradeBalance: 0,
-    totalPnl: 0,
-    totalPnlPct: 0
-  });
+  const defaultBalances = { mainBalance: 0, botBalance: 0, activeTradeBalance: 0, totalPnl: 0, totalPnlPct: 0 };
+  const [balances, setBalances] = useState<typeof defaultBalances>(defaultBalances);
+
+  // Safe setter that always merges with defaults
+  const updateBalances = (data: Partial<typeof defaultBalances>) => {
+    setBalances(prev => ({ ...defaultBalances, ...prev, ...data }));
+  };
   const [marketData, setMarketData] = useState<any>(null);
   const [marketNews, setMarketNews] = useState<any[]>([]);
   const [isRefreshingMarket, setIsRefreshingMarket] = useState(false);
@@ -160,9 +160,32 @@ export default function App() {
     fetchMarketData();
     fetchMarketNews();
 
-    // Setup WebSocket
+    // Setup WebSocket with timeout
     const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
     const ws = new WebSocket(wsUrl);
+
+    // Connection timeout - prevent hanging forever
+    const wsTimeout = setTimeout(() => {
+      if (ws.readyState === WebSocket.CONNECTING) {
+        console.warn('WebSocket connection timeout, continuing without WS');
+        ws.close();
+      }
+    }, 5000);
+
+    ws.onopen = () => {
+      clearTimeout(wsTimeout);
+      console.log('WebSocket connected');
+    };
+
+    ws.onerror = (error) => {
+      clearTimeout(wsTimeout);
+      console.warn('WebSocket error:', error);
+    };
+
+    ws.onclose = () => {
+      clearTimeout(wsTimeout);
+    };
+
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
@@ -197,7 +220,7 @@ export default function App() {
       } else if (data.type === 'ai_mode_switch') {
         setActiveMode(data.data.mode);
       } else if (data.type === 'balances') {
-        setBalances(data.data);
+        updateBalances(data.data);
       }
     };
 
@@ -809,7 +832,7 @@ export default function App() {
       setLastCallTime(Date.now());
       const response = await fetch(`${APP_URL}/api/balances`);
       const data = await response.json();
-      setBalances(data);
+      updateBalances(data);
     } catch (e) {
       console.error('Failed to fetch balances:', e);
     }
@@ -890,7 +913,7 @@ export default function App() {
         body: JSON.stringify({ amount })
       });
       const data = await response.json();
-      if (data.balances) setBalances(data.balances);
+      if (data.balances) updateBalances(data.balances);
       if (data.error) alert(data.error);
     } catch (e) {
       console.error('Failed to allocate balance:', e);
@@ -906,7 +929,7 @@ export default function App() {
         body: JSON.stringify({ amount })
       });
       const data = await response.json();
-      if (data.balances) setBalances(data.balances);
+      if (data.balances) updateBalances(data.balances);
       if (data.error) alert(data.error);
     } catch (e) {
       console.error('Failed to withdraw balance:', e);
@@ -918,7 +941,7 @@ export default function App() {
       setLastCallTime(Date.now());
       const response = await fetch(`${APP_URL}/api/balances/half`, { method: 'POST' });
       const data = await response.json();
-      if (data.balances) setBalances(data.balances);
+      if (data.balances) updateBalances(data.balances);
     } catch (e) {
       console.error('Failed to half balance:', e);
     }
@@ -929,7 +952,7 @@ export default function App() {
       setLastCallTime(Date.now());
       const response = await fetch(`${APP_URL}/api/balances/double`, { method: 'POST' });
       const data = await response.json();
-      if (data.balances) setBalances(data.balances);
+      if (data.balances) updateBalances(data.balances);
       if (data.error) alert(data.error);
     } catch (e) {
       console.error('Failed to double balance:', e);

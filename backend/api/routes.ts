@@ -595,43 +595,41 @@ apiRouter.get('/candles', async (req, res) => {
         }
       }
 
-      // Check if we have sufficient data
+      // Check if we have sufficient data - try fallbacks if insufficient
       if (candles.length < 50) {
-        // For CoinMarketCap, historical data requires paid API key
-        if (engine.exchange?.exchangeName === 'coinmarketcap') {
-          const hasApiKey = Boolean(engine.exchange.apiKey && engine.exchange.apiKey.trim());
-          if (!hasApiKey) {
-            // Fallback to CoinGecko for free historical data
-            logger.info('Falling back to CoinGecko for historical data', { requestId: req.requestId });
-            try {
-              const fallbackCandles = await fetchCoinGeckoHistoricalData(engine.symbol, engine.timeframe, history === '1y' ? 365 : 30);
-              if (fallbackCandles && fallbackCandles.length >= 50) {
-                candles = fallbackCandles;
-                logger.info('Successfully fetched fallback data from CoinGecko', { requestId: req.requestId, count: candles.length });
-              } else {
-                return res.status(402).json({
-                  error: 'API_KEY_REQUIRED',
-                  message: 'CoinMarketCap historical data requires a paid API key. Please configure your API key in settings.',
-                  provider: 'coinmarketcap',
-                  action: 'configure_api_key'
-                });
-              }
-            } catch (fallbackError: any) {
-              logger.error('CoinGecko fallback failed', { requestId: req.requestId, error: fallbackError.message });
-              return res.status(503).json({
-                error: 'DATA_UNAVAILABLE',
-                message: 'Unable to fetch historical data from any source. Please try again later.',
-                provider: 'fallback_failed'
-              });
-            }
-          } else {
-            // API key provided but still no data - likely rate limited or invalid key
-            return res.status(503).json({
-              error: 'DATA_UNAVAILABLE',
-              message: 'Unable to fetch historical data. Please check your API key or try again later.',
-              provider: 'coinmarketcap'
-            });
+        logger.info('Insufficient candles from primary source, trying fallbacks', { requestId: req.requestId, count: candles.length, exchange: engine.exchange?.exchangeName });
+
+        // Try CryptoCompare first (most reliable fallback)
+        try {
+          const ccCandles = await engine.exchange?.fetchCryptoCompareHistorical?.(engine.symbol, engine.timeframe, 500);
+          if (ccCandles && ccCandles.length >= 50) {
+            candles = ccCandles;
+            logger.info('CryptoCompare fallback succeeded', { requestId: req.requestId, count: candles.length });
           }
+        } catch (ccError: any) {
+          logger.warn('CryptoCompare fallback failed', { requestId: req.requestId, error: ccError.message });
+        }
+
+        // If still insufficient, try CoinGecko
+        if (candles.length < 50) {
+          try {
+            const cgCandles = await fetchCoinGeckoHistoricalData(engine.symbol, engine.timeframe, history === '1y' ? 365 : 30);
+            if (cgCandles && cgCandles.length >= 50) {
+              candles = cgCandles;
+              logger.info('CoinGecko fallback succeeded', { requestId: req.requestId, count: candles.length });
+            }
+          } catch (cgError: any) {
+            logger.warn('CoinGecko fallback failed', { requestId: req.requestId, error: cgError.message });
+          }
+        }
+
+        // If still no data, return error
+        if (candles.length < 50) {
+          return res.status(503).json({
+            error: 'DATA_UNAVAILABLE',
+            message: 'Unable to fetch sufficient historical data. Please check your exchange configuration or API keys.',
+            providers_tried: ['primary_exchange', 'cryptocompare', 'coingecko']
+          });
         }
       }
 

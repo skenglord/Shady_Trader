@@ -251,12 +251,75 @@ export class ExchangeConnector {
         await this.saveTickToDb(symbol, this.currentPrice, Number(data.quote.USD.volume_24h || 0));
       }
     } catch (error: any) {
-      logger.error('Price fetch failed', {
+      logger.warn('Primary exchange failed, trying CryptoCompare fallback', {
         service: 'ExchangeConnector',
-        exchangeName: this.exchangeName,
-        error: error.response?.data || error.message
+        exchangeName: this.exchangeName
+      });
+      await this.fetchCryptoComparePrice(symbol);
+    }
+  }
+
+  private async fetchCryptoComparePrice(symbol: string) {
+    const baseSymbol = this.symbolMap[symbol] || symbol.split('/')[0];
+    try {
+      const response = await axios.get('https://min-api.cryptocompare.com/data/pricemulti', {
+        params: {
+          fsyms: baseSymbol,
+          tsyms: 'USD'
+        }
+      });
+      const price = Number(response.data?.[baseSymbol]?.USD);
+      if (Number.isFinite(price) && price > 0) {
+        this.currentPrice = price;
+        this.lastUpdate = Date.now();
+        await this.saveTickToDb(symbol, this.currentPrice, 0);
+        logger.info('CryptoCompare fallback succeeded', {
+          service: 'ExchangeConnector',
+          symbol: baseSymbol,
+          price
+        });
+      }
+    } catch (error: any) {
+      logger.error('CryptoCompare fallback also failed', {
+        service: 'ExchangeConnector',
+        error: error.message
       });
     }
+  }
+
+  async fetchCryptoCompareHistorical(symbol: string, timeframe: string, limit: number = 100): Promise<any[]> {
+    const baseSymbol = this.symbolMap[symbol] || symbol.split('/')[0];
+    const intervalMap: Record<string, number> = { '1m': 1, '5m': 5, '15m': 15, '1h': 60, '1d': 1440 };
+    const interval = intervalMap[timeframe] || 60;
+
+    try {
+      const response = await axios.get('https://min-api.cryptocompare.com/data/v2/histoday', {
+        params: {
+          fsym: baseSymbol,
+          tsym: 'USD',
+          limit: Math.min(limit, 2000),
+          aggregate: interval
+        }
+      });
+
+      if (response.data?.Data?.Data) {
+        return response.data.Data.Data.map((c: any) => ({
+          time: c.time * 1000,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volumeto || c.volumefrom || 0
+        }));
+      }
+    } catch (error: any) {
+      logger.error('CryptoCompare historical fetch failed', {
+        service: 'ExchangeConnector',
+        symbol: baseSymbol,
+        error: error.message
+      });
+    }
+    return [];
   }
 
   private async saveTickToDb(symbol: string, price: number, volume: number) {
