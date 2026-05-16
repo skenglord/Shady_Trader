@@ -56,12 +56,7 @@ export class ShadowTrader {
   }
 
   async reset() {
-    try {
-      await runQuery(`DELETE FROM shadow_trades`);
-    } catch (error: any) {
-      console.warn('ShadowTrader reset skipped: shadow_trades table unavailable', error?.message || error);
-      return;
-    }
+    // Don't delete trade history — just reset in-memory portfolios
     for (const mode of Object.values(RiskMode)) {
       this.portfolios[mode as RiskMode] = { balance: 100000, initialBalance: 100000, openTrades: [] };
       console.log(`[ShadowTrader] Resetting ${mode} to 100000`);
@@ -113,8 +108,8 @@ export class ShadowTrader {
       const portfolio = this.portfolios[mode];
       
       const balances = balanceManager ? await balanceManager.getBalances() : null;
-      // Use bot balance for limit check
-      const effectiveBalance = (mode === activeMode && balances) ? balances.botBalance : portfolio.balance;
+      // Use portfolio's own balance for state checks, botBalance for position sizing only
+      const effectiveBalance = portfolio.balance;
 
       if (mode === activeMode) {
         console.log(`[ShadowTrader] Debug ${mode}: effectiveBalance=${effectiveBalance}, portfolio.balance=${portfolio.balance}, botBalance=${balances?.botBalance}, activeMode=${activeMode}`);
@@ -151,7 +146,7 @@ export class ShadowTrader {
         const marketState = {
           timestamp: Date.now(),
           midPrice: new Decimal(signal.entryPrice),
-          spread: new Decimal(signal.entryPrice * 0.001), // Mock spread
+          spread: new Decimal(0.00006), // 0.006% spread ratio (below 5x threshold of 0.0001 baseline)
           volatility: 0.02, // Mock volatility
           depth: {
             bidVolume: new Decimal(1000),

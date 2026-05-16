@@ -2,10 +2,13 @@ import { z } from 'zod';
 
 export const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
-  EXCHANGE_NAME: z.string().default('coinmarketcap'),
+  EXCHANGE_NAME: z.string().default('coingecko'),
   EXCHANGE_API_KEY: z.string().optional(),
   EXCHANGE_API_SECRET: z.string().optional(),
   EXCHANGE_API_PASSWORD: z.string().optional(),
+  COINAPI_API_KEY: z.string().optional(),
+  COINGECKO_API_KEY: z.string().optional(),
+  CRYPTOCOMPARE_API_KEY: z.string().optional(),
   EXCHANGE_USE_TESTNET: z.string().transform(v => v === 'true').default('true'),
   API_ADMIN_TOKEN: z.string().optional(),
   API_TRADER_TOKEN: z.string().optional(),

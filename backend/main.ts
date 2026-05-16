@@ -441,6 +441,13 @@ export class TradingEngine {
       }
     }
     await this.loadSettings();
+    // Initialize sub-components that need DB access
+    try {
+      await this.shadowTrader.init();
+      await this.shadowTrader.riskManager.init();
+    } catch (err: any) {
+      logger.warn('Failed to initialize risk/shadow components', { error: err.message });
+    }
   }
 
   backupDatabase() {
@@ -483,10 +490,10 @@ export class TradingEngine {
       if (config.strategy) this.strategy = config.strategy;
 
       const exchangeName = String(
-        config.exchange || process.env.EXCHANGE_NAME || 'coinmarketcap'
+        config.exchange || process.env.EXCHANGE_NAME || 'coingecko'
       ).toLowerCase();
       const exchangeApiKey = String(
-        config.apiKey || process.env.EXCHANGE_API_KEY || ''
+        config.apiKey || process.env.COINGECKO_API_KEY || process.env.COINAPI_API_KEY || process.env.EXCHANGE_API_KEY || ''
       );
       const exchangeApiSecret = String(
         config.apiSecret || process.env.EXCHANGE_API_SECRET || ''
@@ -510,17 +517,19 @@ export class TradingEngine {
       };
 
       if (this.isExchangeEnabled) {
-        const requiresApiKey = exchangeName === 'coinmarketcap';
+        const requiresApiKey = exchangeName === 'coinmarketcap' || exchangeName === 'coinapi' || exchangeName === 'coingecko';
         if (requiresApiKey && !exchangeApiKey) {
-          const message = `Exchange "${exchangeName}" requires EXCHANGE_API_KEY or persisted settings.apiKey`;
+          const message = `Exchange "${exchangeName}" requires an API key. Set COINAPI_API_KEY or EXCHANGE_API_KEY env var, or configure in Settings.`;
           if (process.env.NODE_ENV === 'production') {
             throw new Error(message);
           }
           console.warn(`[TradingEngine] ${message}. Exchange disabled until configured.`);
+          if (this.exchange) this.exchange.shutdown();
           this.exchange = null;
           this.startupDiagnostics.exchangeConfigured = false;
           this.startupDiagnostics.exchangeReason = message;
         } else {
+          if (this.exchange) this.exchange.shutdown();
           this.exchange = new ExchangeConnector(
             exchangeName,
             exchangeApiKey,
@@ -538,7 +547,7 @@ export class TradingEngine {
         this.startupDiagnostics.exchangeReason = 'exchange_disabled';
       }
       
-      this.broadcast({ type: 'status', data: { symbol: this.symbol, timeframe: this.timeframe } });
+      this.broadcast({ type: 'status', data: { symbol: this.symbol, timeframe: this.timeframe, exchange: this.exchange?.exchangeName || this.startupDiagnostics?.exchangeName } });
       
       if (this.isRunning) {
         this.runCycle().catch(console.error);
@@ -558,6 +567,31 @@ export class TradingEngine {
     this.shadowTrader.reset();
     logger.info('Trading engine started and reset', { service: 'TradingEngine' });
     this.broadcast({ type: 'status', data: { isRunning: true } });
+
+    // Auto-allocate main balance to bot balance if not yet allocated
+    try {
+      const balances = await this.balanceManager.getBalances();
+      if (balances.botBalance === 0 && balances.mainBalance > 0) {
+        await this.balanceManager.allocateToBot(balances.mainBalance);
+        logger.info('Auto-allocated main balance to bot balance', {
+          service: 'TradingEngine',
+          amount: balances.mainBalance
+        });
+        // Broadcast updated balances
+        const newBalances = await this.balanceManager.getBalances();
+        this.broadcast({ type: 'balances', data: newBalances });
+      } else if (balances.botBalance > 0) {
+        logger.info('Bot balance already allocated', {
+          service: 'TradingEngine',
+          botBalance: balances.botBalance
+        });
+      }
+    } catch (error: any) {
+      logger.warn('Failed to auto-allocate bot balance at startup', {
+        service: 'TradingEngine',
+        error: error.message
+      });
+    }
 
     // Broadcast initial performance (async, don't wait)
     this.shadowTrader.getPerformance().then(perf => {
@@ -582,9 +616,12 @@ export class TradingEngine {
       // Wait for next cycle with abortable sleep (max 30s timeout)
       // Always wait at least 1 second to prevent tight loop from hammering the server
       const cycleDuration = Date.now() - cycleStart;
-      const sleepTime = Math.max(1000, 1000 - cycleDuration); // Ensure minimum 1s even if cycle is fast
+      // Adaptive sleep based on timeframe — faster for short timeframes, slower for long ones
+      const tfSleep = { '1m': 5000, '5m': 5000, '15m': 10000, '30m': 15000, '1h': 30000, '4h': 60000, '1d': 300000 };
+      const targetSleep = tfSleep[this.timeframe as keyof typeof tfSleep] ?? 10000;
+      const sleepTime = Math.max(3000, targetSleep - cycleDuration);
       if (this.isRunning) {
-        await this.sleepWithTimeout(sleepTime, 30000);
+        await this.sleepWithTimeout(sleepTime, 60000);
       }
     }
 
@@ -601,10 +638,9 @@ export class TradingEngine {
   }
 
   private sleepWithTimeout(ms: number, timeoutMs: number = 30000): Promise<void> {
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
       const timeout = setTimeout(() => {
-        // Don't reject - just resolve to continue the loop
-        resolve();
+        reject(new Error('Sleep timeout'));
       }, timeoutMs);
       const timer = setTimeout(() => {
         clearTimeout(timeout);
@@ -703,6 +739,7 @@ export class TradingEngine {
   }
 
   async runCycle() {
+    console.log(`[Cycle] Starting cycle at ${new Date().toISOString()}`);
     // 1. Fetch new candles
     let candles = [];
     try {
@@ -710,7 +747,7 @@ export class TradingEngine {
     } catch (e) {
       console.warn(`Exchange API failed to fetch candles: ${e}`);
     }
-    if (candles.length < 100) return;
+    if (candles.length < 20) return;
 
     // 2. Calculate indicators
     const df = this.indicators.calculateAll(candles);
@@ -771,7 +808,7 @@ export class TradingEngine {
         try {
           const { default: OpenAI } = await import('openai');
           const openai = new OpenAI({
-            baseURL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
+            baseURL: (process.env.OLLAMA_BASE_URL || 'http://localhost:11434') + '/v1',
             apiKey: 'ollama'
           });
 
@@ -818,9 +855,124 @@ export class TradingEngine {
     // 4. Generate signal
     const signal = await this.signalGenerator.generateSignal(df, this.currentRegime, this.symbol, this.aiSignalGeneration, this.strategy, this.activeMode);
     
+    // Compute live confidence every cycle — dynamic 0-100 score based on
+    // indicator proximity, even when no full signal triggers
+    const liveConfidence = this.signalGenerator.computeLiveConfidence(df, this.currentRegime);
+    
+    // Broadcast signal info regardless of whether one was generated (for frontend readout)
+    // Includes the regime context and why no signal or what the signal was
+    const latestCandleData = df[df.length - 1];
+    this.broadcast({ 
+      type: 'signal_status', 
+      data: { 
+        hasSignal: signal !== null,
+        signal: signal ? {
+          side: signal.side,
+          confidence: signal.confidence,
+          entryPrice: signal.entryPrice,
+          stopLoss: signal.stopLoss,
+          takeProfit: signal.takeProfit,
+          reasoning: signal.reasoning,
+          indicators: signal.indicators,
+          mlDisagreement: signal.mlDisagreement,
+          mlScore: signal.mlScore,
+          mlDirection: signal.mlDirection
+        } : null,
+        liveConfidence: liveConfidence.score,
+        liveSide: liveConfidence.side,
+        liveIndicators: liveConfidence.indicators,
+        liveDistances: liveConfidence.distances,
+        regime: this.currentRegime,
+        currentPrice: latestCandleData?.close || 0,
+        activeMode: this.activeMode,
+        priceChange24h: latestCandleData?.price_change_24h || 0,
+        timestamp: Date.now()
+      } 
+    });
+    
+    // Record signal in DB every cycle (includes live confidence when no full signal)
+    try {
+      const signalId = `sig-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+      await runQuery(`
+        INSERT INTO signals (id, timestamp, symbol, regime, strategy, side, confidence, entry_price, indicators, reason, live_confidence, ml_score)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [
+        signalId,
+        Date.now(),
+        this.symbol,
+        this.currentRegime,
+        this.strategy,
+        signal?.side || liveConfidence?.side || 'neutral',
+        signal?.confidence || liveConfidence?.score || 0,
+        signal?.entryPrice || latestCandleData?.close || 0,
+        JSON.stringify(signal?.indicators || liveConfidence?.indicators || []),
+        signal?.reasoning || (signal ? '' : `Live: ${liveConfidence?.score || 0}% ${liveConfidence?.side || 'neutral'}`),
+        liveConfidence?.score || null,
+        signal?.mlScore || null
+      ]);
+      // Broadcast signal record for frontend markers
+      this.broadcast({
+        type: 'signal_record',
+        data: {
+          id: signalId,
+          timestamp: Date.now(),
+          symbol: this.symbol,
+          regime: this.currentRegime,
+          strategy: this.strategy,
+          side: signal?.side || liveConfidence?.side || 'neutral',
+          confidence: signal?.confidence || liveConfidence?.score || 0,
+          entry_price: signal?.entryPrice || latestCandleData?.close || 0,
+          indicators: signal?.indicators || liveConfidence?.indicators || [],
+          liveConfidence: liveConfidence?.score || 0,
+        }
+      });
+    } catch (err: any) {
+      console.warn('[Signal] Failed to record signal:', err?.message);
+    }
+    
     if (signal) {
-      this.broadcast({ type: 'signal', data: signal });
-      
+      // Record signal in DB
+      try {
+        const signalId = `sig-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
+        await runQuery(`
+          INSERT INTO signals (id, timestamp, symbol, regime, strategy, side, confidence, entry_price, indicators, reason, live_confidence, ml_score)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          signalId,
+          Date.now(),
+          this.symbol,
+          this.currentRegime,
+          this.strategy,
+          signal.side,
+          signal.confidence,
+          signal.entryPrice,
+          JSON.stringify(signal.indicators || []),
+          signal.reasoning || '',
+          liveConfidence?.score || null,
+          signal.mlScore || null
+        ]);
+        // Broadcast signal record for frontend markers
+        this.broadcast({
+          type: 'signal_record',
+          data: {
+            id: signalId,
+            timestamp: Date.now(),
+            symbol: this.symbol,
+            regime: this.currentRegime,
+            strategy: this.strategy,
+            side: signal.side,
+            confidence: signal.confidence,
+            entry_price: signal.entryPrice,
+            indicators: signal.indicators,
+            reason: signal.reasoning,
+            live_confidence: liveConfidence?.score || null,
+            ml_score: signal.mlScore || null
+          }
+        });
+      } catch (err) {
+        console.error('[SignalRecord] Failed to save signal:', err);
+      }
+
       // 5. Execute shadow trades
       const currentPrice = df[df.length - 1].close;
       await this.shadowTrader.processSignal(
@@ -842,7 +994,7 @@ export class TradingEngine {
     
     this.broadcast({ type: 'performance', data: performance });
 
-    const balances = this.balanceManager.getBalances();
+    const balances = await this.balanceManager.getBalances();
     this.broadcast({ type: 'balances', data: balances });
 
     // Broadcast latest candle for chart - always, so frontend can update current candle price

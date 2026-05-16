@@ -54,7 +54,6 @@ export class BalanceManager {
       totalPnl: row.total_pnl ?? 0,
       totalPnlPct: row.total_pnl_pct ?? 0
     };
-    console.log(`[BalanceManager] getBalances: botBalance=${b.botBalance}`);
     return b;
   }
 
@@ -63,9 +62,8 @@ export class BalanceManager {
     const updated = { ...current, ...balances };
     
     await runQuery(`
-      UPDATE balances 
-      SET main_balance = ?, bot_balance = ?, active_trade_balance = ?, total_pnl = ?, total_pnl_pct = ?
-      WHERE id = 'default'
+      INSERT OR REPLACE INTO balances (id, main_balance, bot_balance, active_trade_balance, total_pnl, total_pnl_pct)
+      VALUES ('default', ?, ?, ?, ?, ?)
     `, [
       updated.mainBalance,
       updated.botBalance,

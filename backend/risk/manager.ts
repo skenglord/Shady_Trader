@@ -93,7 +93,9 @@ export const DEFAULT_RISK_CONFIGS = {
     description: "High risk/reward. Uses runners and multi-candle holds to capture outsized moves. Trades all market regimes."
   },
   [RiskMode.DEGEN]: {
-    positionSize: 0.15, // 15% per trade
+    positionSize: 0.15, // 15% per trade (base)
+    maxPositionPct: 0.50, // 50% absolute max per trade
+    positionScaling: 'confidence', // 'fixed' | 'confidence' | 'kelly' — how positionSize is scaled
     maxDrawdown: 0.35, // 35%
     maxDailyLoss: 0.15, // 15%
     confidenceThreshold: 65,
@@ -102,7 +104,7 @@ export const DEFAULT_RISK_CONFIGS = {
     leverage: 3.0,
     stopLoss: 4.0, // 4.0%
     takeProfit: 3.5, // 3.5%
-    activeRegimes: ["strong_bull", "weak_bull", "sideways", "bear"],
+    activeRegimes: ["strong_bull", "weak_bull", "sideways", "bear", "uncertain"],
     earlyExitEnabled: true,
     earlyExitTarget: 2.0,
     multiCandleHoldEnabled: true,
@@ -334,12 +336,42 @@ export class RiskManager {
 
     // Base position size from config (may be adjusted by circuit breaker)
     let baseSize = config.positionSize || 0.02;
+    
+    // Apply position scaling strategy
+    let scalingMultiplier = 1.0;
+    const scalingStrategy = config.positionScaling || 'confidence';
+    
+    switch (scalingStrategy) {
+      case 'fixed':
+        // No scaling — use base size as-is
+        scalingMultiplier = 1.0;
+        break;
+      case 'kelly':
+        // Use Kelly criterion if enough historical data, fallback to confidence
+        if (config.kellyFraction) {
+          scalingMultiplier = config.kellyFraction;
+        } else {
+          // Fall back to confidence-based scaling
+          scalingMultiplier = 1.0 + (confidence - 75) / 100;
+        }
+        break;
+      case 'confidence':
+      default:
+        // Scale position by how confident the signal is
+        // confidence=50 → multiplier=0.75, confidence=75 → 1.0, confidence=100 → 1.25
+        scalingMultiplier = 1.0 + (confidence - 75) / 100;
+        break;
+    }
 
-    // MD Part 5.1: Dynamic Position Sizing with confidence multiplier
-    const confidenceMultiplier = 1.0 + (confidence - 75) / 100;
-    const clippedMultiplier = Math.max(0.7, Math.min(1.2, confidenceMultiplier));
+    // Clamp scaling multiplier to prevent extreme values
+    const clippedMultiplier = Math.max(0.5, Math.min(1.5, scalingMultiplier));
 
-    const finalPct = baseSize * clippedMultiplier;
+    let finalPct = baseSize * clippedMultiplier;
+    
+    // Apply hard cap from maxPositionPct (default 100% = no cap)
+    const maxPct = config.maxPositionPct || 1.0;
+    finalPct = Math.min(finalPct, maxPct);
+    
     const amountInCurrency = balance * finalPct;
 
     const leverage = config.leverage || 1;

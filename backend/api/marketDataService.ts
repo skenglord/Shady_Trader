@@ -97,12 +97,39 @@ export class MarketDataService {
 
     try {
       let newsItems = [];
+      // Primary: cryptocurrency.cv (free tier, may return 0 without x402 payment)
       try {
-        const response = await axios.get(this.getUrl('/news'));
-        newsItems = response.data.data || response.data || [];
+        const ccvRes = await axios.get('https://cryptocurrency.cv/api/news?limit=20', {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; AdaptiveTradingSystem/1.0)' }
+        });
+        const ccvData = ccvRes.data;
+        if (Array.isArray(ccvData?.articles) && ccvData.articles.length > 0) {
+          newsItems = ccvData.articles.map((a: any) => ({
+            id: a.id || a.url || Math.random().toString(36).substr(2, 9),
+            title: a.title || 'No Title',
+            url: a.url || '#',
+            source: a.source || 'CryptoNews',
+            timestamp: new Date(a.published_at || a.publishedAt || Date.now()).getTime()
+          }));
+        }
       } catch (e) {
-        logger.warn('CoinGecko news failed, trying CryptoCompare fallback', { service: 'MarketDataService' });
-        const fallbackRes = await axios.get('https://min-api.cryptocompare.com/data/v2/news/?lang=EN');
+        logger.warn('cryptocurrency.cv news failed, trying CoinGecko fallback', { service: 'MarketDataService' });
+      }
+
+      // Fallback 1: CoinGecko
+      if (newsItems.length === 0) {
+        try {
+          const response = await axios.get(this.getUrl('/news'));
+          newsItems = response.data.data || response.data || [];
+        } catch (e) {
+          logger.warn('CoinGecko news failed, trying CryptoCompare fallback', { service: 'MarketDataService' });
+        }
+      }
+
+      // Fallback 2: CryptoCompare
+      if (newsItems.length === 0) {
+        const ccApiKey = process.env.CRYPTOCOMPARE_API_KEY || '';
+        const fallbackRes = await axios.get(`https://min-api.cryptocompare.com/data/v2/news/?lang=EN${ccApiKey ? `&api_key=${ccApiKey}` : ''}`);
         newsItems = fallbackRes.data.Data || [];
       }
 

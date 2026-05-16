@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import path from 'path';
 import { runQuery } from '../backend/database.js';
 import { logger } from '../backend/logging/logger.js';
+import { initDatabase } from '../backend/database.js';
 
 const SYMBOLS = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT'];
 const REGIMES = ['strong_bull', 'weak_bull', 'sideways', 'bear'];
@@ -62,12 +63,12 @@ async function trainForSymbolRegime(symbol: string, regime: string) {
   const candles = await runQuery<Record<string, number>>(
     `SELECT c.time, c.open, c.high, c.low, c.close, c.volume
      FROM candles c
-     WHERE c.symbol = ? AND c.timeframe = '5m'
+     WHERE c.symbol = ? AND c.timeframe = '1h'
      ORDER BY c.time ASC`,
     [symbol]
   );
 
-  if (candles.length < 500) {
+  if (candles.length < 20) {
     logger.warn(`[train] Skipping ${symbol}/${regime}: only ${candles.length} candles`);
     return;
   }
@@ -112,6 +113,7 @@ async function trainForSymbolRegime(symbol: string, regime: string) {
 }
 
 async function main() {
+  await initDatabase();
   for (const symbol of SYMBOLS) {
     for (const regime of REGIMES) {
       await trainForSymbolRegime(symbol, regime);
@@ -121,4 +123,9 @@ async function main() {
   process.exit(0);
 }
 
-main().catch(e => { logger.error('[train] Fatal:', e); process.exit(1); });
+main().catch(e => {
+  logger.error('[train] Fatal:', e);
+  logger.error('[train] Fatal details:', JSON.stringify(e, Object.getOwnPropertyNames(e)));
+  console.error('[train] Fatal stack:', e instanceof Error ? e.stack : e);
+  process.exit(1);
+});

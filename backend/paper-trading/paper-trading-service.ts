@@ -244,7 +244,7 @@ export class PaperTradingService {
     stateMachine.sendEvent('CREATE_ORDER');
 
     const response: PaperTradeResponse = {
-      id: position.id, // Use position ID instead of order ID
+      id: orderId,
       status: 'pending',
       symbol: request.symbol,
       side: request.side,

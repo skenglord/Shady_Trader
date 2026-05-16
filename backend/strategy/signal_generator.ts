@@ -136,7 +136,7 @@ export class SignalGenerator {
   }
 
   async generateSignal(df: any[], regime: RegimeType, symbol: string, useAI: boolean = false, strategy: string = 'regime', riskMode: string = 'moderate'): Promise<Signal | null> {
-    if (df.length < 50) return null;
+    if (df.length < 20) return null;
 
     let signal: Signal | null = null;
     
@@ -161,7 +161,8 @@ export class SignalGenerator {
           signal = this._sidewaysStrategy(df, symbol, riskMode);
           break;
         default:
-          return null;
+          signal = this._sidewaysStrategy(df, symbol, riskMode);
+          break;
       }
     }
 
@@ -228,6 +229,106 @@ export class SignalGenerator {
     }
 
     return signal;
+  }
+
+  /**
+   * Compute a live confidence score every cycle, even when no full signal fires.
+   * Shows how close each indicator condition is to triggering, giving a dynamic
+   * 0-100 readout that updates every trading cycle (no dead 50/50 state).
+   */
+  computeLiveConfidence(df: any[], regime: RegimeType): { score: number; side: string; indicators: string[]; distances: Record<string, number> } {
+    if (df.length < 2) return { score: 0, side: 'neutral', indicators: ['Waiting for data...'], distances: {} };
+
+    const data = df[df.length - 1];
+    const distances: Record<string, number> = {};
+    const indicators: string[] = [];
+    let totalScore = 0;
+    let side = 'neutral';
+
+    // For sideways regime: measure proximity to Bollinger Band extremes
+    if (regime === RegimeType.SIDEWAYS || regime === RegimeType.UNCERTAIN) {
+      const bbRange = data.bb_upper - data.bb_lower;
+      const midPoint = (data.bb_upper + data.bb_lower) / 2;
+
+      if (bbRange > 0) {
+        // How close to lower band? (0 = midpoint, 1 = at/lower band + RSI/stoch conditions)
+        const proximityToLower = Math.max(0, Math.min(1, (midPoint - data.close) / (midPoint - data.bb_lower)));
+        // How close to upper band?
+        const proximityToUpper = Math.max(0, Math.min(1, (data.close - midPoint) / (data.bb_upper - midPoint)));
+
+        if (proximityToLower > 0.3 || data.close <= data.bb_lower * 1.01) {
+          side = 'buy';
+          // BB proximity: 0-30 pts (scaled)
+          const bbScore = Math.round(proximityToLower * 30);
+          totalScore += bbScore;
+          distances.bb_lower_proximity = proximityToLower;
+          if (proximityToLower > 0.7) indicators.push('Near BB Lower');
+          else if (proximityToLower > 0.3) indicators.push('Approaching BB Lower');
+
+          // RSI oversold proximity: 0-25 pts
+          if (data.rsi_14 < 50) {
+            const rsiDist = Math.max(0, Math.min(1, (50 - data.rsi_14) / 50));
+            const rsiScore = Math.round(rsiDist * 25);
+            totalScore += rsiScore;
+            distances.rsi_oversold = rsiDist;
+            if (rsiDist > 0.5) indicators.push('RSI Oversold');
+          }
+
+          // StochRSI oversold proximity: 0-20 pts
+          if (data.stoch_rsi_k < 50) {
+            const stochDist = Math.max(0, Math.min(1, (50 - data.stoch_rsi_k) / 50));
+            const stochScore = Math.round(stochDist * 20);
+            totalScore += stochScore;
+            distances.stoch_oversold = stochDist;
+            if (stochDist > 0.5) indicators.push('Stoch Oversold');
+          }
+        }
+        else if (proximityToUpper > 0.3 || data.close >= data.bb_upper * 0.995) {
+          side = 'sell';
+          const bbScore = Math.round(proximityToUpper * 30);
+          totalScore += bbScore;
+          distances.bb_upper_proximity = proximityToUpper;
+          if (proximityToUpper > 0.7) indicators.push('Near BB Upper');
+          else if (proximityToUpper > 0.3) indicators.push('Approaching BB Upper');
+
+          // RSI overbought proximity
+          if (data.rsi_14 > 50) {
+            const rsiDist = Math.max(0, Math.min(1, (data.rsi_14 - 50) / 50));
+            const rsiScore = Math.round(rsiDist * 25);
+            totalScore += rsiScore;
+            distances.rsi_overbought = rsiDist;
+            if (rsiDist > 0.5) indicators.push('RSI Overbought');
+          }
+
+          // StochRSI overbought proximity
+          if (data.stoch_rsi_k > 50) {
+            const stochDist = Math.max(0, Math.min(1, (data.stoch_rsi_k - 50) / 50));
+            const stochScore = Math.round(stochDist * 20);
+            totalScore += stochScore;
+            distances.stoch_overbought = stochDist;
+            if (stochDist > 0.5) indicators.push('Stoch Overbought');
+          }
+        } else {
+          // Near midpoint — score based on RSI/stoch direction sentiment
+          side = data.rsi_14 > 55 ? 'sell' : data.rsi_14 < 45 ? 'buy' : 'neutral';
+          const rsiMomentum = Math.abs(data.rsi_14 - 50) * 0.4;
+          totalScore += Math.round(rsiMomentum);
+          distances.rsi_midpoint = Math.abs(data.rsi_14 - 50) / 50;
+          indicators.push('BB Midpoint');
+        }
+      }
+
+      // Volume penalty (like the real strategy)
+      if (data.volume_ratio > 1.5) {
+        totalScore = Math.round(totalScore * 0.5);
+        indicators.push('High Volume');
+      }
+    }
+
+    // Cap at 100
+    totalScore = Math.min(100, Math.max(0, totalScore));
+
+    return { score: totalScore, side, indicators, distances };
   }
 
   _strongBullStrategy(df: any[], symbol: string, riskMode: string): Signal | null {
@@ -385,54 +486,98 @@ export class SignalGenerator {
   _sidewaysStrategy(df: any[], symbol: string, riskMode: string): Signal | null {
     const data = df[df.length - 1];
     let score = 0;
-    let side: 'buy' | 'sell' = 'buy';
+    let side: 'buy' | 'sell' | 'neutral' = 'buy';
     const indicators: string[] = [];
 
-    // Long Setup
-    if (data.close <= data.bb_lower * 1.005) {
-      score += 30;
-      indicators.push('BB Lower');
-      if (data.rsi_14 < 35) {
-        score += 25;
-        indicators.push('RSI Oversold');
+    // Use continuous proximity scoring instead of hard binary gates.
+    // Measures how close price is to BB band extremes with proportional scoring.
+    const bbRange = data.bb_upper - data.bb_lower;
+    const midPoint = (data.bb_upper + data.bb_lower) / 2;
+
+    if (bbRange > 0) {
+      // Proximity to lower band: 0 = at midpoint, 1 = at/breached lower band
+      const proximityToLower = Math.max(0, Math.min(1, (midPoint - data.close) / (midPoint - data.bb_lower)));
+      // Proximity to upper band
+      const proximityToUpper = Math.max(0, Math.min(1, (data.close - midPoint) / (data.bb_upper - midPoint)));
+
+      if (proximityToLower > 0.3) {
+        // Long setup: proportional score 0-30 based on BB proximity
+        const bbScore = Math.round(proximityToLower * 30);
+        score += bbScore;
+        if (proximityToLower > 0.8) indicators.push('Near BB Lower');
+        else if (proximityToLower > 0.5) indicators.push('Approaching BB Lower');
+        else indicators.push('BB Lower Bias');
+        side = 'buy';
+
+        // RSI oversold: 0-25 pts (proportional)
+        if (data.rsi_14 < 50) {
+          const rsiDist = Math.max(0, Math.min(1, (50 - data.rsi_14) / 50));
+          const rsiScore = Math.round(rsiDist * 25);
+          score += rsiScore;
+          if (rsiDist > 0.5) indicators.push('RSI Oversold');
+        }
+
+        // StochRSI oversold: 0-20 pts (proportional)
+        if (data.stoch_rsi_k < 50) {
+          const stochDist = Math.max(0, Math.min(1, (50 - data.stoch_rsi_k) / 50));
+          const stochScore = Math.round(stochDist * 20);
+          score += stochScore;
+          if (stochDist > 0.5) indicators.push('Stoch Oversold');
+        }
       }
-      if (data.stoch_rsi_k < 25) {
-        score += 20;
-        indicators.push('Stoch Oversold');
+      else if (proximityToUpper > 0.3) {
+        // Short setup: proportional score 0-30 based on BB proximity
+        const bbScore = Math.round(proximityToUpper * 30);
+        score += bbScore;
+        if (proximityToUpper > 0.8) indicators.push('Near BB Upper');
+        else if (proximityToUpper > 0.5) indicators.push('Approaching BB Upper');
+        else indicators.push('BB Upper Bias');
+        side = 'sell';
+
+        // RSI overbought: 0-25 pts (proportional)
+        if (data.rsi_14 > 50) {
+          const rsiDist = Math.max(0, Math.min(1, (data.rsi_14 - 50) / 50));
+          const rsiScore = Math.round(rsiDist * 25);
+          score += rsiScore;
+          if (rsiDist > 0.5) indicators.push('RSI Overbought');
+        }
+
+        // StochRSI overbought: 0-20 pts (proportional)
+        if (data.stoch_rsi_k > 50) {
+          const stochDist = Math.max(0, Math.min(1, (data.stoch_rsi_k - 50) / 50));
+          const stochScore = Math.round(stochDist * 20);
+          score += stochScore;
+          if (stochDist > 0.5) indicators.push('Stoch Overbought');
+        }
+      } else {
+        // Near midpoint — score based on RSI direction
+        side = data.rsi_14 > 55 ? 'sell' : data.rsi_14 < 45 ? 'buy' : 'neutral';
+        const rsiMomentum = Math.abs(data.rsi_14 - 50) * 0.4;
+        score += Math.round(rsiMomentum);
+        indicators.push('BB Midpoint');
       }
-      side = 'buy';
-    }
-    // Short Setup
-    else if (data.close >= data.bb_upper * 0.995) {
-      score += 30;
-      indicators.push('BB Upper');
-      if (data.rsi_14 > 65) {
-        score += 25;
-        indicators.push('RSI Overbought');
-      }
-      if (data.stoch_rsi_k > 75) {
-        score += 20;
-        indicators.push('Stoch Overbought');
-      }
-      side = 'sell';
     }
 
-    // Volume filter: Reduce if volume spiking
+    // Volume filter: penalize if volume spiking
     if (data.volume_ratio > 1.5) {
-      score *= 0.5;
-      indicators.push('Volume Spike Penalty');
+      score = Math.round(score * 0.5);
+      indicators.push('High Volume');
     }
 
-    if (score >= 50) {
-      const { stopLoss, takeProfit } = this.calculateATRAdjustedLevels(data.close, data.atr, side, riskMode);
+    // De-risk when direction is uncertain
+    if (side === 'neutral') score = Math.round(score * 0.5);
+
+    if (score >= 10) {
+      const { stopLoss, takeProfit } = this.calculateATRAdjustedLevels(data.close, data.atr, side === 'neutral' ? 'buy' : side, riskMode);
+      const confidence = Math.min(100, Math.max(0, score));
       return {
         symbol,
-        side,
-        confidence: score,
+        side: side === 'neutral' ? 'buy' : side,
+        confidence,
         entryPrice: data.close,
         stopLoss,
         takeProfit,
-        reasoning: `Sideways: Score ${score} - ${indicators.join(', ')} (ATR-adjusted)`,
+        reasoning: `Sideways: Score ${confidence} - ${indicators.join(', ')} (ATR-adjusted)`,
         indicators
       };
     }

@@ -4,27 +4,54 @@ import { Activity, TrendingUp, TrendingDown, Minus, AlertCircle, Settings, Play,
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 
 const APP_URL = '';
+const ADMIN_TOKEN = 'dev_token_123';
+const TRADER_TOKEN = 'trader_token_456';
+
+// Safe fetch wrapper to prevent errors from causing reload loops
+async function safeFetch(url: string, options?: RequestInit): Promise<{ ok: boolean; data?: any; error?: string }> {
+  try {
+    const res = await fetch(url, options);
+    const text = await res.text();
+    if (!res.ok) {
+      return { ok: false, error: `HTTP ${res.status}: ${text.slice(0, 100)}` };
+    }
+    try {
+      return { ok: true, data: JSON.parse(text) };
+    } catch {
+      return { ok: true, data: text };
+    }
+  } catch (e: any) {
+    return { ok: false, error: e.message || 'Network error' };
+  }
+}
 
 function getProviderDocsUrl(provider: string): string {
   const docs: Record<string, string> = {
     coinmarketcap: 'https://coinmarketcap.com/api/documentation/v1/',
     coingecko: 'https://docs.coingecko.com/reference/coins-id-ohlc',
+    coinapi: 'https://docs.coinapi.io',
     cryptocompare: 'https://min-api.cryptocompare.com/documentation/key=Historical&cat=dataHistoday',
     binance: 'https://binance-docs.github.io/apidocs/spot/en/#kline-candlestick-data',
     kraken: 'https://docs.kraken.com/rest/endpoints/public/OHLC',
     okx: 'https://www.okx.com/docs-v5/en/#market-data',
     coinbase: 'https://docs.cloud.coinbase.com/exchange/reference/exchangerestapi_getproductcandles'
   };
-  return docs[provider] || 'https://example.com';
+  return docs[provider] || 'https://docs.coinapi.io';
 }
 
 const InfoButton = ({ text, position = "left-full ml-2 top-0" }: { text: string, position?: string }) => (
-  <div className="info-container relative inline-block ml-1">
-    <Info size={12} className="text-gray-500 cursor-help hover:text-gray-300 transition-colors" />
+  <button
+    type="button"
+    aria-label={text}
+    aria-describedby="info-tooltip"
+    className="info-container relative inline-flex items-center justify-center ml-1 rounded focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-1 focus-visible:ring-offset-[#1e1e1e] focus-visible:outline-none cursor-help text-gray-500 hover:text-gray-300 hover:bg-white/5 transition-colors"
+  >
+    <span id="info-tooltip" className="sr-only">{text}</span>
+    <Info size={12} />
     <div className={`info-tooltip ${position}`}>
       {text}
     </div>
-  </div>
+  </button>
 );
 
 const StatusLight = ({ isLive, apiName, isDataPassing, lastCallTime }: { isLive: boolean, apiName: string, isDataPassing: boolean, lastCallTime: number }) => {
@@ -40,11 +67,11 @@ const StatusLight = ({ isLive, apiName, isDataPassing, lastCallTime }: { isLive:
 
   return (
     <div className="flex items-center gap-2">
-      <div className={`w-3 h-3 rounded-full transition-all duration-100 ${
-        isLive && isDataPassing 
-          ? (isFlashing ? 'bg-emerald-400 scale-125 shadow-[0_0_15px_rgba(52,211,153,1)]' : 'bg-emerald-600 shadow-[0_0_10px_rgba(5,150,105,0.6)]') 
-          : 'bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.6)]'
-      }`}></div>
+      <div className={`w-3 h-3 rounded-full transition-colors duration-100 transition-shadow duration-100 ${isFlashing ? 'scale-125' : ''} ${
+         isLive && isDataPassing 
+           ? (isFlashing ? 'bg-emerald-400 shadow-[0_0_15px_rgba(52,211,153,1)]' : 'bg-emerald-600 shadow-[0_0_10px_rgba(5,150,105,0.6)]') 
+           : 'bg-red-600 shadow-[0_0_10px_rgba(220,38,38,0.6)]'
+       }`}></div>
       <span className="text-xs text-gray-400 font-mono">
         {isLive && isDataPassing ? `API: ${apiName}` : 'OFFLINE'}
       </span>
@@ -78,7 +105,7 @@ export default function App() {
     aiStrategySwitching: 'false',
     aiSignalGeneration: 'false',
     aiSentimentAnalysis: 'false',
-    exchange: 'coinmarketcap',
+    exchange: 'coingecko',
     strategy: 'regime',
     shotgunTimeBefore: '0.5',
     shotgunTimeAfter: '10',
@@ -134,10 +161,30 @@ export default function App() {
   const [editingPosition, setEditingPosition] = useState<string | null>(null);
   const [editSl, setEditSl] = useState<number>(0);
   const [editTp, setEditTp] = useState<number>(0);
+  const [signalStatus, setSignalStatus] = useState<any>(null);
+  const [signalTimestamp, setSignalTimestamp] = useState(0);
+  const [closedTrades, setClosedTrades] = useState<any[]>([]);
+  const [allClosedTrades, setAllClosedTrades] = useState<any[]>([]);
+  const [shadowTrades, setShadowTrades] = useState<any[]>([]);
+  const [botTrades, setBotTrades] = useState<any[]>([]);
+  const [botBalanceFlash, setBotBalanceFlash] = useState(false);
+  const [signals, setSignals] = useState<any[]>([]);
+  const [tradeFilter, setTradeFilter] = useState('');
+  const [showSignalMarkers, setShowSignalMarkers] = useState(true);
+  const [showTradeMarkers, setShowTradeMarkers] = useState(true);
+  const [modeVisibility, setModeVisibility] = useState<Record<string, boolean>>({
+    ultra_conservative: true, conservative: true, moderate: true,
+    aggressive: true, degen: true, ai_enhanced: true,
+  });
+  const lastBalancesRef = useRef<typeof defaultBalances>(defaultBalances);
   const lastMessageTimeRef = useRef(0);
   const chartContainerRef = useRef<HTMLDivElement>(null);
+  const shadowChartContainerRef = useRef<HTMLDivElement>(null);
   const legendRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const shadowChartRef = useRef<IChartApi | null>(null);
+  const shadowSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const shadowMarkersRef = useRef<ISeriesMarkersPluginApi<any> | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<any> | null>(null);
   const indicatorSeriesRef = useRef<Record<string, ISeriesApi<"Line">>>({});
@@ -154,12 +201,16 @@ export default function App() {
     fetchStatus();
     fetchPerformance();
     fetchTrades();
+    fetchClosedTrades();
+    fetchShadowTrades();
     fetchSettings();
     fetchRiskConfigs();
     fetchBalances();
     fetchOpenPositions();
     fetchMarketData();
     fetchMarketNews();
+    fetchSignals();
+    fetchBotTrades();
 
     // Setup WebSocket with timeout
     const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
@@ -236,6 +287,15 @@ export default function App() {
           setActiveMode(data.data.mode);
         } else if (data.type === 'balances') {
           updateBalances(data.data);
+        } else if (data.type === 'signal_status') {
+          setSignalStatus(data.data);
+          setSignalTimestamp(Date.now());
+          fetchClosedTrades();
+          fetchTrades();
+        } else if (data.type === 'signal_record') {
+          // Add new signal to state for chart markers
+          setSignals(prev => [data.data, ...prev].slice(0, 500));
+          fetchClosedTrades();
         }
       } catch (err) {
         console.warn('WebSocket error:', err);
@@ -244,10 +304,17 @@ export default function App() {
 
     const interval = setInterval(() => {
       fetchOpenPositions();
-      if (Date.now() - lastMessageTimeRef.current > 5000) {
+      fetchBalances();
+      // Flash botBalance if it changed
+      if (lastBalancesRef.current.botBalance !== balances.botBalance) {
+        setBotBalanceFlash(true);
+        setTimeout(() => setBotBalanceFlash(false), 600);
+      }
+      lastBalancesRef.current = balances;
+      if (Date.now() - lastMessageTimeRef.current > 15000) {
         setIsDataPassing(false);
       }
-    }, 1000);
+    }, 5000);
 
     return () => {
       ws.close();
@@ -256,8 +323,34 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (chartContainerRef.current) {
-      const chart = createChart(chartContainerRef.current, {
+    const container = chartContainerRef.current;
+    if (!container) return;
+
+    // Guard: skip if chart already exists in this container
+    if (container.querySelector('.tv-lightweight-charts')) return;
+
+    // Wait for container to have non-zero dimensions
+    if (container.clientWidth <= 0 || container.clientHeight <= 0) {
+      const raf = requestAnimationFrame(() => {
+        if (container.clientWidth > 0) {
+          initChart(container);
+        } else {
+          setTimeout(() => {
+            if (chartContainerRef.current === container) {
+              initChart(container); // Always init, even if width is 0
+            }
+          }, 100);
+        }
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+
+    initChart(container);
+
+    function initChart(div: HTMLDivElement) {
+      const width = Math.max(div.clientWidth, 800);
+      const height = Math.max(div.clientHeight, 400);
+      const chart = createChart(div, {
         layout: {
           background: { type: ColorType.Solid, color: '#1e1e1e' },
           textColor: '#d1d4dc',
@@ -269,8 +362,8 @@ export default function App() {
         crosshair: {
           mode: CrosshairMode.Normal,
         },
-        width: chartContainerRef.current.clientWidth,
-        height: 400,
+        width: width,
+        height: height,
       });
 
       const candlestickSeries = chart.addSeries(CandlestickSeries, {
@@ -344,65 +437,263 @@ export default function App() {
 
       window.addEventListener('resize', handleResize);
 
+      // ResizeObserver for more responsive resizing
+      const resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const { width } = entry.contentRect;
+          if (chartRef.current && width > 0) {
+            chartRef.current.applyOptions({ width });
+          }
+        }
+      });
+      resizeObserver.observe(div);
+
       return () => {
         window.removeEventListener('resize', handleResize);
+        resizeObserver.disconnect();
         chart.remove();
       };
     }
   }, []);
 
+  // Shadow Trade History Chart
+  useEffect(() => {
+    const container = shadowChartContainerRef.current;
+    if (!container) return;
+
+    if (container.querySelector('.tv-lightweight-charts')) return;
+
+    if (container.clientWidth <= 0 || container.clientHeight <= 0) {
+      const raf = requestAnimationFrame(() => {
+        if (container.clientWidth > 0) {
+          initShadowChart(container);
+        } else {
+          setTimeout(() => {
+            if (shadowChartContainerRef.current === container) {
+              initShadowChart(container);
+            }
+          }, 100);
+        }
+      });
+      return () => cancelAnimationFrame(raf);
+    }
+
+    initShadowChart(container);
+
+    function initShadowChart(div: HTMLDivElement) {
+      const width = Math.max(div.clientWidth, 400);
+      const height = Math.max(div.clientHeight, 200);
+      const chart = createChart(div, {
+        layout: {
+          background: { type: ColorType.Solid, color: '#1e1e1e' },
+          textColor: '#d1d4dc',
+        },
+        grid: {
+          vertLines: { color: '#2B2B43' },
+          horzLines: { color: '#2B2B43' },
+        },
+        width: width,
+        height: height,
+      });
+
+      const candleSeries = chart.addSeries(CandlestickSeries, {
+        upColor: '#26a69a',
+        downColor: '#ef5350',
+        borderVisible: false,
+        wickUpColor: '#26a69a',
+        wickDownColor: '#ef5350',
+      });
+
+      shadowChartRef.current = chart;
+      shadowSeriesRef.current = candleSeries;
+      shadowMarkersRef.current = createSeriesMarkers(candleSeries);
+
+      // Load shadow trade data into chart
+      const loadShadowData = () => {
+        if (!shadowSeriesRef.current || shadowTrades.length === 0) return;
+        
+        // Build price data from trades
+        const allPrices: any[] = [];
+        for (const trade of shadowTrades) {
+          const entryTime = Math.floor((trade.timestamp || trade.time || trade.entryTime) / 1000);
+          const exitTime = trade.exitTimestamp ? Math.floor(trade.exitTimestamp / 1000) : null;
+          const entryPrice = trade.entryPrice || trade.price;
+          const exitPrice = trade.exitPrice || trade.exit_price;
+          
+          if (entryTime && entryPrice) {
+            allPrices.push({ time: entryTime, price: entryPrice });
+          }
+          if (exitTime && exitPrice) {
+            allPrices.push({ time: exitTime, price: exitPrice });
+          }
+        }
+        
+        allPrices.sort((a, b) => a.time - b.time);
+        
+        if (allPrices.length > 0) {
+          // Use LineSeries since we have sparse price points
+          candleSeries.setData(allPrices.map(p => ({
+            time: p.time as any,
+            open: p.price,
+            high: p.price * 1.001,
+            low: p.price * 0.999,
+            close: p.price,
+          })));
+        }
+
+        // Add markers for each trade
+        if (shadowMarkersRef.current) {
+          const markers: any[] = [];
+          for (const trade of shadowTrades) {
+            const entryTime = Math.floor((trade.timestamp || trade.time || trade.entryTime) / 1000);
+            const exitTime = trade.exitTimestamp ? Math.floor(trade.exitTimestamp / 1000) : null;
+            const mode = trade.risk_mode || trade.mode || 'moderate';
+            
+            const modeColors: Record<string, string> = {
+              ultra_conservative: '#6366f1',
+              conservative: '#3b82f6',
+              moderate: '#22c55e',
+              aggressive: '#f59e0b',
+              degen: '#ef4444',
+              ai_enhanced: '#a855f7',
+            };
+            const color = modeColors[mode] || '#6366f1';
+
+            if (entryTime) {
+              markers.push({
+                time: entryTime as any,
+                position: trade.side === 'buy' || trade.side === 'long' ? 'belowBar' : 'aboveBar',
+                color,
+                shape: 'arrowUp',
+                text: trade.side === 'buy' || trade.side === 'long' ? 'B' : 'S',
+                size: 1,
+              });
+            }
+            if (exitTime) {
+              markers.push({
+                time: exitTime as any,
+                position: trade.side === 'buy' || trade.side === 'long' ? 'aboveBar' : 'belowBar',
+                color,
+                shape: trade.pnl > 0 ? 'arrowUp' : 'arrowDown',
+                text: `X`,
+                size: 1,
+              });
+            }
+          }
+          markers.sort((a, b) => a.time - b.time);
+          shadowMarkersRef.current.setMarkers(markers);
+        }
+
+        chart.timeScale().fitContent();
+      };
+
+      // Render on next tick to allow data to settle
+      setTimeout(loadShadowData, 100);
+
+      const handleResize = () => {
+        if (shadowChartContainerRef.current && shadowChartRef.current) {
+          shadowChartRef.current.applyOptions({ width: shadowChartContainerRef.current.clientWidth });
+        }
+      };
+
+      window.addEventListener('resize', handleResize);
+
+      const resizeObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const { width } = entry.contentRect;
+          if (shadowChartRef.current && width > 0) {
+            shadowChartRef.current.applyOptions({ width });
+          }
+        }
+      });
+      resizeObserver.observe(div);
+
+      return () => {
+        window.removeEventListener('resize', handleResize);
+        resizeObserver.disconnect();
+        chart.remove();
+      };
+    }
+  }, [shadowTrades]);
+
   const fetchStatus = async () => {
-    try {
-      setLastCallTime(Date.now());
-      const res = await fetch(`${APP_URL}/api/status`);
-      const data = await res.json();
-      setStatus(data);
-    } catch (e) {
-      console.error(e);
+    setLastCallTime(Date.now());
+    const result = await safeFetch(`${APP_URL}/api/status`);
+    if (result.ok && result.data) {
+      setStatus(result.data);
     }
   };
 
   const fetchPerformance = async () => {
-    try {
-      setLastCallTime(Date.now());
-      const res = await fetch(`${APP_URL}/api/performance`);
-      const data = await res.json();
-      setPerformance(data);
-    } catch (e) {
-      console.error(e);
+    setLastCallTime(Date.now());
+    const result = await safeFetch(`${APP_URL}/api/performance`);
+    if (result.ok && result.data) {
+      setPerformance(result.data);
     }
   };
 
   const fetchTrades = async () => {
-    try {
-      setLastCallTime(Date.now());
-      const res = await fetch(`${APP_URL}/api/trades?limit=10`);
-      const data = await res.json();
-      setTrades(data);
-    } catch (e) {
-      console.error(e);
+    setLastCallTime(Date.now());
+    const result = await safeFetch(`${APP_URL}/api/trades?limit=10`);
+    if (result.ok && result.data) {
+      setTrades(result.data);
+    }
+  };
+
+  const fetchClosedTrades = async () => {
+    setLastCallTime(Date.now());
+    const result = await safeFetch(`${APP_URL}/api/shadow-trades/closed?limit=100`);
+    if (result.ok && result.data) {
+      const tradesData = Array.isArray(result.data) ? result.data : (result.data.trades || []);
+      setClosedTrades(tradesData);
+      setAllClosedTrades(tradesData);
+    }
+  };
+
+  const fetchShadowTrades = async () => {
+    setLastCallTime(Date.now());
+    const result = await safeFetch(`${APP_URL}/api/shadow-trades/all`);
+    if (result.ok && result.data) {
+      const tradesData = Array.isArray(result.data) ? result.data : (result.data.trades || []);
+      setShadowTrades(tradesData);
+    }
+  };
+
+  const fetchBotTrades = async () => {
+    setLastCallTime(Date.now());
+    const result = await safeFetch(`${APP_URL}/api/trades/closed?limit=100`, {
+      headers: { 'x-api-token': ADMIN_TOKEN }
+    });
+    if (result.ok && result.data) {
+      setBotTrades(Array.isArray(result.data) ? result.data : []);
+    }
+  };
+
+  const fetchSignals = async () => {
+    setLastCallTime(Date.now());
+    const result = await safeFetch(`${APP_URL}/api/signals?limit=500`);
+    if (result.ok && result.data) {
+      setSignals(Array.isArray(result.data) ? result.data : []);
     }
   };
 
   const fetchSettings = async () => {
-    try {
-      setLastCallTime(Date.now());
-      const res = await fetch(`${APP_URL}/api/settings`);
-      const data = await res.json();
-      setSettings(prev => ({ ...prev, ...data }));
-    } catch (e) {
-      console.error(e);
+    setLastCallTime(Date.now());
+    const result = await safeFetch(`${APP_URL}/api/settings`, {
+      headers: { 'x-api-token': ADMIN_TOKEN }
+    });
+    if (result.ok && result.data) {
+      setSettings(prev => ({ ...prev, ...result.data }));
     }
   };
 
   const fetchRiskConfigs = async () => {
-    try {
-      setLastCallTime(Date.now());
-      const res = await fetch(`${APP_URL}/api/risk-configs`);
-      const data = await res.json();
-      setRiskConfigs(data);
-    } catch (e) {
-      console.error(e);
+    setLastCallTime(Date.now());
+    const result = await safeFetch(`${APP_URL}/api/risk-configs`, {
+      headers: { 'x-api-token': ADMIN_TOKEN }
+    });
+    if (result.ok && result.data) {
+      setRiskConfigs(result.data);
     }
   };
 
@@ -411,7 +702,10 @@ export default function App() {
       setLastCallTime(Date.now());
       await fetch(`${APP_URL}/api/risk-configs`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-token': ADMIN_TOKEN
+        },
         body: JSON.stringify(riskConfigs)
       });
       setShowConfigModal(false);
@@ -423,7 +717,10 @@ export default function App() {
   const resetRiskConfigs = async () => {
     try {
       setLastCallTime(Date.now());
-      const res = await fetch(`${APP_URL}/api/risk-configs/reset`, { method: 'POST' });
+      const res = await fetch(`${APP_URL}/api/risk-configs/reset`, {
+        method: 'POST',
+        headers: { 'x-api-token': ADMIN_TOKEN }
+      });
       const data = await res.json();
       if (data.success) {
         setRiskConfigs(data.configs);
@@ -436,50 +733,80 @@ export default function App() {
   const getAiRecommendations = async () => {
     try {
       setLastCallTime(Date.now());
-      const res = await fetch(`${APP_URL}/api/risk-configs/ai-recommend`, { method: 'POST' });
+      const res = await fetch(`${APP_URL}/api/risk-configs/ai-recommend`, {
+        method: 'POST',
+        headers: { 'x-api-token': ADMIN_TOKEN }
+      });
+      if (!res.ok) {
+        throw new Error(`API error: ${res.status}`);
+      }
       const data = await res.json();
-      if (data.success) {
-        setRiskConfigs(data.configs);
+      console.log('[AI] Recommend response:', data);
+      if (data.success && data.configs) {
+        setRiskConfigs(prev => {
+          const merged = { ...prev };
+          for (const [mode, config] of Object.entries(data.configs)) {
+            merged[mode] = { ...(merged[mode] || {}), ...(config as any) };
+          }
+          return merged;
+        });
+      } else {
+        console.warn('[AI] Recommend returned no changes');
       }
     } catch (e) {
-      console.error(e);
+      console.error('[AI] Recommend failed:', e);
+      alert('AI recommendation failed. Using fallback logic.');
     }
   };
 
   const runBacktest = async (startTime?: number, endTime?: number) => {
-    if (!riskConfigs[activeMode]) return;
-    
+    if (!riskConfigs[activeMode]) {
+      console.warn('[Backtest] No risk config for mode:', activeMode);
+      alert('Risk configuration not loaded yet. Please wait...');
+      return;
+    }
+
     setIsBacktesting(true);
     try {
       setLastCallTime(Date.now());
+      const payload = {
+        mode: activeMode,
+        config: riskConfigs[activeMode],
+        startTime: startTime || Date.now() - 30 * 24 * 60 * 60 * 1000,
+        endTime: endTime || Date.now()
+      };
+      console.log('[Backtest] Sending:', JSON.stringify(payload).slice(0, 200));
+
       const res = await fetch(`${APP_URL}/api/backtest`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: activeMode,
-          config: riskConfigs[activeMode],
-          startTime,
-          endTime
-        })
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-token': ADMIN_TOKEN
+        },
+        body: JSON.stringify(payload)
       });
+
+      if (!res.ok) {
+        const errText = await res.text().catch(() => 'Unknown error');
+        throw new Error(`Backtest API error ${res.status}: ${errText.slice(0, 200)}`);
+      }
+
       const data = await res.json();
-      
+      console.log('[Backtest] Result:', JSON.stringify(data).slice(0, 300));
+
       if (data.trades && data.candles) {
         setBacktestTrades(data.trades);
         setBacktestRegimeChanges(data.regimeChanges || []);
-        
-        // Update chart with backtest candles merged with existing candles
+
+        // Update chart with backtest candles
         if (seriesRef.current && Array.isArray(data.candles)) {
-          // Merge existing candles with backtest candles
           const mergedCandles = [...candlesDataRef.current, ...data.candles];
-          
-          // Remove duplicates by time
           const uniqueCandlesMap = new Map();
           mergedCandles.forEach(c => uniqueCandlesMap.set(c.time, c));
-          const uniqueCandles = Array.from(uniqueCandlesMap.values()).sort((a: any, b: any) => a.time - b.time);
-          
+          const uniqueCandles = Array.from(uniqueCandlesMap.values())
+            .sort((a: any, b: any) => a.time - b.time);
           candlesDataRef.current = uniqueCandles;
-          
+
           const formattedData = uniqueCandles
             .map((c: any) => ({
               time: Math.floor(Number(c.time) / 1000) as any,
@@ -490,23 +817,27 @@ export default function App() {
             }))
             .filter((c: any) => !isNaN(c.time))
             .sort((a: any, b: any) => a.time - b.time);
-          
-          // Remove duplicates in formatted data
-          const uniqueData = [];
+
+          const uniqueData: any[] = [];
           for (let i = 0; i < formattedData.length; i++) {
             if (i === 0 || formattedData[i].time > formattedData[i-1].time) {
               uniqueData.push(formattedData[i]);
             }
           }
-
           seriesRef.current.setData(uniqueData);
+        console.log(`[chart] setData ${uniqueData.length} items, first=${JSON.stringify(uniqueData[0])}, last=${JSON.stringify(uniqueData[uniqueData.length-1])}`);
           updateIndicators();
         }
       } else if (Array.isArray(data)) {
         setBacktestTrades(data);
+      } else if (data.error) {
+        throw new Error(data.error);
+      } else {
+        console.warn('[Backtest] Unexpected response shape:', data);
       }
     } catch (e) {
-      console.error(e);
+      console.error('[Backtest] Failed:', e);
+      alert(`Backtest failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsBacktesting(false);
     }
@@ -532,7 +863,10 @@ export default function App() {
       setLastCallTime(Date.now());
       await fetch(`${APP_URL}/api/settings`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-token': ADMIN_TOKEN
+        },
         body: JSON.stringify(settings)
       });
       setShowSettings(false);
@@ -715,15 +1049,22 @@ export default function App() {
 
   const [isLoadingCandles, setIsLoadingCandles] = useState(false);
 
-  async function fetchCandles() {
+  async function fetchCandles(timeframe?: string) {
     try {
       setIsLoadingCandles(true);
       setLastCallTime(Date.now());
-      const res = await fetch(`${APP_URL}/api/candles?history=1y`);
-      const data = await res.json();
-      if (seriesRef.current && Array.isArray(data)) {
-        candlesDataRef.current = data;
-        const formattedData = data
+      const tf = timeframe || status.timeframe || '15m';
+      let historyParam = '1y';
+      if (tf === '1m') historyParam = '7d';
+      else if (tf === '5m') historyParam = '30d';
+      else if (tf === '15m') historyParam = '90d';
+      else if (tf === '1h') historyParam = '180d';
+
+      const result = await safeFetch(`${APP_URL}/api/candles?history=${historyParam}`);
+      console.log(`[fetchCandles] tf=${tf} history=${historyParam} ok=${result.ok} hasData=${!!result.data} hasSeries=${!!seriesRef.current} isArray=${Array.isArray(result?.data)} len=${Array.isArray(result?.data) ? result.data.length : 'N/A'}`);
+      if (result.ok && result.data && seriesRef.current && Array.isArray(result.data)) {
+        candlesDataRef.current = result.data;
+        const formattedData = result.data
           .map((c: any) => ({
             time: Math.floor(Number(c.time) / 1000) as any,
             open: Number(c.open),
@@ -734,8 +1075,7 @@ export default function App() {
           .filter((c: any) => !isNaN(c.time))
           .sort((a: any, b: any) => a.time - b.time);
 
-        // Remove duplicates
-        const uniqueData = [];
+        const uniqueData: any[] = [];
         for (let i = 0; i < formattedData.length; i++) {
           if (i === 0 || formattedData[i].time > formattedData[i-1].time) {
             uniqueData.push(formattedData[i]);
@@ -743,8 +1083,13 @@ export default function App() {
         }
 
         seriesRef.current.setData(uniqueData);
+        console.log(`[chart] setData ${uniqueData.length} items, first=${JSON.stringify(uniqueData[0])}, last=${JSON.stringify(uniqueData[uniqueData.length-1])}`);
         updateIndicators();
         updateMarkers();
+
+        if (chartRef.current) {
+          chartRef.current.timeScale().fitContent();
+        }
       }
     } catch (e) {
       console.error(e);
@@ -757,12 +1102,14 @@ export default function App() {
     try {
       setLastCallTime(Date.now());
       const endpoint = status.isRunning ? '/api/stop' : '/api/start';
-      const response = await fetch(`${APP_URL}${endpoint}`, { method: 'POST' });
-      if (response.ok) {
+      const result = await safeFetch(`${APP_URL}${endpoint}`, {
+        method: 'POST',
+        headers: { 'x-api-token': ADMIN_TOKEN }
+      });
+      if (result.ok) {
         fetchStatus();
       } else {
-        const err = await response.json();
-        console.error('Engine toggle failed:', err);
+        console.error('Engine toggle failed:', result.error);
       }
     } catch (e) {
       console.error(e);
@@ -770,13 +1117,42 @@ export default function App() {
   };
 
   const manualTrade = async (side: 'buy' | 'sell') => {
-    if (currentPrice === 0) return;
-    
+    if (currentPrice === 0) {
+      alert('No current price available. Wait for market data to load.');
+      return;
+    }
+
+    // Show confirmation with calculated details
+    const symbol = status.symbol || 'BTC/USDT';
+    const effectiveLeverage = riskConfigs[activeMode]?.leverage || 1;
+    const positionSize = riskConfigs[activeMode]?.positionSize || 0.02;
+    const estimatedAmount = (balances.mainBalance * positionSize) / currentPrice;
+
+    const confirmMsg = [
+      `Confirm ${side.toUpperCase()} Trade`,
+      `  Symbol: ${symbol}`,
+      `  Price: $${currentPrice.toFixed(2)}`,
+      `  Mode: ${activeMode.replace('_', ' ')}`,
+      `  Leverage: ${effectiveLeverage}x`,
+      `  Est. Size: ${estimatedAmount.toFixed(4)} BTC`,
+      `  Est. Value: $${(estimatedAmount * currentPrice).toFixed(2)}`,
+      ``,
+      `This trade will be executed on the shadow portfolio.`,
+      `Continue?`,
+    ].join('\n');
+
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+
     // Start engine if not running
     if (!status.isRunning) {
       try {
         setLastCallTime(Date.now());
-        await fetch(`${APP_URL}/api/start`, { method: 'POST' });
+        await fetch(`${APP_URL}/api/start`, {
+          method: 'POST',
+          headers: { 'x-api-token': ADMIN_TOKEN }
+        });
         setStatus(prev => ({ ...prev, isRunning: true }));
       } catch (e) {
         console.error('Failed to auto-start engine for manual trade:', e);
@@ -787,7 +1163,10 @@ export default function App() {
       setLastCallTime(Date.now());
       const response = await fetch(`${APP_URL}/api/manual-trade`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-token': TRADER_TOKEN
+        },
         body: JSON.stringify({
           side,
           symbol: status.symbol,
@@ -811,16 +1190,19 @@ export default function App() {
   const changeTimeframe = async (tf: string) => {
     try {
       setLastCallTime(Date.now());
-      await fetch(`${APP_URL}/api/timeframe`, {
+      const res = await fetch(`${APP_URL}/api/timeframe`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': 'dev_token_123'
+          'x-api-token': TRADER_TOKEN
         },
         body: JSON.stringify({ timeframe: tf })
       });
-      fetchStatus();
-      fetchCandles();
+      if (!res.ok) {
+        console.warn('[Timeframe] API rejected:', await res.text());
+      }
+      setStatus(prev => ({ ...prev, timeframe: tf }));
+      fetchCandles(tf);
     } catch (e) {
       console.error(e);
     }
@@ -849,9 +1231,10 @@ export default function App() {
   const fetchBalances = async () => {
     try {
       setLastCallTime(Date.now());
-      const response = await fetch(`${APP_URL}/api/balances`);
-      const data = await response.json();
-      updateBalances(data);
+      const result = await safeFetch(`${APP_URL}/api/balances`);
+      if (result.ok && result.data) {
+        updateBalances(result.data);
+      }
     } catch (e) {
       console.error('Failed to fetch balances:', e);
     }
@@ -859,9 +1242,10 @@ export default function App() {
 
   const fetchMarketData = async () => {
     try {
-      const response = await fetch(`${APP_URL}/api/market/data`);
-      const data = await response.json();
-      setMarketData(data);
+      const result = await safeFetch(`${APP_URL}/api/market/data`);
+      if (result.ok && result.data) {
+        setMarketData(result.data);
+      }
     } catch (e) {
       console.error('Failed to fetch market data:', e);
     }
@@ -869,9 +1253,10 @@ export default function App() {
 
   const fetchMarketNews = async () => {
     try {
-      const response = await fetch(`${APP_URL}/api/market/news`);
-      const data = await response.json();
-      setMarketNews(data);
+      const result = await safeFetch(`${APP_URL}/api/market/news`);
+      if (result.ok && result.data) {
+        setMarketNews(result.data);
+      }
     } catch (e) {
       console.error('Failed to fetch market news:', e);
     }
@@ -881,7 +1266,10 @@ export default function App() {
     setIsRefreshingMarket(true);
     try {
       setLastCallTime(Date.now());
-      await fetch(`${APP_URL}/api/market/refresh`, { method: 'POST' });
+      await safeFetch(`${APP_URL}/api/market/refresh`, {
+        method: 'POST',
+        headers: { 'x-api-token': TRADER_TOKEN }
+      });
       await fetchMarketData();
       await fetchMarketNews();
     } catch (e) {
@@ -895,7 +1283,10 @@ export default function App() {
     setIsOptimizing(true);
     try {
       setLastCallTime(Date.now());
-      const res = await fetch(`${APP_URL}/api/optimize`, { method: 'POST' });
+      const res = await fetch(`${APP_URL}/api/optimize`, {
+        method: 'POST',
+        headers: { 'x-api-token': ADMIN_TOKEN }
+      });
       const data = await res.json();
       if (data.success) {
         await fetchRiskConfigs();
@@ -911,7 +1302,6 @@ export default function App() {
     try {
       setLastCallTime(Date.now());
       const url = `${APP_URL}/api/positions/open`;
-      console.log('Fetching:', url);
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
@@ -928,14 +1318,31 @@ export default function App() {
       setLastCallTime(Date.now());
       const response = await fetch(`${APP_URL}/api/balances/allocate`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-token': TRADER_TOKEN
+        },
         body: JSON.stringify({ amount })
       });
       const data = await response.json();
-      if (data.balances) updateBalances(data.balances);
+      console.log('[Balance] Allocate response:', data);
+      if (!response.ok) {
+        alert(data.error || `Server error: ${response.status}`);
+        return;
+      }
+      if (data.balances) {
+        updateBalances(data.balances);
+      } else if (data.success) {
+        const balRes = await fetch(`${APP_URL}/api/balances`);
+        if (balRes.ok) {
+          const balData = await balRes.json();
+          updateBalances(balData);
+        }
+      }
       if (data.error) alert(data.error);
     } catch (e) {
       console.error('Failed to allocate balance:', e);
+      alert('Failed to allocate balance. Check console for details.');
     }
   };
 
@@ -944,7 +1351,10 @@ export default function App() {
       setLastCallTime(Date.now());
       const response = await fetch(`${APP_URL}/api/balances/withdraw`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-token': TRADER_TOKEN
+        },
         body: JSON.stringify({ amount })
       });
       const data = await response.json();
@@ -958,7 +1368,10 @@ export default function App() {
   const halfBalance = async () => {
     try {
       setLastCallTime(Date.now());
-      const response = await fetch(`${APP_URL}/api/balances/half`, { method: 'POST' });
+      const response = await fetch(`${APP_URL}/api/balances/half`, {
+        method: 'POST',
+        headers: { 'x-api-token': TRADER_TOKEN }
+      });
       const data = await response.json();
       if (data.balances) updateBalances(data.balances);
     } catch (e) {
@@ -969,7 +1382,10 @@ export default function App() {
   const doubleBalance = async () => {
     try {
       setLastCallTime(Date.now());
-      const response = await fetch(`${APP_URL}/api/balances/double`, { method: 'POST' });
+      const response = await fetch(`${APP_URL}/api/balances/double`, {
+        method: 'POST',
+        headers: { 'x-api-token': TRADER_TOKEN }
+      });
       const data = await response.json();
       if (data.balances) updateBalances(data.balances);
       if (data.error) alert(data.error);
@@ -981,13 +1397,15 @@ export default function App() {
   const closePosition = async (tradeId: string) => {
     try {
       setLastCallTime(Date.now());
-      const response = await fetch(`${APP_URL}/api/positions/close`, {
+      const result = await safeFetch(`${APP_URL}/api/positions/close`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-token': TRADER_TOKEN
+        },
         body: JSON.stringify({ tradeId, currentPrice })
       });
-      const data = await response.json();
-      if (data.success) {
+      if (result.ok && result.data?.success) {
         fetchOpenPositions();
         fetchTrades();
         fetchBalances();
@@ -1000,13 +1418,15 @@ export default function App() {
   const updatePositionParams = async (tradeId: string, stopLoss: number, takeProfit: number) => {
     try {
       setLastCallTime(Date.now());
-      const response = await fetch(`${APP_URL}/api/positions/update`, {
+      const result = await safeFetch(`${APP_URL}/api/positions/update`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-token': TRADER_TOKEN
+        },
         body: JSON.stringify({ tradeId, stopLoss, takeProfit })
       });
-      const data = await response.json();
-      if (data.success) {
+      if (result.ok && result.data?.success) {
         fetchOpenPositions();
       }
     } catch (e) {
@@ -1018,7 +1438,10 @@ export default function App() {
     if (confirm('Are you sure you want to KILL the bot? This will stop the engine and close all positions.')) {
       try {
         setLastCallTime(Date.now());
-        await fetch(`${APP_URL}/api/kill`, { method: 'POST' });
+        await safeFetch(`${APP_URL}/api/kill`, {
+          method: 'POST',
+          headers: { 'x-api-token': ADMIN_TOKEN }
+        });
         fetchStatus();
         fetchTrades();
         fetchPerformance();
@@ -1031,9 +1454,12 @@ export default function App() {
   const changeActiveMode = async (mode: string) => {
     setActiveMode(mode);
     try {
-      await fetch(`${APP_URL}/api/active-mode`, {
+      await safeFetch(`${APP_URL}/api/active-mode`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-token': TRADER_TOKEN
+        },
         body: JSON.stringify({ mode })
       });
     } catch (e) {
@@ -1058,31 +1484,35 @@ export default function App() {
           <div className="flex items-center gap-4">
             <StatusLight 
               isLive={true} 
-              apiName={status.exchange || "CoinMarketCap"} 
+              apiName={status.exchange ? status.exchange.charAt(0).toUpperCase() + status.exchange.slice(1) : "CoinMarketCap"} 
               isDataPassing={isDataPassing} 
               lastCallTime={lastCallTime}
             />
             <div className="flex flex-col items-end gap-1">
               <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${getRegimeColor(status.currentRegime)}`}>
                 {getRegimeIcon(status.currentRegime)}
-                <select 
-                  value={status.currentRegime}
-                  onChange={async (e) => {
-                    const val = e.target.value;
-                    await fetch('/api/regime/manual', {
-                      method: 'POST',
-                      headers: { 'Content-Type': 'application/json' },
-                      body: JSON.stringify({ regime: val === 'auto' ? null : val })
-                    });
-                    if (val === 'auto') {
-                      // It will be updated by websocket
-                    } else {
-                      setStatus(prev => ({ ...prev, currentRegime: val }));
-                      setRegimeReasoning('Manually set by user');
-                    }
-                  }}
-                  className="bg-transparent text-sm font-medium uppercase tracking-wider focus:outline-none cursor-pointer"
-                >
+                  <select 
+                    value={status.currentRegime}
+                    aria-label="Market regime selection"
+                    onChange={async (e) => {
+                      const val = e.target.value;
+                      await safeFetch('/api/regime/manual', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                          'x-api-token': TRADER_TOKEN
+                        },
+                        body: JSON.stringify({ regime: val === 'auto' ? null : val })
+                      });
+                      if (val === 'auto') {
+                        // It will be updated by websocket
+                      } else {
+                        setStatus(prev => ({ ...prev, currentRegime: val }));
+                        setRegimeReasoning('Manually set by user');
+                      }
+                    }}
+                    className="bg-[#1e1e1e] text-gray-300 text-sm font-medium uppercase tracking-wider cursor-pointer focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none"
+                  >
                   <option value="auto" className="bg-black text-white">AUTO</option>
                   <option value="strong_bull" className="bg-black text-white">STRONG BULL</option>
                   <option value="weak_bull" className="bg-black text-white">WEAK BULL</option>
@@ -1099,12 +1529,152 @@ export default function App() {
               )}
             </div>
             
+            {/* Signal Confidence Panel */}
+            <div className="bg-[#1e1e1e] rounded-xl border border-white/10 p-3 min-w-[200px]">
+              <div className="flex items-center gap-2 mb-1.5">
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold uppercase ${
+                  (() => {
+                    const r = signalStatus?.regime || status.currentRegime;
+                    switch (r) {
+                      case 'strong_bull': return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+                      case 'weak_bull': return 'bg-lime-500/20 text-lime-400 border border-lime-500/30';
+                      case 'sideways': return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
+                      case 'bear': return 'bg-red-500/20 text-red-400 border border-red-500/30';
+                      default: return 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
+                    }
+                  })()
+                }`}>
+                  {signalStatus?.regime || status.currentRegime}
+                </span>
+                {signalStatus?.hasSignal ? (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 animate-pulse">
+                    TRIGGERED
+                  </span>
+                ) : (
+                  <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse">
+                    AWAITING SIGNAL
+                  </span>
+                )}
+              </div>
+              {/* Always show live confidence — updates every cycle */}
+              <div className="space-y-1 mt-1">
+                <div className="flex items-center justify-between">
+                  <span className={`text-xs font-bold ${
+                    signalStatus?.hasSignal
+                      ? (signalStatus.signal?.side === 'buy' ? 'text-emerald-400' : 'text-red-400')
+                      : (signalStatus?.liveSide === 'buy' ? 'text-emerald-400/70' : signalStatus?.liveSide === 'sell' ? 'text-red-400/70' : 'text-gray-400')
+                  }`}>
+                    {signalStatus?.hasSignal
+                      ? (signalStatus.signal?.side?.toUpperCase() || 'BUY')
+                      : (signalStatus?.liveSide?.toUpperCase() || '--')}
+                    {!signalStatus?.hasSignal && <span className="text-gray-500 text-[9px] ml-1">(live)</span>}
+                  </span>
+                  <span className="text-lg font-mono font-bold text-white">
+                    {signalStatus?.hasSignal
+                      ? (signalStatus.signal?.confidence || 0)
+                      : (signalStatus?.liveConfidence || 0)}%
+                  </span>
+                </div>
+                {/* Confidence bar — live always */}
+                <div className="w-full bg-gray-700 rounded-full h-1.5">
+                  <div
+                    className="h-1.5 rounded-full transition-all duration-700 ease-out"
+                    style={{
+                      width: `${signalStatus?.hasSignal ? (signalStatus.signal?.confidence || 0) : (signalStatus?.liveConfidence || 0)}%`,
+                      backgroundColor: (() => {
+                        const c = signalStatus?.hasSignal ? (signalStatus.signal?.confidence || 0) : (signalStatus?.liveConfidence || 0);
+                        return c > 70 ? '#22c55e' : c > 40 ? '#f59e0b' : c > 20 ? '#ef4444' : '#6b7280';
+                      })(),
+                    }}
+                  />
+                </div>
+                  <div className="grid grid-cols-3 gap-1 text-[9px] mt-1">
+                    <div>
+                      <span className="text-gray-500">Entry</span>
+                      <div className="text-white font-mono">${signalStatus?.signal?.entryPrice?.toFixed(2) || '---'}</div>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">SL</span>
+                      <div className="text-red-400 font-mono">${signalStatus?.signal?.stopLoss?.toFixed(2) || '---'}</div>
+                    </div>
+                    <div>
+                      <span className="text-gray-500">TP</span>
+                      <div className="text-emerald-400 font-mono">${signalStatus?.signal?.takeProfit?.toFixed(2) || '---'}</div>
+                    </div>
+                  </div>
+                  {signalStatus?.signal?.reasoning && (
+                    <div className="text-[9px] text-gray-400 italic truncate max-w-[200px]">{signalStatus?.signal?.reasoning}</div>
+                  )}
+                  {signalStatus?.signal?.indicators && signalStatus?.signal?.indicators.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {signalStatus?.signal?.indicators.map((ind: string, i: number) => (
+                        <span key={i} className="text-[8px] px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/20">{ind}</span>
+                      ))}
+                    </div>
+                  )}
+                  {!signalStatus?.hasSignal && signalStatus?.liveIndicators && signalStatus.liveIndicators.length > 0 && (
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {signalStatus.liveIndicators.map((ind: string, i: number) => (
+                        <span key={i} className="text-[8px] px-1 py-0.5 rounded bg-amber-500/10 text-amber-300/70 border border-amber-500/10">{ind}</span>
+                      ))}
+                    </div>
+                  )}
+                  {!signalStatus?.hasSignal && (
+                    <div className="text-[9px] text-gray-500 italic animate-pulse mt-1">Waiting for next cycle...</div>
+                  )}
+                  {signalStatus?.signal?.mlScore !== undefined && (
+                    <div className="text-[9px] text-purple-400">ML: {signalStatus?.signal?.mlScore?.toFixed(1)}%</div>
+                  )}
+                </div>
+            </div>
+
+            {/* Signal Type Toggle */}
+            <div className="bg-white/[0.02] border border-white/5 rounded-lg p-2">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[9px] text-gray-400 uppercase tracking-wider">Chart Markers</span>
+                <div className="flex gap-2">
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input type="checkbox" checked={showSignalMarkers} onChange={() => setShowSignalMarkers(!showSignalMarkers)} className="w-2.5 h-2.5 accent-indigo-500" />
+                    <span className="text-[8px] text-gray-400">Signals</span>
+                  </label>
+                  <label className="flex items-center gap-1 cursor-pointer">
+                    <input type="checkbox" checked={showTradeMarkers} onChange={() => setShowTradeMarkers(!showTradeMarkers)} className="w-2.5 h-2.5 accent-indigo-500" />
+                    <span className="text-[8px] text-gray-400">Trades</span>
+                  </label>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-1">
+                {Object.entries(modeVisibility).map(([mode, visible]) => {
+                  const dotColors: Record<string, string> = {
+                    ultra_conservative: 'bg-indigo-500',
+                    conservative: 'bg-blue-500',
+                    moderate: 'bg-emerald-500',
+                    aggressive: 'bg-amber-500',
+                    degen: 'bg-red-500',
+                    ai_enhanced: 'bg-purple-500',
+                  };
+                  return (
+                    <button
+                      key={mode}
+                      onClick={() => setModeVisibility(prev => ({ ...prev, [mode]: !prev[mode] }))}
+                      className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[8px] transition-colors ${
+                        visible ? 'bg-white/10 text-white' : 'bg-white/[0.03] text-gray-600'
+                      }`}
+                    >
+                      <span className={`w-1.5 h-1.5 rounded-full ${dotColors[mode] || 'bg-gray-500'}`} />
+                      {mode.replace('_', ' ')}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            
             <button
               onClick={toggleEngine}
-              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors ${
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none ${
                 status.isRunning 
-                  ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20' 
-                  : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border border-emerald-500/20'
+                  ? 'bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20 focus-visible:ring-red-500/50' 
+                  : 'bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border border-emerald-500/20 focus-visible:ring-emerald-500/50'
               }`}
             >
               {status.isRunning ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
@@ -1113,20 +1683,21 @@ export default function App() {
             <div className="flex items-center gap-2">
               <button
                 onClick={() => manualTrade('buy')}
-                className="px-4 py-2 rounded-lg bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border border-emerald-500/20 font-medium"
+                className="px-4 py-2 rounded-lg bg-emerald-500/10 text-emerald-500 hover:bg-emerald-500/20 border border-emerald-500/20 font-medium focus-visible:ring-2 focus-visible:ring-emerald-500/50 focus-visible:outline-none"
               >
                 Enter High
               </button>
               <button
                 onClick={() => manualTrade('sell')}
-                className="px-4 py-2 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20 font-medium"
+                className="px-4 py-2 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20 font-medium focus-visible:ring-2 focus-visible:ring-red-500/50 focus-visible:outline-none"
               >
                 Enter Low
               </button>
             </div>
             <button
               onClick={() => setShowSettings(true)}
-              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors"
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none"
+              aria-label="Open settings"
             >
               <Settings className="w-5 h-5 text-gray-400" />
             </button>
@@ -1174,7 +1745,7 @@ export default function App() {
             <button
               onClick={refreshMarketData}
               disabled={isRefreshingMarket}
-              className="flex-1 h-full bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 py-3 lg:py-0"
+              className="flex-1 h-full bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-400 border border-indigo-500/20 rounded-xl text-xs font-bold flex items-center justify-center gap-2 py-3 lg:py-0 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none"
             >
               <Activity className={`w-4 h-4 ${isRefreshingMarket ? 'animate-spin' : ''}`} />
               {isRefreshingMarket ? 'Refreshing...' : 'Refresh Market Data'}
@@ -1217,11 +1788,11 @@ export default function App() {
                     <button 
                       key={tf} 
                       onClick={() => changeTimeframe(tf)}
-                      className={`px-2 py-1 text-xs rounded transition-colors ${
+                    className={`px-2 py-1 text-xs rounded transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none ${
                         status.timeframe === tf 
                           ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' 
                           : 'bg-white/5 hover:bg-white/10 text-gray-400 border border-transparent'
-                      }`}
+                       }`}
                     >
                       {tf}
                     </button>
@@ -1234,23 +1805,23 @@ export default function App() {
                   <InfoButton text="Technical indicators used to identify market trends and potential entry/exit points." position="left-full ml-1 top-0" />
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setIndicatorToggles(p => ({...p, ema9: !p.ema9}))} className={`px-2 py-1 text-xs font-medium rounded transition-colors ${indicatorToggles.ema9 ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'}`}>EMA 9</button>
+                  <button onClick={() => setIndicatorToggles(p => ({...p, ema9: !p.ema9}))} className={`px-2 py-1 text-xs font-medium rounded transition-colors focus-visible:ring-2 focus-visible:ring-blue-500/50 focus-visible:outline-none ${indicatorToggles.ema9 ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'}`}>EMA 9</button>
                   <InfoButton text="Exponential Moving Average (9 periods). Short-term trend indicator." position="bottom-full mb-2 left-0" />
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setIndicatorToggles(p => ({...p, ema21: !p.ema21}))} className={`px-2 py-1 text-xs font-medium rounded transition-colors ${indicatorToggles.ema21 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'}`}>EMA 21</button>
+                  <button onClick={() => setIndicatorToggles(p => ({...p, ema21: !p.ema21}))} className={`px-2 py-1 text-xs font-medium rounded transition-colors focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:outline-none ${indicatorToggles.ema21 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'}`}>EMA 21</button>
                   <InfoButton text="Exponential Moving Average (21 periods). Medium-term trend indicator." position="bottom-full mb-2 left-0" />
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setIndicatorToggles(p => ({...p, ema50: !p.ema50}))} className={`px-2 py-1 text-xs font-medium rounded transition-colors ${indicatorToggles.ema50 ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'}`}>EMA 50</button>
+                  <button onClick={() => setIndicatorToggles(p => ({...p, ema50: !p.ema50}))} className={`px-2 py-1 text-xs font-medium rounded transition-colors focus-visible:ring-2 focus-visible:ring-red-500/50 focus-visible:outline-none ${indicatorToggles.ema50 ? 'bg-red-500/20 text-red-400 border border-red-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'}`}>EMA 50</button>
                   <InfoButton text="Exponential Moving Average (50 periods). Long-term trend indicator." position="bottom-full mb-2 left-0" />
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setIndicatorToggles(p => ({...p, vwap: !p.vwap}))} className={`px-2 py-1 text-xs font-medium rounded transition-colors ${indicatorToggles.vwap ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'}`}>VWAP</button>
+                  <button onClick={() => setIndicatorToggles(p => ({...p, vwap: !p.vwap}))} className={`px-2 py-1 text-xs font-medium rounded transition-colors focus-visible:ring-2 focus-visible:ring-purple-500/50 focus-visible:outline-none ${indicatorToggles.vwap ? 'bg-purple-500/20 text-purple-400 border border-purple-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'}`}>VWAP</button>
                   <InfoButton text="Volume Weighted Average Price. Benchmark for the average price a security has traded at throughout the day." position="bottom-full mb-2 left-0" />
                 </div>
                 <div className="flex items-center gap-1">
-                  <button onClick={() => setIndicatorToggles(p => ({...p, bb: !p.bb}))} className={`px-2 py-1 text-xs font-medium rounded transition-colors ${indicatorToggles.bb ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'}`}>Bollinger Bands</button>
+                  <button onClick={() => setIndicatorToggles(p => ({...p, bb: !p.bb}))} className={`px-2 py-1 text-xs font-medium rounded transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none ${indicatorToggles.bb ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-white/5 text-gray-400 hover:bg-white/10 border border-transparent'}`}>Bollinger Bands</button>
                   <InfoButton text="Volatility indicator consisting of a middle SMA and two standard deviation bands." position="bottom-full mb-2 left-0" />
                 </div>
               </div>
@@ -1267,7 +1838,7 @@ export default function App() {
                       value={backtestDates.start}
                       max={new Date().toISOString().split('T')[0]}
                       onChange={(e) => setBacktestDates({...backtestDates, start: e.target.value})}
-                      className="bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-amber-500"
+                      className="bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:border-amber-500 focus-visible:outline-none caret-white"
                     />
                     <span className="text-gray-600">to</span>
                     <input 
@@ -1275,7 +1846,7 @@ export default function App() {
                       value={backtestDates.end}
                       max={new Date().toISOString().split('T')[0]}
                       onChange={(e) => setBacktestDates({...backtestDates, end: e.target.value})}
-                      className="bg-black/40 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-amber-500"
+                      className="bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:border-amber-500 focus-visible:outline-none caret-white"
                     />
                   </div>
                   <button 
@@ -1285,7 +1856,7 @@ export default function App() {
                       runBacktest(start, end);
                     }}
                     disabled={isBacktesting}
-                    className="px-4 py-1 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-black text-xs font-bold rounded transition-colors flex items-center gap-2"
+                    className="px-4 py-1 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-black text-xs font-bold rounded transition-colors flex items-center gap-2 focus-visible:ring-2 focus-visible:ring-amber-500 focus-visible:outline-none"
                   >
                     {isBacktesting ? <Activity className="w-3 h-3 animate-pulse" /> : <Play className="w-3 h-3" />}
                     {isBacktesting ? 'Running...' : 'Run Backtest'}
@@ -1331,6 +1902,17 @@ export default function App() {
               </div>
             </div>
 
+            {/* Shadow Trade History Chart */}
+            <div className="bg-[#1e1e1e] rounded-xl border border-white/5 overflow-hidden">
+              <div className="p-4 border-b border-white/5">
+                <h2 className="font-medium flex items-center gap-2">
+                  <Activity className="w-4 h-4 text-purple-400" />
+                  Shadow Trade History
+                </h2>
+              </div>
+              <div ref={shadowChartContainerRef} className="w-full h-[250px]" />
+            </div>
+
             {/* Shadow Comparison */}
             <div className={`bg-[#1e1e1e] rounded-xl border transition-colors duration-300 ${showBacktestUI ? 'border-amber-500/30' : 'border-white/5'} p-4`}>
               <h2 className={`font-medium mb-4 ${showBacktestUI ? 'text-amber-400' : ''}`}>
@@ -1338,7 +1920,8 @@ export default function App() {
               </h2>
 
               {/* Performance Chart */}
-              <div className="h-[180px] w-full mb-6">
+              <div className="h-[180px] w-full mb-6" style={{ minHeight: 180 }}>
+                {(performance[activeMode]?.history?.length > 0) ? (
                 <ResponsiveContainer width="100%" height="100%">
                   <AreaChart data={performance[activeMode]?.history || []}>
                     <defs>
@@ -1376,11 +1959,16 @@ export default function App() {
                       dataKey="balance" 
                       stroke={showBacktestUI ? "#f59e0b" : "#6366f1"} 
                       fillOpacity={1} 
-                      fill="url(#colorBalance)" 
+                      fill="url(#colorBalance)"
                       strokeWidth={2}
                     />
                   </AreaChart>
                 </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center text-gray-500 text-sm">
+                    No performance data yet
+                  </div>
+                )}
               </div>
 
               <div className="overflow-x-auto">
@@ -1403,7 +1991,7 @@ export default function App() {
                             ? (showBacktestUI ? 'bg-amber-500/10' : 'bg-indigo-500/10') 
                             : (showBacktestUI ? 'hover:bg-amber-500/5' : 'hover:bg-white/5')
                         }`}
-                        onClick={() => setActiveMode(mode)}
+                        onClick={() => changeActiveMode(mode)}
                       >
                         <td className="px-4 py-3 font-medium capitalize">{mode.replace('_', ' ')}</td>
                         <td className="px-4 py-3 font-mono">${data.balance.toFixed(2)}</td>
@@ -1430,7 +2018,7 @@ export default function App() {
                 </h2>
                 <button 
                   onClick={killBot}
-                  className="text-[10px] px-2 py-1 bg-red-500/10 text-red-500 border border-red-500/20 rounded hover:bg-red-500/20 transition-colors font-bold uppercase"
+                  className="text-[10px] px-2 py-1 bg-red-500/10 text-red-500 border border-red-500/20 rounded hover:bg-red-500/20 transition-colors font-bold uppercase focus-visible:ring-2 focus-visible:ring-red-500/50 focus-visible:outline-none"
                 >
                   Kill Bot
                 </button>
@@ -1444,25 +2032,38 @@ export default function App() {
                   </div>
                   <div className="bg-black/20 p-2 rounded-lg border border-white/5">
                     <p className={`text-[10px] uppercase font-semibold ${showBacktestUI ? 'text-amber-500/60' : 'text-gray-500'}`}>Bot Balance</p>
-                    <p className={`text-sm font-mono ${showBacktestUI ? 'text-amber-400' : 'text-indigo-400'}`}>${balances.botBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                    <p className={`text-sm font-mono transition-all duration-300 ${botBalanceFlash ? 'text-yellow-300 scale-110' : showBacktestUI ? 'text-amber-400' : 'text-indigo-400'}`}>
+                      ${balances.botBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
                   </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
                   <div className={`bg-black/20 p-2 rounded-lg border ${showBacktestUI ? 'border-amber-500/10' : 'border-white/5'}`}>
-                    <p className={`text-[10px] uppercase font-semibold ${showBacktestUI ? 'text-amber-500/60' : 'text-gray-500'}`}>Active Trade</p>
+                    <p className={`text-[10px] uppercase font-semibold ${showBacktestUI ? 'text-amber-500/60' : 'text-gray-500'}`}>In Trades</p>
                     <p className="text-sm font-mono text-amber-400">${balances.activeTradeBalance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                   </div>
                   <div className={`bg-black/20 p-2 rounded-lg border ${showBacktestUI ? 'border-amber-500/10' : 'border-white/5'}`}>
-                    <p className={`text-[10px] uppercase font-semibold ${showBacktestUI ? 'text-amber-500/60' : 'text-gray-500'}`}>Profit/Loss</p>
-                    <div className="flex items-center gap-1">
-                      <p className={`text-sm font-mono ${balances.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                        {balances.totalPnl >= 0 ? '+' : ''}{balances.totalPnl.toFixed(2)}
-                      </p>
-                      <span className={`text-[10px] ${balances.totalPnlPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                        ({balances.totalPnlPct.toFixed(2)}%)
-                      </span>
-                    </div>
+                    <p className={`text-[10px] uppercase font-semibold ${showBacktestUI ? 'text-amber-500/60' : 'text-gray-500'}`}>Available</p>
+                    <p className="text-sm font-mono text-emerald-400">
+                      ${(balances.botBalance - balances.activeTradeBalance).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="bg-black/20 p-2 rounded-lg border border-white/5">
+                  <p className={`text-[10px] uppercase font-semibold ${showBacktestUI ? 'text-amber-500/60' : 'text-gray-500'}`}>Profit/Loss</p>
+                  <div className="flex items-center gap-1">
+                    <span className={`text-sm font-mono ${balances.totalPnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {balances.totalPnl >= 0 ? (
+                        <><TrendingUp className="w-3 h-3 inline mr-0.5 text-emerald-400" />+{balances.totalPnl.toFixed(2)}</>
+                      ) : (
+                        <><TrendingDown className="w-3 h-3 inline mr-0.5 text-red-400" />{balances.totalPnl.toFixed(2)}</>
+                      )}
+                    </span>
+                    <span className={`text-[10px] ${balances.totalPnlPct >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                      ({balances.totalPnlPct.toFixed(2)}%)
+                    </span>
                   </div>
                 </div>
 
@@ -1473,7 +2074,7 @@ export default function App() {
                       setBalanceAmount('');
                       setShowBalanceModal(true);
                     }}
-                    className="flex-1 bg-white/5 hover:bg-white/10 text-white py-1.5 rounded text-[10px] font-medium border border-white/10 transition-colors"
+                    className="flex-1 bg-white/5 hover:bg-white/10 text-white py-1.5 rounded text-[10px] font-medium border border-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none"
                   >
                     + Allocate
                   </button>
@@ -1483,7 +2084,7 @@ export default function App() {
                       setBalanceAmount('');
                       setShowBalanceModal(true);
                     }}
-                    className="flex-1 bg-white/5 hover:bg-white/10 text-white py-1.5 rounded text-[10px] font-medium border border-white/10 transition-colors"
+                    className="flex-1 bg-white/5 hover:bg-white/10 text-white py-1.5 rounded text-[10px] font-medium border border-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none"
                   >
                     - Withdraw
                   </button>
@@ -1492,13 +2093,13 @@ export default function App() {
                 <div className="flex gap-2">
                   <button 
                     onClick={halfBalance}
-                    className="flex-1 bg-white/5 hover:bg-white/10 text-white py-1.5 rounded text-[10px] font-medium border border-white/10 transition-colors"
+                    className="flex-1 bg-white/5 hover:bg-white/10 text-white py-1.5 rounded text-[10px] font-medium border border-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none"
                   >
                     1/2 Balance
                   </button>
                   <button 
                     onClick={doubleBalance}
-                    className="flex-1 bg-white/5 hover:bg-white/10 text-white py-1.5 rounded text-[10px] font-medium border border-white/10 transition-colors"
+                    className="flex-1 bg-white/5 hover:bg-white/10 text-white py-1.5 rounded text-[10px] font-medium border border-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none"
                   >
                     x2 Balance
                   </button>
@@ -1514,7 +2115,7 @@ export default function App() {
                   <select 
                     value={activeMode}
                     onChange={(e) => changeActiveMode(e.target.value)}
-                    className="mt-1 bg-transparent text-[10px] text-gray-500 focus:outline-none cursor-pointer hover:text-gray-300"
+                    className="mt-1 bg-[#1e1e1e] text-gray-300 text-[10px] cursor-pointer hover:text-gray-200 focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none"
                   >
                     {Object.values(RiskMode).map(mode => (
                       <option key={mode} value={mode} className="bg-[#1e1e1e]">{mode.replace('_', ' ')}</option>
@@ -1524,7 +2125,7 @@ export default function App() {
                 <div className="flex items-center gap-2 relative">
                   <button 
                     onClick={() => setShowConfigModal(!showConfigModal)} 
-                    className={`text-xs px-2 py-1 rounded transition-colors ${
+                    className={`text-xs px-2 py-1 rounded transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none ${
                       showConfigModal 
                         ? (showBacktestUI ? 'bg-amber-500 text-black' : 'bg-indigo-500 text-white') 
                         : 'bg-white/5 hover:bg-white/10 text-gray-300'
@@ -1544,7 +2145,7 @@ export default function App() {
                           <h2 className={`text-sm font-bold capitalize ${showBacktestUI ? 'text-amber-400' : ''}`}>{activeMode.replace('_', ' ')} Strategy</h2>
                           <InfoButton text={`Parameters for ${activeMode}: Risk per trade, Leverage, Take Profit and Stop Loss multipliers are adjusted to match this risk profile.`} />
                         </div>
-                        <button onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-white">
+                        <button onClick={() => setShowConfigModal(false)} className="text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none" aria-label="Close strategy config">
                           <X className="w-4 h-4" />
                         </button>
                       </div>
@@ -1595,15 +2196,15 @@ export default function App() {
                               <input 
                                 type="number" 
                                 step="0.1"
-                                value={riskConfigs[activeMode].tpMultiplier || 0}
+                                value={riskConfigs[activeMode].takeProfit ?? 1.5}
                                 onChange={(e) => {
                                   const val = parseFloat(e.target.value);
                                   setRiskConfigs({
                                     ...riskConfigs,
-                                    [activeMode]: { ...riskConfigs[activeMode], tpMultiplier: isNaN(val) ? 0 : val }
+                                    [activeMode]: { ...riskConfigs[activeMode], takeProfit: isNaN(val) ? 0 : val }
                                   });
                                 }}
-                                className="w-full bg-black/20 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none"
                               />
                             </div>
                             <div>
@@ -1611,15 +2212,15 @@ export default function App() {
                               <input 
                                 type="number" 
                                 step="0.1"
-                                value={riskConfigs[activeMode].slMultiplier || 0}
+                                value={riskConfigs[activeMode].stopLoss ?? 2.5}
                                 onChange={(e) => {
                                   const val = parseFloat(e.target.value);
                                   setRiskConfigs({
                                     ...riskConfigs,
-                                    [activeMode]: { ...riskConfigs[activeMode], slMultiplier: isNaN(val) ? 0 : val }
+                                    [activeMode]: { ...riskConfigs[activeMode], stopLoss: isNaN(val) ? 0 : val }
                                   });
                                 }}
-                                className="w-full bg-black/20 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none"
                               />
                             </div>
                           </div>
@@ -1643,7 +2244,7 @@ export default function App() {
                                     [activeMode]: { ...riskConfigs[activeMode], leverage: val }
                                   });
                                 }}
-                                className="w-full bg-black/20 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none"
                               />
                             </div>
                             <div>
@@ -1651,15 +2252,15 @@ export default function App() {
                               <input 
                                 type="number" 
                                 step="0.1"
-                                value={(riskConfigs[activeMode].maxRiskPerTrade * 100) || 0}
+                                value={((riskConfigs[activeMode].positionSize ?? 0.05) * 100)}
                                 onChange={(e) => {
                                   const val = parseFloat(e.target.value);
                                   setRiskConfigs({
                                     ...riskConfigs,
-                                    [activeMode]: { ...riskConfigs[activeMode], maxRiskPerTrade: isNaN(val) ? 0 : val / 100 }
+                                    [activeMode]: { ...riskConfigs[activeMode], positionSize: isNaN(val) ? 0 : val / 100 }
                                   });
                                 }}
-                                className="w-full bg-black/20 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none"
                               />
                             </div>
                             <div>
@@ -1675,7 +2276,7 @@ export default function App() {
                                     [activeMode]: { ...riskConfigs[activeMode], maxDrawdown: isNaN(val) ? 0 : val / 100 }
                                   });
                                 }}
-                                className="w-full bg-black/20 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none"
                               />
                             </div>
                           </div>
@@ -1693,7 +2294,7 @@ export default function App() {
                                     [activeMode]: { ...riskConfigs[activeMode], confidenceThreshold: isNaN(val) ? 0 : val }
                                   });
                                 }}
-                                className="w-full bg-black/20 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none"
                               />
                             </div>
                             <div>
@@ -1708,30 +2309,30 @@ export default function App() {
                                     [activeMode]: { ...riskConfigs[activeMode], maxConcurrentPositions: isNaN(val) ? 0 : val }
                                   });
                                 }}
-                                className="w-full bg-black/20 border border-white/10 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-indigo-500"
+                                className="w-full bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none"
                               />
                             </div>
                           </div>
                         </div>
 
                         <div className="flex gap-2 pt-2">
-                          <button 
-                            onClick={getAiRecommendations}
-                            className="flex-1 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 py-1.5 rounded text-[10px] font-medium transition-colors"
-                          >
-                            AI Recommend
-                          </button>
-                          <button 
-                            onClick={resetRiskConfigs}
-                            className="flex-1 bg-white/5 hover:bg-white/10 text-white py-1.5 rounded text-[10px] font-medium transition-colors"
-                          >
+                        <button 
+                          onClick={getAiRecommendations}
+                          className="flex-1 bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-300 py-1.5 rounded text-[10px] font-medium transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none"
+                        >
+                          AI Recommend
+                        </button>
+                        <button 
+                          onClick={resetRiskConfigs}
+                          className="flex-1 bg-white/5 hover:bg-white/10 text-white py-1.5 rounded text-[10px] font-medium transition-colors focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none"
+                        >
                             Reset
                           </button>
                         </div>
                         
                         <button 
                           onClick={saveRiskConfigs}
-                          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded text-xs font-medium transition-colors"
+                          className="w-full bg-indigo-600 hover:bg-indigo-700 text-white py-2 rounded text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none"
                         >
                           Save Configuration
                         </button>
@@ -1792,26 +2393,31 @@ export default function App() {
                             </span>
                           </div>
                           <div className="flex items-center gap-2">
-                            <button 
-                              onClick={() => {
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const posId = pos.id || `pos_${i}`;
                                 if (isEditing) {
                                   setEditingPosition(null);
                                 } else {
-                                  setEditingPosition(pos.id);
-                                  setEditSl(pos.stopLoss);
-                                  setEditTp(pos.takeProfit);
+                                  setEditingPosition(posId);
+                                  setEditSl(pos.stopLoss || 0);
+                                  setEditTp(pos.takeProfit || 0);
                                 }
                               }}
-                              className="p-1 hover:bg-white/5 rounded transition-colors text-gray-500 hover:text-white"
+                              className="p-1 hover:bg-white/5 rounded transition-colors text-gray-500 hover:text-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none"
+                              aria-label="Edit TP/SL"
                               title="Edit TP/SL"
                             >
                               <Settings className="w-3 h-3" />
                             </button>
-                            <button 
-                              onClick={() => closePosition(pos.id)}
-                              className="p-1 hover:bg-red-500/20 rounded transition-colors text-gray-500 hover:text-red-400"
-                              title="Close Position"
-                            >
+                         <button 
+                           onClick={() => closePosition(pos.id)}
+                           className="p-1 hover:bg-red-500/20 rounded transition-colors text-gray-500 hover:text-red-400 focus-visible:ring-2 focus-visible:ring-red-500/50 focus-visible:outline-none"
+                           aria-label="Close position"
+                           title="Close Position"
+                         >
                               <X className="w-3 h-3" />
                             </button>
                           </div>
@@ -1845,13 +2451,13 @@ export default function App() {
                                   updatePositionParams(pos.id, editSl, editTp);
                                   setEditingPosition(null);
                                 }}
-                                className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] py-1 rounded transition-colors"
+                                className="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white text-[10px] py-1 rounded transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none"
                               >
                                 Save
                               </button>
                               <button 
                                 onClick={() => setEditingPosition(null)}
-                                className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 text-[10px] py-1 rounded transition-colors"
+                                className="flex-1 bg-white/5 hover:bg-white/10 text-gray-400 text-[10px] py-1 rounded transition-colors focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none"
                               >
                                 Cancel
                               </button>
@@ -1890,80 +2496,188 @@ export default function App() {
               </div>
             )}
 
-            {/* Recent Signals */}
-            <div className={`bg-[#1e1e1e] rounded-xl border transition-colors duration-300 ${showBacktestUI ? 'border-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.05)]' : 'border-white/5'} p-4`}>
-              <h2 className={`font-medium mb-4 ${showBacktestUI ? 'text-amber-400' : 'text-gray-300'}`}>
-                {showBacktestUI ? 'Simulated Signals' : 'Recent Signals'}
-              </h2>
-              <div className="space-y-3">
-                {(showBacktestUI ? backtestTrades.slice(-5).reverse() : trades.slice(0, 5)).map((trade: any, i: number) => (
-                  <div key={i} className={`p-3 rounded-lg bg-black/20 border transition-colors ${showBacktestUI ? 'border-amber-500/10 hover:border-amber-500/30' : 'border-white/5 hover:border-white/10'}`}>
-                    <div className="flex justify-between items-start mb-2">
-                      <div className="flex items-center gap-2">
-                        <span className={`px-1.5 py-0.5 rounded text-[10px] font-bold uppercase ${trade.side === 'buy' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-red-500/20 text-red-400'}`}>
-                          {trade.side}
-                        </span>
-                        <span className="text-xs font-mono text-white">{trade.symbol}</span>
-                      </div>
-                      <span className="text-[10px] text-gray-500">{new Date(trade.timestamp || trade.time).toLocaleTimeString()}</span>
-                    </div>
-                    <div className="flex justify-between text-[10px]">
-                      <span className="text-gray-500">Price: <span className="text-gray-300">${(trade.price || trade.entryPrice).toFixed(2)}</span></span>
-                      {trade.pnl !== undefined && trade.pnl !== null && (
-                        <span className={`font-mono ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {trade.pnl > 0 ? '+' : ''}{trade.pnl.toFixed(2)}%
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {((showBacktestUI ? backtestTrades : trades).length === 0) && (
-                  <div className="text-center py-8">
-                    <p className="text-xs text-gray-600 italic">No signals detected yet</p>
-                  </div>
-                )}
+            {/* Closed Bot Trades (non-shadow) */}
+            {!showBacktestUI && (
+            <div className="bg-[#1e1e1e] rounded-xl border border-white/5 p-4 flex-1">
+              <h2 className="font-medium mb-3 text-indigo-300">Closed Bot Trades</h2>
+              <div className="overflow-x-auto max-h-[200px] overflow-y-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className="text-[10px] uppercase text-gray-400 bg-white/5 sticky top-0">
+                    <tr>
+                      <th className="px-2 py-2 rounded-tl-lg">Time</th>
+                      <th className="px-2 py-2">Closed</th>
+                      <th className="px-2 py-2">Side</th>
+                      <th className="px-2 py-2">Entry/Exit</th>
+                      <th className="px-2 py-2">Amount</th>
+                      <th className="px-2 py-2">PnL $</th>
+                      <th className="px-2 py-2 rounded-tr-lg">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {botTrades.slice(0, 100).map((trade: any, i: number) => {
+                      const pnl = trade.pnl || 0;
+                      const timestamp = trade.timestamp || 0;
+                      const exitTs = trade.exit_timestamp || 0;
+                      const entryPrice = trade.entryPrice || trade.price;
+                      const exitPrice = trade.exitPrice || trade.exit_price;
+                      return (
+                        <tr key={trade.id || i} className="border-b border-white/5 hover:bg-white/[0.02]">
+                          <td className="px-2 py-2 text-gray-400 font-mono text-[9px]">{timestamp ? new Date(timestamp).toLocaleString() : '---'}</td>
+                          <td className="px-2 py-2 text-gray-500 font-mono text-[9px]">{exitTs ? new Date(exitTs).toLocaleString() : '—'}</td>
+                          <td className="px-2 py-2"><span className={`font-bold text-[10px] ${trade.side === 'buy' ? 'text-emerald-400' : 'text-red-400'}`}>{(trade.side || '').toUpperCase()}</span></td>
+                          <td className="px-2 py-2 font-mono text-[10px] whitespace-nowrap">
+                            <span className="text-white">${entryPrice?.toFixed(0) || '---'}</span>
+                            <span className="text-gray-600"> → </span>
+                            <span className={exitPrice ? (exitPrice > entryPrice ? 'text-emerald-400' : 'text-red-400') : 'text-gray-500'}>{exitPrice ? `$${exitPrice.toFixed(0)}` : '—'}</span>
+                          </td>
+                          <td className="px-2 py-2 font-mono text-[10px] text-gray-300">{(trade.amount || 0).toFixed(4)}</td>
+                          <td className={`px-2 py-2 font-mono text-[10px] ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}</td>
+                          <td className="px-2 py-2">
+                            <span className={`text-[8px] px-1 py-0.5 rounded ${pnl >= 0 ? 'bg-emerald-500/20 text-emerald-300' : 'bg-red-500/20 text-red-300'}`}>CLOSED</span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {botTrades.length === 0 && (
+                      <tr><td colSpan={7} className="text-center text-gray-500 py-4 text-sm">No bot trades yet — only shadow trading active</td></tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
+            )}
 
-            {/* Recent Trades */}
+            {/* Shadow Trades - Full History */}
             <div className={`bg-[#1e1e1e] rounded-xl border transition-colors duration-300 ${showBacktestUI ? 'border-amber-500/30 shadow-[0_0_10px_rgba(245,158,11,0.05)]' : 'border-white/5'} p-4 flex-1`}>
-              <h2 className={`font-medium mb-4 ${showBacktestUI ? 'text-amber-400' : ''}`}>
-                {showBacktestUI ? `Backtest Trades (${activeMode})` : `Recent Trades (${activeMode})`}
+              <h2 className={`font-medium mb-2 ${showBacktestUI ? 'text-amber-400' : ''}`}>
+                {showBacktestUI ? 'Backtest Trades' : 'All Closed Shadow Trades'}
               </h2>
-              <div className="space-y-3">
-                {(showBacktestUI ? backtestTrades.slice(-5).reverse() : trades.filter(t => t.risk_mode === activeMode).slice(0, 5)).map((trade: any, i: number) => (
-                  <div key={trade.id || i} className={`flex justify-between items-center p-3 rounded-lg bg-black/20 text-sm border ${showBacktestUI ? 'border-amber-500/10' : 'border-white/5'}`}>
-                    <div>
-                      <div className="flex items-center gap-2">
-                        <span className={`font-bold ${trade.side === 'buy' ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {trade.side.toUpperCase()}
-                        </span>
-                        <span>{trade.symbol}</span>
-                        {trade.leverage && (
-                          <span className="text-[10px] bg-white/5 px-1.5 py-0.5 rounded text-gray-400 border border-white/5">
-                            {trade.leverage}x
-                          </span>
-                        )}
-                      </div>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {new Date(trade.timestamp || trade.time).toLocaleTimeString()}
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-mono">${(trade.price || trade.entryPrice).toFixed(2)}</div>
-                      {(trade.status === 'closed' || trade.exitTime) ? (
-                        <div className={`text-xs font-mono mt-1 ${trade.pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                          {trade.pnl >= 0 ? '+' : ''}{trade.pnl.toFixed(2)}%
-                        </div>
-                      ) : (
-                        <div className="text-xs text-indigo-400 mt-1">OPEN</div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {((showBacktestUI ? backtestTrades : trades.filter(t => t.risk_mode === activeMode)).length === 0) && (
-                  <div className="text-center text-gray-500 py-4 text-sm">No recent trades</div>
-                )}
+              {/* Search/Filter input */}
+              {!showBacktestUI && (
+                <div className="mb-3">
+                  <input
+                    type="text"
+                    placeholder="Filter by mode, side..."
+                    value={tradeFilter}
+                    onChange={(e) => setTradeFilter(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500/50"
+                  />
+                </div>
+              )}
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs text-left">
+                  <thead className={`text-[10px] uppercase ${showBacktestUI ? 'text-amber-500/60 bg-amber-500/5' : 'text-gray-400 bg-white/5'}`}>
+                    <tr>
+                      <th className="px-2 py-2 rounded-tl-lg">Time</th>
+                      <th className="px-2 py-2">Closed</th>
+                      <th className="px-2 py-2">Mode</th>
+                      <th className="px-2 py-2">Side</th>
+                      <th className="px-2 py-2">Entry/Exit</th>
+                      <th className="px-2 py-2">Amount</th>
+                      <th className="px-2 py-2">Wager</th>
+                      <th className="px-2 py-2">PnL $</th>
+                      <th className="px-2 py-2">PnL %</th>
+                      <th className="px-2 py-2 rounded-tr-lg">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(showBacktestUI ? backtestTrades : closedTrades)
+                      .filter((trade: any) => {
+                        const mode = (trade.risk_mode || trade.mode || '').toLowerCase();
+                        const side = (trade.side || '').toLowerCase();
+                        const filter = tradeFilter.toLowerCase();
+                        return !filter || mode.includes(filter) || side.includes(filter);
+                      })
+                      .sort((a: any, b: any) => {
+                      const aTime = a.timestamp || a.time || a.exitTime || 0;
+                      const bTime = b.timestamp || b.time || b.exitTime || 0;
+                      return bTime - aTime;
+                    }).slice(0, 200).map((trade: any, i: number) => {
+                      const modeColors: Record<string, string> = {
+                        ultra_conservative: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/20',
+                        conservative: 'bg-blue-500/20 text-blue-300 border-blue-500/20',
+                        moderate: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/20',
+                        aggressive: 'bg-amber-500/20 text-amber-300 border-amber-500/20',
+                        degen: 'bg-red-500/20 text-red-300 border-red-500/20',
+                        ai_enhanced: 'bg-purple-500/20 text-purple-300 border-purple-500/20',
+                      };
+                      const mode = trade.risk_mode || trade.mode || 'moderate';
+                      const modeColor = modeColors[mode] || 'bg-gray-500/20 text-gray-300 border-gray-500/20';
+                      const isOpen = !(trade.status === 'closed' || trade.exitTime || trade.exitTimestamp);
+                      const pnl = trade.pnl || trade.profitLoss || 0;
+                      const timestamp = trade.timestamp || trade.time || trade.exitTime;
+                      const exitTimestamp = trade.exit_timestamp || trade.exitTime || 0;
+                      const entryPrice = trade.entryPrice || trade.price;
+                      const exitPrice = trade.exitPrice || trade.exit_price;
+                      const leverage = trade.leverage || 1;
+                      const amount = trade.amount || 0;
+                      const wager = amount * entryPrice / leverage;
+                      const pnlPct = wager > 0 ? (pnl / wager) * 100 : 0;
+                      
+                      // Filter by mode visibility
+                      if (!showBacktestUI && !modeVisibility[mode]) return null;
+                      
+                      return (
+                        <tr key={trade.id || i} className={`border-b border-white/5 hover:bg-white/[0.02] transition-colors`}>
+                          <td className="px-2 py-2 text-gray-400 font-mono whitespace-nowrap text-[9px]">
+                            {timestamp ? new Date(timestamp).toLocaleString() : '---'}
+                          </td>
+                          <td className="px-2 py-2 text-gray-500 font-mono whitespace-nowrap text-[9px]">
+                            {exitTimestamp && !isOpen ? new Date(exitTimestamp).toLocaleString() : '—'}
+                          </td>
+                          <td className="px-2 py-2">
+                            <span className={`text-[8px] px-1 py-0.5 rounded border ${modeColor}`}>
+                              {mode.replace('_', ' ')}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2">
+                            <span className={`font-bold text-[10px] ${(trade.side === 'buy' || trade.side === 'long') ? 'text-emerald-400' : 'text-red-400'}`}>
+                              {(trade.side === 'buy' || trade.side === 'long') ? 'BUY' : 'SELL'}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 font-mono text-[10px] whitespace-nowrap">
+                            <span className="text-white">${entryPrice?.toFixed(0) || '---'}</span>
+                            <span className="text-gray-600"> → </span>
+                            <span className={exitPrice ? (exitPrice > entryPrice ? 'text-emerald-400' : 'text-red-400') : 'text-gray-500'}>
+                              {exitPrice ? `$${exitPrice.toFixed(0)}` : '—'}
+                            </span>
+                          </td>
+                          <td className="px-2 py-2 font-mono text-[10px] text-gray-300">
+                            {amount > 0 ? amount.toFixed(4) : '—'}
+                          </td>
+                          <td className="px-2 py-2 font-mono text-[10px] text-gray-400">
+                            {wager > 0 ? `$${wager.toFixed(0)}` : '—'}
+                          </td>
+                          <td className={`px-2 py-2 font-mono text-[10px] ${pnl >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}
+                          </td>
+                          <td className={`px-2 py-2 font-mono text-[10px] ${pnlPct >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                            {pnlPct >= 0 ? '+' : ''}{pnlPct.toFixed(2)}%
+                          </td>
+                          <td className="px-2 py-2">
+                            {isOpen ? (
+                              <span className="text-[8px] px-1 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/20">OPEN</span>
+                            ) : (
+                              <span className={`text-[8px] px-1 py-0.5 rounded ${pnl >= 0 ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/20' : 'bg-red-500/20 text-red-300 border border-red-500/20'}`}>
+                                CLOSED
+                              </span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {((showBacktestUI ? backtestTrades : closedTrades.filter((t: any) => {
+                      const mode = (t.risk_mode || t.mode || '').toLowerCase();
+                      const side = (t.side || '').toLowerCase();
+                      const filter = tradeFilter.toLowerCase();
+                      return !filter || mode.includes(filter) || side.includes(filter);
+                    })).length === 0) && (
+                      <tr>
+                        <td colSpan={10} className="text-center text-gray-500 py-4 text-sm">No trades yet — trades appear as the engine runs</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
               </div>
             </div>
           </div>
@@ -1983,7 +2697,7 @@ export default function App() {
           >
             <div className="flex justify-between items-center p-4 border-b border-white/5 flex-shrink-0">
               <h2 className="text-xl font-bold">System Settings</h2>
-              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-white">
+              <button onClick={() => setShowSettings(false)} className="text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none" aria-label="Close settings">
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -1994,7 +2708,7 @@ export default function App() {
                 <select 
                   value={settings.symbol}
                   onChange={(e) => setSettings({ ...settings, symbol: e.target.value })}
-                  className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-[#1e1e1e] text-gray-300 border border-white/10 rounded-lg px-3 py-2 caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none"
                 >
                   <option value="BTC/USDT">BTC/USDT</option>
                   <option value="ETH/USDT">ETH/USDT</option>
@@ -2007,7 +2721,7 @@ export default function App() {
                 <select 
                   value={settings.timeframe}
                   onChange={(e) => setSettings({ ...settings, timeframe: e.target.value })}
-                  className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500"
+                  className="w-full bg-[#1e1e1e] text-gray-300 border border-white/10 rounded-lg px-3 py-2 caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none"
                 >
                   <option value="1m">1m</option>
                   <option value="5m">5m</option>
@@ -2030,9 +2744,10 @@ export default function App() {
                       checked={settings.aiStrategySwitching === 'true'}
                       onChange={(e) => setSettings({ ...settings, aiStrategySwitching: e.target.checked ? 'true' : 'false' })}
                     />
-                    <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500"></div>
+                    <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:bg-indigo-500"></div>
                   </label>
                 </div>
+
               </div>
 
               <div className="pt-4 border-t border-white/5">
@@ -2048,7 +2763,7 @@ export default function App() {
                       checked={settings.aiSignalGeneration === 'true'}
                       onChange={(e) => setSettings({ ...settings, aiSignalGeneration: e.target.checked ? 'true' : 'false' })}
                     />
-                    <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                    <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:bg-amber-500"></div>
                   </label>
                 </div>
               </div>
@@ -2066,7 +2781,7 @@ export default function App() {
                       checked={settings.aiSentimentAnalysis === 'true'}
                       onChange={(e) => setSettings({ ...settings, aiSentimentAnalysis: e.target.checked ? 'true' : 'false' })}
                     />
-                    <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-amber-500"></div>
+                    <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:bg-amber-500"></div>
                   </label>
                 </div>
               </div>
@@ -2090,10 +2805,11 @@ export default function App() {
                     <select
                       value={settings.exchange}
                       onChange={(e) => setSettings({ ...settings, exchange: e.target.value })}
-                      className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                      className="w-full bg-[#1e1e1e] text-gray-300 border border-white/10 rounded-lg px-3 py-2 caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
                     >
                       <option value="coinmarketcap">CoinMarketCap</option>
                       <option value="coingecko">CoinGecko</option>
+                      <option value="coinapi">CoinAPI.io</option>
                       <option value="cryptocompare">CryptoCompare</option>
                       <option value="binance">Binance</option>
                       <option value="kraken">Kraken</option>
@@ -2110,7 +2826,7 @@ export default function App() {
                         value={settings.apiKey}
                         onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
                         placeholder="Enter your CoinMarketCap Pro API key"
-                        className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                        className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
                       />
                       <p className="text-xs text-gray-500 mt-1">Requires Pro plan for historical OHLCV data. Get your key at <a href="https://pro.coinmarketcap.com" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">pro.coinmarketcap.com</a></p>
                     </div>
@@ -2124,9 +2840,23 @@ export default function App() {
                         value={settings.apiKey}
                         onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
                         placeholder="Enter your CoinGecko API key"
-                        className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                        className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
                       />
                       <p className="text-xs text-gray-500 mt-1">Free tier available. Get your key at <a href="https://www.coingecko.com/en/api" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">coingecko.com/en/api</a></p>
+                    </div>
+                  )}
+
+                  {settings.exchange === 'coinapi' && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-400 mb-1">CoinAPI.io API Key</label>
+                      <input
+                        type="password"
+                        value={settings.apiKey}
+                        onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
+                        placeholder="Enter your CoinAPI.io API key"
+                        className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
+                      />
+                      <p className="text-xs text-gray-500 mt-1">Pay-as-you-go with $25 free trial credits. Each API call = 1 credit. 100 data points = 1 credit. Get your key at <a href="https://www.coinapi.io/pricing" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">coinapi.io/pricing</a></p>
                     </div>
                   )}
 
@@ -2138,7 +2868,7 @@ export default function App() {
                         value={settings.apiKey}
                         onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
                         placeholder="Enter your CryptoCompare API key"
-                        className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                        className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
                       />
                       <p className="text-xs text-gray-500 mt-1">Get your key at <a href="https://min-api.cryptocompare.com" target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline">min-api.cryptocompare.com</a></p>
                     </div>
@@ -2153,7 +2883,7 @@ export default function App() {
                           value={settings.apiKey}
                           onChange={(e) => setSettings({ ...settings, apiKey: e.target.value })}
                           placeholder={`Enter your ${settings.exchange} API key`}
-                          className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                          className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
                         />
                       </div>
                       <div>
@@ -2163,7 +2893,7 @@ export default function App() {
                           value={settings.apiSecret}
                           onChange={(e) => setSettings({ ...settings, apiSecret: e.target.value })}
                           placeholder={`Enter your ${settings.exchange} API secret`}
-                          className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                          className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
                         />
                       </div>
                       {settings.exchange === 'coinbase' && (
@@ -2174,7 +2904,7 @@ export default function App() {
                             value={settings.apiPassword || ''}
                             onChange={(e) => setSettings({ ...settings, apiPassword: e.target.value })}
                             placeholder="Enter your Coinbase API passphrase"
-                            className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                            className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
                           />
                         </div>
                       )}
@@ -2193,7 +2923,7 @@ export default function App() {
                       value={settings.baseUrl}
                       onChange={(e) => setSettings({ ...settings, baseUrl: e.target.value })}
                       placeholder="https://api.example.com"
-                      className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                      className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
                     />
                   </div>
                   <div>
@@ -2203,7 +2933,7 @@ export default function App() {
                       value={settings.wsUrl}
                       onChange={(e) => setSettings({ ...settings, wsUrl: e.target.value })}
                       placeholder="wss://ws.example.com"
-                      className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                      className="w-full bg-[#1e1e1e] border border-white/10 rounded-lg px-3 py-2 text-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
                     />
                   </div>
                   <div>
@@ -2212,7 +2942,7 @@ export default function App() {
                       value={settings.systemJsonConfig}
                       onChange={(e) => setSettings({ ...settings, systemJsonConfig: e.target.value })}
                       placeholder='{"key": "value"}'
-                      className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm font-mono h-24"
+                      className="w-full bg-[#1e1e1e] text-white border border-white/10 rounded-lg px-3 py-2 caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm font-mono h-24"
                     />
                   </div>
                 </div>
@@ -2226,7 +2956,7 @@ export default function App() {
                     <select 
                       value={settings.strategy}
                       onChange={(e) => setSettings({ ...settings, strategy: e.target.value })}
-                      className="w-full bg-black/20 border border-white/10 rounded-lg px-3 py-2 text-white focus:outline-none focus:border-indigo-500 text-sm"
+                      className="w-full bg-[#1e1e1e] text-gray-300 border border-white/10 rounded-lg px-3 py-2 caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none text-sm"
                     >
                       <option value="regime">Regime Based</option>
                       <option value="shotgun">Shotgun</option>
@@ -2258,7 +2988,7 @@ export default function App() {
                         checked={settings.testnet === 'true'}
                         onChange={(e) => setSettings({ ...settings, testnet: e.target.checked ? 'true' : 'false' })}
                       />
-                      <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-500"></div>
+                      <div className="w-11 h-6 bg-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-transform peer-checked:bg-indigo-500"></div>
                     </label>
                   </div>
                 </div>
@@ -2282,7 +3012,7 @@ export default function App() {
           <div className="bg-[#1e1e1e] w-full max-w-md rounded-2xl border border-white/10 shadow-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
             <div className="p-6 border-b border-white/5 flex justify-between items-center">
               <h2 className="text-xl font-bold capitalize">{balanceModalType} Funds</h2>
-              <button onClick={() => setShowBalanceModal(false)} className="text-gray-400 hover:text-white transition-colors">
+              <button onClick={() => setShowBalanceModal(false)} className="text-gray-400 hover:text-white transition-colors focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none" aria-label="Close balance modal">
                 <X className="w-6 h-6" />
               </button>
             </div>
@@ -2310,7 +3040,7 @@ export default function App() {
                     value={balanceAmount}
                     onChange={(e) => setBalanceAmount(e.target.value)}
                     placeholder="0.00"
-                    className="w-full bg-black/40 border border-white/10 rounded-xl pl-8 pr-4 py-3 text-lg font-mono focus:outline-none focus:border-indigo-500 transition-colors"
+                    className="w-full bg-[#1e1e1e] border border-white/10 rounded-xl pl-8 pr-4 py-3 text-lg font-mono text-white caret-white focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:border-indigo-500 focus-visible:outline-none"
                   />
                 </div>
                 <div className="flex gap-2">
@@ -2321,7 +3051,7 @@ export default function App() {
                         const max = balanceModalType === 'allocate' ? balances.mainBalance : balances.botBalance;
                         setBalanceAmount((max * pct).toFixed(2));
                       }}
-                      className="flex-1 py-1 text-[10px] rounded bg-white/5 hover:bg-white/10 text-gray-400 border border-white/5 transition-colors"
+                      className="flex-1 py-1 text-[10px] rounded bg-white/5 hover:bg-white/10 text-gray-400 border border-white/5 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none"
                     >
                       {pct * 100}%
                     </button>
@@ -2333,7 +3063,7 @@ export default function App() {
             <div className="p-6 bg-black/20 border-t border-white/5 flex gap-3">
               <button 
                 onClick={() => setShowBalanceModal(false)}
-                className="flex-1 px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors"
+                className="flex-1 px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none"
               >
                 Cancel
               </button>
@@ -2349,10 +3079,10 @@ export default function App() {
                     setShowBalanceModal(false);
                   }
                 }}
-                className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                className={`flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors focus-visible:ring-2 focus-visible:outline-none ${
                   balanceModalType === 'allocate' 
-                    ? 'bg-emerald-500 hover:bg-emerald-600 text-white' 
-                    : 'bg-indigo-500 hover:bg-indigo-600 text-white'
+                    ? 'bg-emerald-500 hover:bg-emerald-600 text-white focus-visible:ring-emerald-500' 
+                    : 'bg-indigo-500 hover:bg-indigo-600 text-white focus-visible:ring-indigo-500'
                 }`}
               >
                 Confirm {balanceModalType}

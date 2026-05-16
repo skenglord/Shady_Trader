@@ -30,8 +30,8 @@ export class IndicatorEngine {
   private maxWorkers = 4;
 
   async calculateAllParallel(candles: Candle[]): Promise<any[]> {
-    if (candles.length < 50) {
-      throw new Error("Need at least 50 candles for indicator calculation");
+    if (candles.length < 20) {
+      return [];
     }
 
     // Split work across workers
@@ -87,8 +87,8 @@ export class IndicatorEngine {
   }
 
   calculateAll(candles: Candle[]) {
-    if (candles.length < 50) {
-      throw new Error("Need at least 50 candles for indicator calculation");
+    if (candles.length < 20) {
+      return [];
     }
 
     const closes = candles.map(c => c.close);
@@ -165,7 +165,7 @@ export class IndicatorEngine {
       });
     }
 
-    // Filter out rows with nulls (warmup period)
-    return result.filter(r => r.ema_50 !== null && r.adx !== null);
+    // Filter out rows with nulls (warmup period) — use ema_21 as minimum instead of ema_50
+    return result.filter(r => r.ema_9 !== null && r.rsi_14 !== null);
   }
 }

@@ -12,7 +12,7 @@ backend/
 │       └── async runCycle()          # Main trading cycle: fetch candles → indicators → regime → signal → execute
 │
 ├── api/
-│   ├── routes.ts                     # Express REST API endpoints (auth, diagnostics, slippage)
+│   ├── routes.ts                     # Express REST API endpoints (auth, diagnostics, slippage, signals, trades/closed, shadow-trades)
 │   ├── marketDataService.ts          # Market data fetching with circuit breaker fallback
 │   └── websocket.ts                  # Real-time data broadcasting via WebSocket
 │
@@ -144,8 +144,12 @@ graph TD
         TE[TradingEngine] -->|Cycle| IE[IndicatorEngine]
         IE -->|Indicators| RD[RegimeDetector]
         RD -->|Regime + News| SG[SignalGenerator]
+        SG -->|Live Confidence| LC[computeLiveConfidence]
+        LC -->|0-100 Score| WS[WebSocket Broadcast]
         SG -->|Technical Signal| AI_G[Gemini AI]
         AI_G -->|Confirmed Signal| ST[ShadowTrader]
+        SG -->|Every signal recorded| SIG[(signals DB)]
+        SIG -->|GET /api/signals| UI[Frontend Markers]
         ST -->|Cost Check| SE[SlippageEngine]
         SE -->|Depth Analysis| LA[LiquidityAnalyzer]
         RQ[BullMQ Queues] -->|Schedules| TE
@@ -155,9 +159,11 @@ graph TD
 
     subgraph Portfolio_Management
         ST -->|Risk Control| RM[RiskManager]
-        ST -->|Wallet Ops| BM[BalanceManager]
+        BM[BalanceManager] -->|Auto-allocate $100k on start| ST
+        ST -->|Wallet Ops| BM
         BM -->|Persist| BDB[(balances)]
         RM -->|Circuit Breaker| CB[CircuitBreaker]
+        RM -->|loadConfigs from DB| SET[(settings)]
         CB -->|Reduce Position Size| ST
         SE -->|Slippage Guard| CBB[SlippageCircuitBreaker]
         CBB -->|Reject/Delay| ST
@@ -203,7 +209,7 @@ graph TD
 | Test Coverage (Branches) | 65% | ~66% |
 | API Latency (p95) | <50ms | ~25ms |
 | Slippage Est. Latency | <1ms | ~0.5ms |
-| Trading Cycle Time | <5s | ~1s |
+| Trading Cycle Time | <5s | ~5s |
 | Database Query Timeout | 5s | ✓ Configured |
 
 ### Error Handling Protocols
@@ -406,6 +412,27 @@ The repository contains a fully functional Adaptive Trading System with comprehe
 - [x] **SCROLLABLE SETTINGS MODAL**: Made settings modal scrollable with `max-h-[90vh]` and `overflow-y-auto` container to ensure accessibility on all screen sizes.
 - [x] **COINGECKO FALLBACK**: Added CoinGecko as free fallback data source for historical data when CoinMarketCap API key is missing or unavailable, preventing complete market data outage.
 - [x] **BALANCE MANAGER NULL FIX**: Fixed balance manager null reference error by adding default value handling for missing configuration values.
+- [x] **SIGNAL SYSTEM OVERHAUL (May 16, 2026)**: Overhauled signal generation, trade execution, and UI. Key changes:
+  - **BotBalance auto-allocation**: `TradingEngine.start()` auto-allocates 100k from main→bot balance, fixing active mode trades being silently rejected due to $0 botBalance
+  - **WebSocket `signal_status` broadcasts**: Every cycle emits live confidence (0-100 score based on indicator proximity), regime, active mode, current price, and indicators — even when no full signal fires
+  - **`computeLiveConfidence()`**: New method in SignalGenerator that measures continuous proximity to trigger conditions (BB band distance, RSI levels, StochRSI) instead of binary gates
+  - **Signals DB table + API**: Every cycle's confidence recorded in `signals` table. `GET /api/signals` endpoint for chart marker data
+  - **Continuous proximity scoring**: `_sidewaysStrategy` replaced hard binary gates (price must be within 0.5% of BB band) with proportional scoring based on distance to bands, enabling trades at earlier confidence levels
+  - **Regime fallback**: Signal generator `default:` case now falls back to sideways strategy instead of returning null, preventing silent stalls when regime detector returns "uncertain"
+  - **RiskManager init fix**: `riskManager.init()` now called from `TradingEngine.init()` — previously `loadConfigs()` was never invoked so DB-saved risk configs (threshold=20, positionSize=33%) were ignored
+  - **Slippage circuit breaker fix**: Mock spread reduced from `entryPrice * 0.001` to flat `0.00006` ratio to prevent "spread_widening" false rejections on every trade
+  - **Degen activeRegimes**: Added "uncertain" to degen's allowed regimes so trades fire even before regime detector stabilizes
+  - **Synthetic data guard**: CoinGecko path returns early instead of falling through to fake candle generator
+  - **Cycle timing**: 1m timeframe sleep changed from 1s to 5s for more meaningful confidence updates
+  - **Balance PnL fix**: `/api/balances` now includes historical PnL from DB (`totalPnl = historicalPnl + unrealizedPnl`) instead of overwriting with open-trades-only PnL (was always $0)
+  - **Non-shadow trades endpoint**: `GET /api/trades/closed` for bot/live trades (separate from shadow trades)
+- [x] **FRONTEND OVERHAUL (May 16, 2026)**: Major React dashboard enhancements:
+  - **Live confidence readout panel**: Dynamic 0-100% confidence bar updating every 5s cycle, with AWAITING SIGNAL/TRIGGERED badge, live side, live indicators as amber chips, pulsing "Waiting for next cycle..." indicator
+  - **Signal type toggles**: Global Signals/Trades toggle switches, per-mode visibility buttons (6 modes with color dots) in a collapsible panel — filters both chart markers and trades table
+  - **Enhanced trades table**: 10 columns — Time opened, Time closed, Mode (colored badge), Side (BUY/SELL), Entry→Exit price with arrow, Amount (BTC), Wager ($), PnL $ (green/red), PnL %, Status (OPEN/CLOSED). Search/filter input to filter by mode or side. 200-row limit, pagination-ready
+  - **Closed B Trades section**: Separate table for non-shadow bot trades from `GET /api/trades/closed`, with Time, Closed, Side, Entry/Exit, Amount, PnL $, Status
+  - **Mode persistence**: Mode selector now calls `changeActiveMode()` which POSTs to `/api/active-mode` persisting to DB across restarts
+  - **Signal marker WS integration**: `signal_record` WS event handler adds new signals to state for chart marker updates
 
 ## Context Material
 Additional project context, design docs, and external resources can be found in:

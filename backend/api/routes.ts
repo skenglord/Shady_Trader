@@ -417,7 +417,8 @@ apiRouter.get('/status', (req, res) => {
     isRunning: engine?.isRunning || false,
     currentRegime: engine?.currentRegime || 'uncertain',
     symbol: engine?.symbol || 'BTC/USDT',
-    timeframe: engine?.timeframe || '15m'
+    timeframe: engine?.timeframe || '15m',
+    exchange: engine?.exchange?.exchangeName || (engine as any)?.startupDiagnostics?.exchangeName || 'unknown'
   });
 });
 
@@ -717,6 +718,60 @@ apiRouter.get('/trades', async (req, res) => {
   res.json(trades);
 });
 
+// Closed shadow trades with PnL for the all-trades history view
+apiRouter.get('/shadow-trades/closed', async (req, res) => {
+  const requestedLimit = parseInt(req.query.limit as string) || 100;
+  const limit = Math.max(1, Math.min(requestedLimit, 500));
+  
+  const trades = await runQuery(`
+    SELECT * FROM shadow_trades
+    WHERE status = 'closed'
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `, [limit], 'all');
+  res.json(trades);
+});
+
+// All shadow trades (open + closed) for chart markers
+apiRouter.get('/shadow-trades/all', async (req, res) => {
+  const requestedLimit = parseInt(req.query.limit as string) || 200;
+  const limit = Math.max(1, Math.min(requestedLimit, 1000));
+  
+  const trades = await runQuery(`
+    SELECT * FROM shadow_trades
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `, [limit], 'all');
+  res.json(trades);
+});
+
+// Signal history for chart markers
+apiRouter.get('/signals', async (req, res) => {
+  const requestedLimit = parseInt(req.query.limit as string) || 500;
+  const limit = Math.max(1, Math.min(requestedLimit, 2000));
+  
+  const signals = await runQuery(`
+    SELECT * FROM signals
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `, [limit], 'all');
+  res.json(signals);
+});
+
+// Closed bot trades (non-shadow, real/live trades)
+apiRouter.get('/trades/closed', async (req, res) => {
+  const requestedLimit = parseInt(req.query.limit as string) || 100;
+  const limit = Math.max(1, Math.min(requestedLimit, 500));
+  
+  const trades = await runQuery(`
+    SELECT * FROM trades
+    WHERE status = 'closed'
+    ORDER BY timestamp DESC
+    LIMIT ?
+  `, [limit], 'all');
+  res.json(trades);
+});
+
 apiRouter.get('/history/regime', async (req, res) => {
   const requestedLimit = parseInt(req.query.limit as string) || 20;
   const limit = Math.max(1, Math.min(requestedLimit, 200));
@@ -815,7 +870,13 @@ apiRouter.post('/positions/update', validatePositionsUpdateBody, async (req, res
 apiRouter.get('/risk-configs', (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
-    res.json(engine.shadowTrader.riskManager.RISK_CONFIGS);
+    const configs = engine.shadowTrader.riskManager.RISK_CONFIGS;
+    // Merge with defaults to ensure all fields exist
+    const enrichedConfigs: Record<string, any> = {};
+    for (const [mode, defaultConfig] of Object.entries(DEFAULT_RISK_CONFIGS)) {
+      enrichedConfigs[mode] = { ...defaultConfig, ...(configs[mode] || {}) };
+    }
+    res.json(enrichedConfigs);
   } else {
     res.status(500).json({ error: 'Engine not initialized' });
   }
@@ -907,14 +968,21 @@ apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
     if (error.message && error.message.includes("fetch failed")) {
        aiRecommendationsEnabled = false;
     }
-    // Fallback to simple logic
+    // Fallback to simple logic — always produce non-zero values
     for (const mode of Object.values(RiskMode)) {
       if (currentRegime === 'strong_bull' || currentRegime === 'bear') {
-        currentConfigs[mode].tpMultiplier = Math.max(1.5, currentConfigs[mode].tpMultiplier * 1.2);
-        currentConfigs[mode].slMultiplier = Math.max(0.5, currentConfigs[mode].slMultiplier * 0.8);
+        currentConfigs[mode].takeProfit = Math.max(1.5, (currentConfigs[mode].takeProfit || 1.8) * 1.2);
+        currentConfigs[mode].stopLoss = Math.min(5.0, (currentConfigs[mode].stopLoss || 2.5) * 0.8);
+        currentConfigs[mode].positionSize = Math.min(0.15, (currentConfigs[mode].positionSize || 0.05) * 1.2);
       } else if (currentRegime === 'sideways') {
-        currentConfigs[mode].tpMultiplier = Math.max(1.0, currentConfigs[mode].tpMultiplier * 0.8);
-        currentConfigs[mode].slMultiplier = Math.max(0.5, currentConfigs[mode].slMultiplier * 1.2);
+        currentConfigs[mode].takeProfit = Math.max(1.0, (currentConfigs[mode].takeProfit || 1.8) * 0.8);
+        currentConfigs[mode].stopLoss = Math.min(5.0, (currentConfigs[mode].stopLoss || 2.5) * 1.2);
+        currentConfigs[mode].positionSize = Math.min(0.1, (currentConfigs[mode].positionSize || 0.05) * 0.8);
+      } else {
+        // weak_bull or uncertain — moderate adjustments
+        currentConfigs[mode].takeProfit = currentConfigs[mode].takeProfit || 1.8;
+        currentConfigs[mode].stopLoss = currentConfigs[mode].stopLoss || 2.5;
+        currentConfigs[mode].positionSize = currentConfigs[mode].positionSize || 0.05;
       }
     }
     res.json({ success: true, configs: currentConfigs });
@@ -935,7 +1003,36 @@ apiRouter.post('/backtest', validateBacktestBody, async (req, res) => {
 apiRouter.get('/balances', async (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
-    res.json(await engine.balanceManager.getBalances());
+    const baseBalances = await engine.balanceManager.getBalances();
+
+    // Aggregate shadow portfolio positions into active trade balance
+    let totalActiveTrade = 0;
+    let unrealizedPnl = 0;
+    for (const mode of Object.values(RiskMode)) {
+      const portfolio = engine.shadowTrader.portfolios[mode as RiskMode];
+      if (portfolio && portfolio.openTrades) {
+        for (const trade of portfolio.openTrades) {
+          const currentValue = (trade.amount || 0) * ((trade.currentPrice || trade.price) || 0);
+          totalActiveTrade += currentValue;
+          const entryValue = (trade.amount || 0) * (trade.price || 0);
+          unrealizedPnl += trade.side === 'buy' ? currentValue - entryValue : entryValue - currentValue;
+        }
+      }
+    }
+
+    // Historical PnL from DB (accumulated from closed trades)
+    const dbBalances = await engine.balanceManager.getBalances();
+    const historicalPnl = dbBalances.totalPnl || 0;
+    const totalPnl = historicalPnl + unrealizedPnl;
+
+    res.json({
+      ...baseBalances,
+      activeTradeBalance: totalActiveTrade,
+      totalPnl: totalPnl,
+      totalPnlPct: baseBalances.botBalance > 0
+        ? (totalPnl / baseBalances.botBalance) * 100
+        : (baseBalances.mainBalance > 0 ? (totalPnl / baseBalances.mainBalance) * 100 : 0)
+    });
   } else {
     res.status(500).json({ error: 'Engine not initialized' });
   }
@@ -947,12 +1044,6 @@ apiRouter.post('/balances/allocate', validateAmountBody, async (req, res) => {
     const { amount } = req.body;
     try {
       await engine.balanceManager.allocateToBot(amount);
-      // Update the active portfolio initial balance to reflect the new allocation
-      const portfolio = engine.shadowTrader.portfolios[engine.activeMode as any];
-      if (portfolio) {
-        portfolio.initialBalance += amount;
-        portfolio.balance += amount;
-      }
       res.json({ success: true, balances: await engine.balanceManager.getBalances() });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -968,10 +1059,15 @@ apiRouter.post('/balances/withdraw', validateAmountBody, async (req, res) => {
     const { amount } = req.body;
     try {
       await engine.balanceManager.withdrawFromBot(amount);
-      const portfolio = engine.shadowTrader.portfolios[engine.activeMode as any];
-      if (portfolio) {
-        portfolio.initialBalance -= amount;
-        portfolio.balance -= amount;
+      // Distribute withdrawal across ALL shadow portfolios equally
+      const modes = Object.keys(engine.shadowTrader.portfolios || {});
+      const perMode = modes.length > 0 ? amount / modes.length : amount;
+      for (const mode of modes) {
+        const portfolio = engine.shadowTrader.portfolios[mode];
+        if (portfolio) {
+          portfolio.initialBalance = Math.max(0, (portfolio.initialBalance || 0) - perMode);
+          portfolio.balance = Math.max(0, (portfolio.balance || 0) - perMode);
+        }
       }
       res.json({ success: true, balances: await engine.balanceManager.getBalances() });
     } catch (e: any) {

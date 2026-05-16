@@ -220,6 +220,36 @@ export async function initDatabase() {
           take_profit REAL,
           close_reason TEXT DEFAULT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS audit_system_events (
+          id TEXT PRIMARY KEY,
+          event_type TEXT NOT NULL,
+          message TEXT NOT NULL,
+          timestamp INTEGER NOT NULL,
+          severity TEXT DEFAULT 'info',
+          metadata TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_audit_system_events_timestamp
+        ON audit_system_events(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_audit_system_events_event_type
+        ON audit_system_events(event_type);
+
+        CREATE TABLE IF NOT EXISTS signals (
+          id TEXT PRIMARY KEY,
+          timestamp INTEGER NOT NULL,
+          symbol TEXT NOT NULL,
+          regime TEXT,
+          strategy TEXT,
+          side TEXT NOT NULL,
+          confidence INTEGER,
+          entry_price REAL,
+          indicators TEXT,
+          reason TEXT,
+          live_confidence INTEGER,
+          ml_score REAL
+        );
+        CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp DESC);
       `);
 
       mockRunQuery = async (sql: string, params: any[] = [], type: 'run' | 'all' = 'run'): Promise<any> => {

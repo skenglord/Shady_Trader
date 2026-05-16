@@ -116,10 +116,10 @@ export class PositionReconciliationEngine {
     const rows = await runQuery(`
       SELECT symbol, SUM(CASE WHEN side = 'buy' THEN amount ELSE -amount END) as net_quantity
       FROM shadow_trades
-      WHERE status = 'open' AND exchange = ?
+      WHERE status = 'open'
       GROUP BY symbol
       HAVING net_quantity != 0
-    `, [exchangeName], 'all');
+    `, [], 'all');
 
     return rows.map(row => ({
       symbol: row.symbol,
