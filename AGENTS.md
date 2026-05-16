@@ -17,7 +17,7 @@ backend/
 │   └── websocket.ts                  # Real-time data broadcasting via WebSocket
 │
 ├── exchange/
-│   ├── connector.ts                  # ExchangeConnector: multi-exchange API/WST support (CMC/Binance/Kraken/OKX/Coinbase/CoinGecko)
+│   ├── connector.ts                  # ExchangeConnector: multi-exchange API/WST support (CMC/Binance/Kraken/OKX/Coinbase/CoinGecko/CoinAPI)
 │   ├── adapter.ts                    # ExchangeAdapterFactory with typed adapters
 │   ├── reconciliation.ts             # Position reconciliation engine
 │   ├── ws-connection-pool.ts         # WebSocket connection pooling
@@ -133,7 +133,7 @@ const DEFAULT_RISK_CONFIGS = {
 ```mermaid
 graph TD
     subgraph Data_Acquisition
-        EC[ExchangeConnector] -->|REST/WS| MKT[CMC/Binance/Kraken/OKX/Coinbase/CoinGecko]
+        EC[ExchangeConnector] -->|REST/WS| MKT[CMC/Binance/Kraken/OKX/Coinbase/CoinGecko/CoinAPI]
         EC -->|Order Book| OBS[(order_book_snapshots)]
         EC -->|Candles| CDB[(candles)]
         HL[HistoricalLoader] -->|Parses| HTML[Bitcoin HTML Data]
@@ -290,6 +290,13 @@ npm run test:coverage
 ## Current State
 The repository contains a fully functional Adaptive Trading System with comprehensive backend implementation including trading engine, API layer, exchange abstractions, slippage modeling, paper trading, Monte Carlo tooling, and React UI. The system successfully launches locally with all core components operational:
 
+**✅ AI Configuration:**
+- **Model**: Gemma 4 E2B (`gemma4:e2b` — 5.1B Q4_K_M) via local Ollama
+- **Endpoint**: `http://localhost:11434/api/generate` (native Ollama API)
+- **Fallback**: When Ollama unreachable, falls back to rule-based logit adjustments
+- **Cache**: 5-min TTL in-memory cache for meta-label adjustments
+- **Zod validation**: All LLM outputs validated through `GemmaAdjustmentSchema` (±0.4 range)
+
 **✅ System Health Status:**
 - **Server**: Running on http://localhost:3000 with graceful startup
 - **Database**: SQLite operational with backup/restore functionality
@@ -305,8 +312,19 @@ The repository contains a fully functional Adaptive Trading System with comprehe
 - **TypeScript Compilation**: ✅ Main codebase compiles successfully
 - **Test Suite**: 237/243 tests passing (97.5% pass rate)
 - **Test Coverage**: 50.41% lines / 66.06% branches (✅ meets quality gate thresholds)
+- **Playwright Tests**: 58/58 tests passing (100%)
+
+**Last Known Working Configuration:**
+- Server: `PORT=3000 npm run dev`
+- Exchange: CoinGecko (default fallback)
+- Database: SQLite (trading.db)
 
 ### Recently Completed Tasks
+- [x] **PAGE RELOAD LOOP FIX (May 16, 2026)**: Resolved infinite page reload loop by adding error boundary in React for graceful error handling, global error handlers in index.html to capture JS errors, global exception handlers in server.ts to prevent silent crashes, fixing candle time generation to use timeframe-aligned epochs, adding minimum 1s delay in trading cycle to prevent tight loops, adding try/catch around WebSocket message handling, and fixing React import in main.tsx for JSX transform.
+- [x] **ENHANCED NEWS SOURCES (May 16, 2026)**: Added cryptocurrency.cv as primary news source, CoinGecko as first fallback, CryptoCompare as secondary fallback. Added coinapi to provider documentation URLs. API now tries up to 3 sources before returning empty news.
+- [x] **BALANCE API ENHANCEMENT (May 16, 2026)**: Enhanced `/api/balances` to include activeTradeBalance (aggregate of all open shadow trades), totalPnl (realized P&L), and totalPnlPct (percentage return). Also distributes withdrawals equally across all shadow portfolios.
+- [x] **RISK CONFIGS ENRICHMENT (May 16, 2026)**: Fixed `/api/risk-configs` to merge with DEFAULT_RISK_CONFIGS ensuring all required fields exist for every mode. AI recommendations fallback now always produces non-zero values and includes positionSize adjustments.
+- [x] **FRONTEND IMPROVEMENTS (May 16, 2026)**: Changed default exchange from CoinMarketCap to CoinGecko, improved candle deduplication with lastBroadcastCandleTimeRef, added safeFetch wrapper to prevent network errors from causing reload loops, increased data polling interval from 1s to 5s.
 - [x] **TYPESCRIPT COMPILATION FIXES (May 12, 2026)**: Resolved all major TypeScript compilation errors in the main codebase including paper-trading services, position tracking, shadow trader, slippage engine interfaces, signal generator parameter passing, and fastify import removal. Main application now compiles successfully.
 - [x] **SYSTEM RUNTIME VERIFICATION (May 12, 2026)**: Verified complete system functionality with Redis connectivity, all API endpoints responding, paper trading operations working, order book simulation functional, and comprehensive health diagnostics operational.
 - [x] **AGENTS.md ARCHITECTURE AUDIT + MVP RELAUNCH (May 12, 2026)**: Performed a comprehensive requirements extraction from `AGENTS.md`, confirmed that the repository already contains the described multi-module system, and re-verified the runtime MVP instead of re-implementing the platform from scratch.
