@@ -48,10 +48,10 @@ describe('DataPartitioner', () => {
   });
 
   test('handles regime partitioning and mismatches', () => {
-    const regimes = testData.map((_, i) => ['strong_bull', 'weak_bull', 'sideways', 'bear'][i % 4]);
+    const regimes = testData.map((_, i) => ['strongbull', 'weakbull', 'sideways', 'bear'][i % 4]);
     const regimePartitioner = new DataPartitioner({ mode: 'anchored', stepSize: 10, minInSampleSize: 20, minOutOfSampleSize: 10 });
     const partitions = regimePartitioner.partitionByRegime(testData, regimes);
     assert.ok(partitions.length > 0);
-    assert.throws(() => partitioner.partitionByRegime(testData, ['strong_bull']), /length mismatch/i);
+    assert.throws(() => partitioner.partitionByRegime(testData, ['strongbull']), /length mismatch/i);
   });
 });

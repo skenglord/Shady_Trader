@@ -1210,8 +1210,8 @@ export default function App() {
 
   const getRegimeColor = (regime: string) => {
     switch (regime) {
-      case 'strong_bull': return 'text-emerald-500 bg-emerald-500 bg-opacity-10 border border-emerald-500 border-opacity-20';
-      case 'weak_bull': return 'text-green-400 bg-green-400 bg-opacity-10 border border-green-400 border-opacity-20';
+      case 'strongbull': return 'text-emerald-500 bg-emerald-500 bg-opacity-10 border border-emerald-500 border-opacity-20';
+      case 'weakbull': return 'text-green-400 bg-green-400 bg-opacity-10 border border-green-400 border-opacity-20';
       case 'bear': return 'text-red-500 bg-red-500 bg-opacity-10 border border-red-500 border-opacity-20';
       case 'sideways': return 'text-blue-400 bg-blue-400 bg-opacity-10 border border-blue-400 border-opacity-20';
       default: return 'text-gray-400 bg-gray-400 bg-opacity-10 border border-gray-400 border-opacity-20';
@@ -1220,8 +1220,8 @@ export default function App() {
 
   const getRegimeIcon = (regime: string) => {
     switch (regime) {
-      case 'strong_bull':
-      case 'weak_bull': return <TrendingUp className="w-4 h-4" />;
+      case 'strongbull':
+      case 'weakbull': return <TrendingUp className="w-4 h-4" />;
       case 'bear': return <TrendingDown className="w-4 h-4" />;
       case 'sideways': return <Minus className="w-4 h-4" />;
       default: return <AlertCircle className="w-4 h-4" />;
@@ -1514,8 +1514,8 @@ export default function App() {
                     className="bg-[#1e1e1e] text-gray-300 text-sm font-medium uppercase tracking-wider cursor-pointer focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none"
                   >
                   <option value="auto" className="bg-black text-white">AUTO</option>
-                  <option value="strong_bull" className="bg-black text-white">STRONG BULL</option>
-                  <option value="weak_bull" className="bg-black text-white">WEAK BULL</option>
+                  <option value="strongbull" className="bg-black text-white">STRONG BULL</option>
+                  <option value="weakbull" className="bg-black text-white">WEAK BULL</option>
                   <option value="bear" className="bg-black text-white">BEAR</option>
                   <option value="sideways" className="bg-black text-white">SIDEWAYS</option>
                   <option value="uncertain" className="bg-black text-white">UNCERTAIN</option>
@@ -1536,8 +1536,8 @@ export default function App() {
                   (() => {
                     const r = signalStatus?.regime || status.currentRegime;
                     switch (r) {
-                      case 'strong_bull': return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-                      case 'weak_bull': return 'bg-lime-500/20 text-lime-400 border border-lime-500/30';
+                      case 'strongbull': return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+                      case 'weakbull': return 'bg-lime-500/20 text-lime-400 border border-lime-500/30';
                       case 'sideways': return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
                       case 'bear': return 'bg-red-500/20 text-red-400 border border-red-500/30';
                       default: return 'bg-gray-500/20 text-gray-400 border border-gray-500/30';

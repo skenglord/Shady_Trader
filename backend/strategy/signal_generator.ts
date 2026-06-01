@@ -173,8 +173,8 @@ export class SignalGenerator {
           const { getCachedAdjustment } = await import('../ml/gemma_adjuster.js');
           const { scoreEnsemble } = await import('../ml/ensemble_scorer.js');
 
-          const regimeName = regime === RegimeType.STRONG_BULL ? 'strong_bull'
-            : regime === RegimeType.WEAK_BULL ? 'weak_bull'
+          const regimeName = regime === RegimeType.STRONG_BULL ? 'strongbull'
+            : regime === RegimeType.WEAK_BULL ? 'weakbull'
             : regime === RegimeType.BEAR ? 'bear'
             : regime === RegimeType.SIDEWAYS ? 'sideways'
             : 'uncertain';

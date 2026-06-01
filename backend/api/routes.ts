@@ -5,6 +5,7 @@ import { runQuery } from '../database.js';
 import { getTradingEngine, getStartupDiagnostics } from '../main.js';
 import { RiskMode, DEFAULT_RISK_CONFIGS } from '../risk/manager.js';
 import { RegimeType } from '../regime/detector.js';
+import { normalizeRegime, isCanonicalRegime, LEGACY_TO_CANONICAL } from '../types/regime.js';
 import multer from 'multer';
 import { parse } from 'csv-parse';
 import fs from 'fs';
@@ -402,7 +403,10 @@ const validateActiveModeBody = validateBody(z.object({
 }));
 
 const validateManualRegimeBody = validateBody(z.object({
-  regime: z.string().refine((v) => regimeModes.has(v as RegimeType), 'Invalid regime')
+  regime: z.string().refine(
+    (v) => Object.prototype.hasOwnProperty.call(LEGACY_TO_CANONICAL, v),
+    'Invalid regime'
+  )
 }));
 
 const validateManualTradeBody = validateBody(z.object({
@@ -920,7 +924,7 @@ apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
   if (!aiRecommendationsEnabled) {
     // Fallback immediately
     for (const mode of Object.values(RiskMode)) {
-      if (currentRegime === 'strong_bull' || currentRegime === 'bear') {
+      if (currentRegime === 'strongbull' || currentRegime === 'bear') {
         currentConfigs[mode].tpMultiplier = Math.max(1.5, currentConfigs[mode].tpMultiplier * 1.2);
         currentConfigs[mode].slMultiplier = Math.max(0.5, currentConfigs[mode].slMultiplier * 0.8);
       } else if (currentRegime === 'sideways') {
@@ -972,7 +976,7 @@ apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
     }
     // Fallback to simple logic — always produce non-zero values
     for (const mode of Object.values(RiskMode)) {
-      if (currentRegime === 'strong_bull' || currentRegime === 'bear') {
+      if (currentRegime === 'strongbull' || currentRegime === 'bear') {
         currentConfigs[mode].takeProfit = Math.max(1.5, (currentConfigs[mode].takeProfit || 1.8) * 1.2);
         currentConfigs[mode].stopLoss = Math.min(5.0, (currentConfigs[mode].stopLoss || 2.5) * 0.8);
         currentConfigs[mode].positionSize = Math.min(0.15, (currentConfigs[mode].positionSize || 0.05) * 1.2);
@@ -1152,8 +1156,8 @@ apiRouter.post('/regime/manual', validateManualRegimeBody, (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     const { regime } = req.body;
-    engine.manualRegime = regime;
-    res.json({ success: true, regime });
+    engine.manualRegime = normalizeRegime(regime) as any;
+    res.json({ success: true, regime: normalizeRegime(regime) });
   } else {
     res.status(500).json({ error: 'Engine not initialized' });
   }

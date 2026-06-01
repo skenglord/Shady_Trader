@@ -4,6 +4,7 @@ import { IndicatorEngine } from './indicators/engine.js';
 import { RegimeDetector, RegimeType } from './regime/detector.js';
 import { SignalGenerator } from './strategy/signal_generator.js';
 import { ShadowTrader } from './shadow/shadow_trader.js';
+import { validateModeForLive } from './risk/manager.js';
 import { BalanceManager } from './balance/manager.js';
 import { MarketDataService } from './api/marketDataService.js';
 import { OptimizationEngine } from './strategy/optimization_engine.js';
@@ -441,6 +442,13 @@ export class TradingEngine {
       }
     }
     await this.loadSettings();
+    // ── v6.0 Block 6: degen live-mode safety guard ──
+    try {
+      validateModeForLive(process.env.RISK_MODE_DEFAULT ?? 'conservative');
+    } catch (err: any) {
+      logger.error('Live mode validation failed', { error: err.message });
+      throw err;
+    }
     // Initialize sub-components that need DB access
     try {
       await this.shadowTrader.init();
@@ -780,6 +788,25 @@ export class TradingEngine {
 
       regimeResult = await this.regimeDetector.detect(df, this.aiSentimentAnalysis, shadowPerformance, marketContext);
     }
+
+    // ── v6.0: persist three-axis composite to regimes_v2 each cycle ──
+    if (regimeResult.composite) {
+      try {
+        await runQuery(`
+          INSERT INTO regimes_v2
+            (symbol, timestamp, trend_dir, trend_strength, vol_regime,
+             composite, stability, atr_percentile, atr_usable)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          this.symbol, Date.now(),
+          regimeResult.trendDir, regimeResult.trendStrength, regimeResult.volRegime,
+          regimeResult.composite, regimeResult.stability ?? 1.0,
+          regimeResult.atrPercentile ?? null, regimeResult.atrUsable ? 1 : 0
+        ], 'run');
+      } catch (e: any) {
+        logger.debug('regimes_v2 persist skipped', { service: 'TradingEngine', error: e?.message });
+      }
+    }
     
     if (this.manualRegime || this.regimeDetector.shouldUpdateRegime(this.currentRegime, regimeResult.regime, regimeResult.confidence)) {
       this.currentRegime = regimeResult.regime;
@@ -840,7 +867,7 @@ export class TradingEngine {
           console.error("AI Strategy Switch failed:", error.message);
           // Fallback
           let newMode = 'moderate';
-          if (this.currentRegime === 'strong_bull' || this.currentRegime === 'bear') {
+          if (this.currentRegime === 'strongbull' || this.currentRegime === 'bear') {
             newMode = 'aggressive';
           } else if (this.currentRegime === 'sideways') {
             newMode = 'conservative';

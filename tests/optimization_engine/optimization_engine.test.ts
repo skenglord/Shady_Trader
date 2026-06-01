@@ -63,7 +63,7 @@ describe.skip('OptimizationEngine', () => {
       aiClientFactory
     });
 
-    await engine.optimize('strong_bull');
+    await engine.optimize('strongbull');
     assert.ok(savedConfigs);
     assert.ok(savedConfigs[RiskMode.MODERATE].stopLoss > riskManager.RISK_CONFIGS[RiskMode.MODERATE].stopLoss);
     assert.strictEqual((engine as any).isOptimizing, false);
@@ -91,7 +91,7 @@ describe.skip('OptimizationEngine', () => {
       })
     });
 
-    await engine.optimize('weak_bull');
+    await engine.optimize('weakbull');
     assert.strictEqual(saveCalls, 0);
     assert.strictEqual((engine as any).isOptimizing, false);
     process.env.GEMINI_API_KEY = originalKey;

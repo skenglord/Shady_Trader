@@ -1,6 +1,55 @@
 import { runQuery } from '../database.js';
 import { logger } from '../logging/logger.js';
 import { randomUUID } from 'crypto';
+
+// ── v6.0 Block 6: Risk safety guards ──
+
+/**
+ * Degen live-mode guard. Degen is simulation-only unless explicitly overridden.
+ */
+export function validateModeForLive(riskMode: string): void {
+  if (riskMode !== 'degen') return;
+  if (process.env.DEGEN_LIVE_OVERRIDE !== 'true') {
+    throw new Error(
+      'SAFETY: Degen mode is simulation-only.\n' +
+      'Expected max drawdown: 25-35%. Max leverage: 3x. Position size: 15%.\n' +
+      'To enable live degen trading, set DEGEN_LIVE_OVERRIDE=true in .env.\n' +
+      'This is not recommended for any account under $50,000.'
+    );
+  }
+  logger.warn('DEGEN_LIVE_OVERRIDE active — confirm you accept liquidation risk', { service: 'riskManager' });
+}
+
+/**
+ * Cap position size so effective at-risk capital never exceeds MAX_EFFECTIVE_RISK_FRACTION.
+ * effective risk = size × leverage × stopDistanceFrac. Hard backstop after Kelly.
+ */
+export function enforceRiskCap(size: number, leverage: number, stopFrac: number): number {
+  const MAX_RISK_FRAC = parseFloat(process.env.MAX_EFFECTIVE_RISK_FRACTION ?? '0.005');
+  const effective = size * leverage * stopFrac;
+  if (effective <= MAX_RISK_FRAC) return size;
+  const capped = MAX_RISK_FRAC / (leverage * stopFrac);
+  logger.debug('risk_cap_applied', { service: 'riskManager', original: size, capped, effective });
+  return capped;
+}
+
+/**
+ * Absolute dollar cap for degen positions.
+ */
+export function enforceDegenDollarCap(
+  riskMode: string, finalSize: number, equity: number, stopDistanceFrac: number
+): number {
+  if (riskMode !== 'degen') return finalSize;
+  const DEGEN_MAX_USD = parseFloat(process.env.DEGEN_MAX_RISK_DOLLARS ?? '500');
+  const dollarRisk = equity * finalSize * stopDistanceFrac;
+  if (dollarRisk > DEGEN_MAX_USD && equity * stopDistanceFrac > 0) {
+    const capped = DEGEN_MAX_USD / (equity * stopDistanceFrac);
+    logger.warn('degen_dollar_cap', { service: 'riskManager', dollarRisk, cap: DEGEN_MAX_USD });
+    return capped;
+  }
+  return finalSize;
+}
+
 export enum RiskMode {
   ULTRA_CONSERVATIVE = "ultra_conservative",
   CONSERVATIVE = "conservative",
@@ -21,7 +70,7 @@ export const DEFAULT_RISK_CONFIGS = {
     leverage: 1.0,
     stopLoss: 1.5, // 1.5%
     takeProfit: 0.8, // 0.8%
-    activeRegimes: ["strong_bull", "weak_bull"],
+    activeRegimes: ["strongbull", "weakbull"],
     earlyExitEnabled: false,
     multiCandleHoldEnabled: false,
     runnerEnabled: false,
@@ -37,7 +86,7 @@ export const DEFAULT_RISK_CONFIGS = {
     leverage: 1.0,
     stopLoss: 2.0, // 2.0%
     takeProfit: 1.2, // 1.2%
-    activeRegimes: ["strong_bull", "weak_bull", "sideways"],
+    activeRegimes: ["strongbull", "weakbull", "sideways"],
     earlyExitEnabled: true,
     earlyExitTarget: 0.8,
     multiCandleHoldEnabled: false,
@@ -54,7 +103,7 @@ export const DEFAULT_RISK_CONFIGS = {
     leverage: 1.5,
     stopLoss: 2.5, // 2.5%
     takeProfit: 1.8, // 1.8%
-    activeRegimes: ["strong_bull", "weak_bull", "sideways"],
+    activeRegimes: ["strongbull", "weakbull", "sideways"],
     earlyExitEnabled: true,
     earlyExitTarget: 1.0,
     multiCandleHoldEnabled: true,
@@ -75,7 +124,7 @@ export const DEFAULT_RISK_CONFIGS = {
     leverage: 2.0,
     stopLoss: 3.0, // 3.0%
     takeProfit: 2.5, // 2.5%
-    activeRegimes: ["strong_bull", "weak_bull", "sideways", "bear"],
+    activeRegimes: ["strongbull", "weakbull", "sideways", "bear"],
     earlyExitEnabled: true,
     earlyExitTarget: 1.5,
     multiCandleHoldEnabled: true,
@@ -104,7 +153,7 @@ export const DEFAULT_RISK_CONFIGS = {
     leverage: 3.0,
     stopLoss: 4.0, // 4.0%
     takeProfit: 3.5, // 3.5%
-    activeRegimes: ["strong_bull", "weak_bull", "sideways", "bear", "uncertain"],
+    activeRegimes: ["strongbull", "weakbull", "sideways", "bear", "uncertain"],
     earlyExitEnabled: true,
     earlyExitTarget: 2.0,
     multiCandleHoldEnabled: true,
@@ -131,7 +180,7 @@ export const DEFAULT_RISK_CONFIGS = {
     leverage: 1.5,
     stopLoss: 2.5, // 2.5%
     takeProfit: 1.8, // 1.8%
-    activeRegimes: ["strong_bull", "weak_bull", "sideways"],
+    activeRegimes: ["strongbull", "weakbull", "sideways"],
     earlyExitEnabled: true,
     earlyExitTarget: 1.0,
     multiCandleHoldEnabled: true,

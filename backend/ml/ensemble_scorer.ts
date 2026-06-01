@@ -20,8 +20,8 @@ export interface EnsembleResult {
 }
 
 const REGIME_WEIGHTS: Record<string, number> = {
-  strong_bull: 1.15,
-  weak_bull: 1.05,
+  strongbull: 1.15,
+  weakbull: 1.05,
   sideways: 0.95,
   bear: 0.90,
   uncertain: 0.75

@@ -76,8 +76,8 @@ function DriftBadge({ score }: { score: number }) {
 
 function RegimeChip({ regime }: { regime: string }) {
   const colors: Record<string, string> = {
-    strong_bull: 'bg-emerald-900 text-emerald-300',
-    weak_bull:   'bg-teal-900 text-teal-300',
+    strongbull: 'bg-emerald-900 text-emerald-300',
+    weakbull:   'bg-teal-900 text-teal-300',
     sideways:    'bg-slate-700 text-slate-300',
     bear:        'bg-red-900 text-red-300',
   };

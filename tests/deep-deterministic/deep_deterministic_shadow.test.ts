@@ -120,7 +120,7 @@ describe('Deep Deterministic Tests - ShadowTrader', () => {
         stopLoss: 49000
       };
 
-      await shadowTrader.processSignal(signal, 50000, RiskMode.MODERATE, undefined, undefined, 'strong_bull');
+      await shadowTrader.processSignal(signal, 50000, RiskMode.MODERATE, undefined, undefined, 'strongbull');
 
       // Trade should be created
       assert.ok(shadowTrader.portfolios[RiskMode.MODERATE].openTrades.length > 0);
@@ -138,7 +138,7 @@ describe('Deep Deterministic Tests - ShadowTrader', () => {
         stopLoss: 49000
       };
 
-      await shadowTrader.processSignal(signal, 50000, RiskMode.MODERATE, undefined, undefined, 'strong_bull');
+      await shadowTrader.processSignal(signal, 50000, RiskMode.MODERATE, undefined, undefined, 'strongbull');
 
       // Should not enter trade due to circuit breaker
       assert.strictEqual(shadowTrader.portfolios[RiskMode.MODERATE].openTrades.length, 0);

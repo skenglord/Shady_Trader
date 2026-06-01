@@ -81,7 +81,7 @@ test('ShadowTrader should move funds when opening trade', async () => {
     await trader.reset();
     trader.portfolios[RiskMode.MODERATE].initialBalance = 5000;
     trader.portfolios[RiskMode.MODERATE].balance = 5000;
-    await trader.processSignal({ ...signal, confidence: 90 }, 50000, RiskMode.MODERATE, manager, null, 'strong_bull');
+    await trader.processSignal({ ...signal, confidence: 90 }, 50000, RiskMode.MODERATE, manager, null, 'strongbull');
     
     const afterBalances = await manager.getBalances();
     assert.ok(afterBalances.botBalance < initialBalances.botBalance); // Funds moved into active trade bucket

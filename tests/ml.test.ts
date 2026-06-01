@@ -9,12 +9,12 @@ describe('scoreEnsemble', () => {
       direction: 'buy',
       topFeatures: [['rsi_z', 0.12], ['ret_1', 0.09], ['vol_ratio', 0.07]],
       modelPath: '/models/BTC_USDT_strong_bull.joblib',
-      regime: 'strong_bull',
+      regime: 'strongbull',
       fallback: false
     },
     gemmaAdjustment: 0.0,
     regimeConfidence: 90,
-    regimeName: 'strong_bull',
+    regimeName: 'strongbull',
     cachedSentiment: 0.0
   };
 
@@ -49,7 +49,7 @@ describe('scoreEnsemble', () => {
       ...base,
       mlPrediction: { ...base.mlPrediction, probability: 0.99 },
       gemmaAdjustment: 0.4,
-      regimeName: 'strong_bull',
+      regimeName: 'strongbull',
       regimeConfidence: 100,
       cachedSentiment: 1.0
     };
@@ -327,12 +327,12 @@ describe('MLPrediction fallback integration', () => {
         direction: 'buy',
         topFeatures: [],
         modelPath: '',
-        regime: 'strong_bull',
+        regime: 'strongbull',
         fallback: true
       },
       gemmaAdjustment: 0.4,
       regimeConfidence: 100,
-      regimeName: 'strong_bull',
+      regimeName: 'strongbull',
       cachedSentiment: 1.0
     };
 
@@ -346,10 +346,10 @@ describe('MLPrediction fallback integration', () => {
     const input: EnsembleInput = {
       mlPrediction: {
         probability: 0.62, direction: 'buy', topFeatures: [],
-        modelPath: '/m', regime: 'weak_bull', fallback: false
+        modelPath: '/m', regime: 'weakbull', fallback: false
       },
       gemmaAdjustment: 0.1, regimeConfidence: 75,
-      regimeName: 'weak_bull', cachedSentiment: 0.2
+      regimeName: 'weakbull', cachedSentiment: 0.2
     };
 
     const r1 = scoreEnsemble(input);
