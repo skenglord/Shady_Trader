@@ -21,6 +21,7 @@ import paperTradingRouter from './paper-trading/paper-trading.controller.js';
 import { PaperTradingService } from './paper-trading/paper-trading-service.js';
 import { PaperTradingWebSocketHandler } from './paper-trading/websocket-handler.js';
 import { getServiceManager, StatelessServiceManager } from './stateless-manager.js';
+import { acquireTradeLock, releaseTradeLock } from './execution/executionLock.js';
 import Redis from 'ioredis';
 
 export class TradingEngine {
@@ -42,6 +43,7 @@ export class TradingEngine {
   wss: WebSocketServer;
   db: any; // Keep for now if used elsewhere, but remove from constructor
   stateManager: StatelessServiceManager;
+  private redisClient?: Redis;
 
   // Default values (actual state stored in Redis)
   private _currentRegime: RegimeType = RegimeType.UNCERTAIN;
@@ -212,6 +214,7 @@ export class TradingEngine {
       });
     }
     this.stateManager = getServiceManager(redisInstance, 'trading-engine');
+    this.redisClient = redisInstance;
 
     // Load initial state from Redis
     this.loadStateFromRedis();
@@ -1000,16 +1003,25 @@ export class TradingEngine {
         console.error('[SignalRecord] Failed to save signal:', err);
       }
 
-      // 5. Execute shadow trades
+      // 5. Execute shadow trades — guarded by Redis execution lock (Block 8)
       const currentPrice = df[df.length - 1].close;
-      await this.shadowTrader.processSignal(
-        signal,
-        currentPrice,
-        this.activeMode,
-        this.balanceManager,
-        this.exchange,
-        this.currentRegime
-      );
+      const lockToken = await acquireTradeLock(this.symbol, this.redisClient);
+      if (!lockToken) {
+        logger.warn('Trade lock held — skipping execution', { service: 'TradingEngine', symbol: this.symbol });
+      } else {
+        try {
+          await this.shadowTrader.processSignal(
+            signal,
+            currentPrice,
+            this.activeMode,
+            this.balanceManager,
+            this.exchange,
+            this.currentRegime
+          );
+        } finally {
+          await releaseTradeLock(this.symbol, lockToken, this.redisClient);
+        }
+      }
     }
 
     // 6. Update positions
