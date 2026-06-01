@@ -21,6 +21,7 @@
     "cli:status": "tsx cli/src/index.ts engine status",
     "cli:monitor": "tsx cli/src/index.ts monitor",
     "cli:backtest": "tsx cli/src/index.ts backtest",
+    "backtest": "tsx backend/scripts/backtest.ts",
     "docker:build": "docker build -t shady-trader .",
     "docker:run": "docker run -p 3000:3000 shady-trader",
     "docker:up": "docker-compose up -d",
