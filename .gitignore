@@ -28,3 +28,7 @@ Thumbs.db
 # ML models
 models/
 *.joblib
+
+# SQLite transient files
+*.db-wal
+*.db-shm
