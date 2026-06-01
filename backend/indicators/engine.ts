@@ -1,10 +1,75 @@
-import { EMA, RSI, BollingerBands, ADX, StochasticRSI, MACD, SMA, ATR } from 'technicalindicators';
+import { EMA, RSI, BollingerBands, ADX, MACD, SMA, ATR } from 'technicalindicators';
 import { Worker, isMainThread, parentPort, workerData } from 'worker_threads';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { computeVPI } from './volumePressureIndex.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// ── v6.0 Block 3: WaveTrend, MFI, divergence (replace StochRSI) ──
+
+// WaveTrend oscillator. WT1 = signal line, WT2 = trigger line.
+// Overbought: wt1 > 60 | Oversold: wt1 < -60
+export function calculateWaveTrend(
+  hlc3: number[], n1: number = 10, n2: number = 21
+): { wt1: number[]; wt2: number[] } {
+  const esa = EMA.calculate({ period: n1, values: hlc3 });
+  // align esa to hlc3 length
+  const esaAligned = alignToEnd(esa, hlc3.length);
+  const d = EMA.calculate({ period: n1, values: hlc3.map((v, i) => Math.abs(v - (esaAligned[i] ?? v))) });
+  const dAligned = alignToEnd(d, hlc3.length);
+  const ci = hlc3.map((v, i) => (v - (esaAligned[i] ?? v)) / (0.015 * (dAligned[i] ?? 1e-9)));
+  const wt1raw = EMA.calculate({ period: n2, values: ci });
+  const wt1 = alignToEnd(wt1raw, hlc3.length);
+  const wt2raw = SMA.calculate({ period: 4, values: wt1.filter(v => v != null) as number[] });
+  const wt2 = alignToEnd(wt2raw, hlc3.length);
+  return { wt1, wt2 };
+}
+
+// Money Flow Index (MFI-14) — volume-weighted RSI. OB: >80 | OS: <20
+export function calculateMFI(
+  highs: number[], lows: number[], closes: number[], volumes: number[], period: number = 14
+): number[] {
+  const result: number[] = new Array(closes.length).fill(NaN);
+  for (let i = period; i < closes.length; i++) {
+    let posF = 0, negF = 0;
+    for (let j = i - period + 1; j <= i; j++) {
+      const tp     = (highs[j] + lows[j] + closes[j]) / 3;
+      const tpPrev = j > 0 ? (highs[j-1] + lows[j-1] + closes[j-1]) / 3 : tp;
+      const rmf    = tp * volumes[j];
+      if (tp > tpPrev) posF += rmf; else if (tp < tpPrev) negF += rmf;
+    }
+    result[i] = negF === 0 ? 100 : 100 - 100 / (1 + posF / negF);
+  }
+  return result;
+}
+
+// Divergence detection using local extremes (lookback = 5 candles)
+export function detectDivergence(
+  prices: number[], indicator: number[], lookback: number = 5
+): { bullDiv: boolean[]; bearDiv: boolean[] } {
+  const bull = new Array(prices.length).fill(false);
+  const bear = new Array(prices.length).fill(false);
+  for (let i = lookback; i < prices.length; i++) {
+    const pw = prices.slice(i - lookback, i + 1);
+    const iw = indicator.slice(i - lookback, i + 1).filter(v => isFinite(v));
+    if (!iw.length) continue;
+    const pMax = Math.max(...pw), pMin = Math.min(...pw);
+    const iMax = Math.max(...iw), iMin = Math.min(...iw);
+    if (isFinite(indicator[i]) && prices[i] >= pMax * 0.998 && indicator[i] < iMax * 0.99) bear[i] = true;
+    if (isFinite(indicator[i]) && prices[i] <= pMin * 1.002 && indicator[i] > iMin * 1.01) bull[i] = true;
+  }
+  return { bullDiv: bull, bearDiv: bear };
+}
+
+// Right-align a shorter indicator array to a full-length series (pad head with null).
+function alignToEnd<T>(arr: T[], fullLen: number): (T | null)[] {
+  const out: (T | null)[] = new Array(fullLen).fill(null);
+  const offset = fullLen - arr.length;
+  for (let i = 0; i < arr.length; i++) out[offset + i] = arr[i];
+  return out;
+}
 
 export interface Candle {
   time: number;
@@ -106,7 +171,12 @@ export class IndicatorEngine {
 
     const adx = ADX.calculate({ period: this.ADX_PERIOD, high: highs, low: lows, close: closes });
 
-    const stochRsi = StochasticRSI.calculate({ rsiPeriod: this.STOCH_RSI_PERIOD, stochasticPeriod: 14, kPeriod: 3, dPeriod: 3, values: closes });
+    // ── v6.0: WaveTrend + MFI + divergences (replaces StochRSI) ──
+    const hlc3 = candles.map(c => (c.high + c.low + c.close) / 3);
+    const { wt1, wt2 } = calculateWaveTrend(hlc3);
+    const { bullDiv: wtBullDiv, bearDiv: wtBearDiv } = detectDivergence(closes, wt1.map(v => v ?? NaN));
+    const mfiArr = calculateMFI(highs, lows, closes, volumes);
+    const { bullDiv: mfiBullDiv, bearDiv: mfiBearDiv } = detectDivergence(closes, mfiArr);
 
     const macd = MACD.calculate({ fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false, values: closes });
 
@@ -137,8 +207,18 @@ export class IndicatorEngine {
 
       const bbVal = getVal(bb, 0);
       const adxVal = getVal(adx, 0);
-      const stochRsiVal = getVal(stochRsi, 0);
       const macdVal = getVal(macd, 0);
+
+      // ── v6.0 indicator values for this candle ──
+      const wt1Val = wt1[i] ?? null;
+      const wt1Prev = i > 0 ? (wt1[i - 1] ?? null) : null;
+      const wt2Val = wt2[i] ?? null;
+      const wt2Prev = i > 0 ? (wt2[i - 1] ?? null) : null;
+      const mfiVal = isFinite(mfiArr[i]) ? mfiArr[i] : null;
+      const volRatioVal = getVal(volumeSma20, 0) ? c.volume / getVal(volumeSma20, 0) : 1;
+      const vpi = mfiVal != null
+        ? computeVPI(mfiVal, mfiBullDiv[i], mfiBearDiv[i], volRatioVal, c.close, c.open, c.high, c.low).score
+        : 0;
 
       result.push({
         ...c,
@@ -154,8 +234,24 @@ export class IndicatorEngine {
         adx: adxVal ? adxVal.adx : null,
         adx_plus: adxVal ? adxVal.pdi : null,
         adx_minus: adxVal ? adxVal.mdi : null,
-        stoch_rsi_k: stochRsiVal ? stochRsiVal.k : null,
-        stoch_rsi_d: stochRsiVal ? stochRsiVal.d : null,
+        // ── v6.0 WaveTrend ──
+        wave_trend_1: wt1Val,
+        wave_trend_2: wt2Val,
+        wt_cross_up: wt1Val != null && wt2Val != null && wt1Prev != null && wt2Prev != null
+          ? (wt1Prev <= wt2Prev && wt1Val > wt2Val) : false,
+        wt_cross_down: wt1Val != null && wt2Val != null && wt1Prev != null && wt2Prev != null
+          ? (wt1Prev >= wt2Prev && wt1Val < wt2Val) : false,
+        wt_overbought: wt1Val != null ? wt1Val > 60 : false,
+        wt_oversold: wt1Val != null ? wt1Val < -60 : false,
+        wt_bull_div: wtBullDiv[i] ?? false,
+        wt_bear_div: wtBearDiv[i] ?? false,
+        // ── v6.0 MFI + VPI ──
+        mfi: mfiVal,
+        mfi_overbought: mfiVal != null ? mfiVal > 80 : false,
+        mfi_oversold: mfiVal != null ? mfiVal < 20 : false,
+        mfi_bull_div: mfiBullDiv[i] ?? false,
+        mfi_bear_div: mfiBearDiv[i] ?? false,
+        vpi,
         macd_line: macdVal ? macdVal.MACD : null,
         signal_line: macdVal ? macdVal.signal : null,
         macd_histogram: macdVal ? macdVal.histogram : null,
