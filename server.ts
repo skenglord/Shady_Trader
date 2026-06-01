@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import path from "path";
 import cors from "cors";
 import { initDatabase } from "./backend/database.js";
+import { runMigrations } from "./backend/migrations/runner.js";
 import { startTradingEngine } from "./backend/main.js";
 import { setupWebsocket } from "./backend/api/websocket.js";
 import { apiRouter } from "./backend/api/routes.js";
@@ -157,6 +158,13 @@ async function startServer() {
 
    // Initialize database
    await initDatabase();
+
+   // Run schema migrations (idempotent) before seeding
+   try {
+     await runMigrations();
+   } catch (error: any) {
+     logger.warn('Migrations encountered an issue', { error: error?.message || 'unknown' });
+   }
    
    // Seed database with mock data (best-effort, do not crash startup)
    try {
