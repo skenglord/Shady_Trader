@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import Redis from 'ioredis';
+import crypto from 'crypto';
 import { runQuery } from '../database.js';
 import { getTradingEngine, getStartupDiagnostics } from '../main.js';
 import { RiskMode, DEFAULT_RISK_CONFIGS } from '../risk/manager.js';

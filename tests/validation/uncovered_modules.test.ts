@@ -100,7 +100,7 @@ describe.skip('WebSocket Handler Tests', () => {
 describe.skip('Paper Trading Controller Tests', () => {
   test('Paper trading controller has routes', async () => {
     try {
-      const module = await import('../backend/paper-trading/paper-trading.controller.js');
+      const module = await import('../../backend/paper-trading/paper-trading.controller.js');
       assert.ok(module.default !== undefined || module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -111,7 +111,7 @@ describe.skip('Paper Trading Controller Tests', () => {
 describe.skip('Stateless Manager Tests', () => {
   test('Stateless manager provides service manager', async () => {
     try {
-      const module = await import('../backend/stateless-manager.js');
+      const module = await import('../../backend/stateless-manager.js');
       assert.ok(module.getServiceManager !== undefined || module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -122,7 +122,7 @@ describe.skip('Stateless Manager Tests', () => {
 describe.skip('Monte Carlo Engine Tests', () => {
   test('Monte Carlo engine can be instantiated', async () => {
     try {
-      const MonteCarloEngine = (await import('../backend/monte-carlo/engine/monte-carlo-engine.js')).MonteCarloEngine;
+      const MonteCarloEngine = (await import('../../backend/monte-carlo/engine/monte-carlo-engine.js')).MonteCarloEngine;
       const engine = new MonteCarloEngine();
       assert.ok(engine !== undefined);
     } catch (e) {
@@ -134,7 +134,7 @@ describe.skip('Monte Carlo Engine Tests', () => {
 describe.skip('Monte Carlo Correlation Matrix Tests', () => {
   test('Correlation matrix can calculate correlations', async () => {
     try {
-      const { CorrelationMatrix } = await import('../backend/monte-carlo/engine/correlation-matrix.js');
+      const { CorrelationMatrix } = await import('../../backend/monte-carlo/engine/correlation-matrix.js');
       const matrix = new CorrelationMatrix();
       
       assert.ok(matrix !== undefined);
@@ -147,7 +147,7 @@ describe.skip('Monte Carlo Correlation Matrix Tests', () => {
 describe.skip('Monte Carlo Path Generator Tests', () => {
   test('Path generator can generate paths', async () => {
     try {
-      const { PathGenerator } = await import('../backend/monte-carlo/engine/path-generator.js');
+      const { PathGenerator } = await import('../../backend/monte-carlo/engine/path-generator.js');
       const generator = new PathGenerator();
       
       assert.ok(generator !== undefined);
@@ -160,7 +160,7 @@ describe.skip('Monte Carlo Path Generator Tests', () => {
 describe.skip('Monte Carlo Stress Test Engine Tests', () => {
   test('Stress test engine can run scenarios', async () => {
     try {
-      const { StressTestEngine } = await import('../backend/monte-carlo/engine/stress-test-engine.js');
+      const { StressTestEngine } = await import('../../backend/monte-carlo/engine/stress-test-engine.js');
       const engine = new StressTestEngine();
       
       assert.ok(engine !== undefined);
@@ -173,7 +173,7 @@ describe.skip('Monte Carlo Stress Test Engine Tests', () => {
 describe.skip('Monte Carlo Risk Calculator Tests', () => {
   test('Risk calculator can compute risk metrics', async () => {
     try {
-      const { RiskCalculator } = await import('../backend/monte-carlo/engine/risk-calculator.js');
+      const { RiskCalculator } = await import('../../backend/monte-carlo/engine/risk-calculator.js');
       const calculator = new RiskCalculator();
       
       assert.ok(calculator !== undefined);
@@ -186,7 +186,7 @@ describe.skip('Monte Carlo Risk Calculator Tests', () => {
 describe.skip('Monte Carlo WebSocket Handler Tests', () => {
   test('Monte Carlo websocket handler exists', async () => {
     try {
-      const module = await import('../backend/monte-carlo/api/monte-carlo-websocket.js');
+      const module = await import('../../backend/monte-carlo/api/monte-carlo-websocket.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -197,7 +197,7 @@ describe.skip('Monte Carlo WebSocket Handler Tests', () => {
 describe.skip('Monte Carlo Controller Tests', () => {
   test('Monte Carlo controller exists', async () => {
     try {
-      const module = await import('../backend/monte-carlo/api/monte-carlo.controller.js');
+      const module = await import('../../backend/monte-carlo/api/monte-carlo.controller.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -208,7 +208,7 @@ describe.skip('Monte Carlo Controller Tests', () => {
 describe.skip('WFA Rolling Optimizer Tests', () => {
   test('Rolling optimizer can be instantiated', async () => {
     try {
-      const { RollingOptimizer } = await import('../backend/validation/wfa/rolling-optimizer.js');
+      const { RollingOptimizer } = await import('../../backend/validation/wfa/rolling-optimizer.js');
       const optimizer = new RollingOptimizer();
       
       assert.ok(optimizer !== undefined);
@@ -221,7 +221,7 @@ describe.skip('WFA Rolling Optimizer Tests', () => {
 describe.skip('WFA Checkpoint Tests', () => {
   test('WFA checkpoint can be created', async () => {
     try {
-      const { WFACheckpoint } = await import('../backend/validation/wfa/wfa-checkpoint.js');
+      const { WFACheckpoint } = await import('../../backend/validation/wfa/wfa-checkpoint.js');
       const checkpoint = new WFACheckpoint();
       
       assert.ok(checkpoint !== undefined);
@@ -234,7 +234,7 @@ describe.skip('WFA Checkpoint Tests', () => {
 describe.skip('WFA Controller Tests', () => {
   test('WFA controller exists', async () => {
     try {
-      const module = await import('../backend/validation/wfa/wfa-controller.js');
+      const module = await import('../../backend/validation/wfa/wfa-controller.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -245,7 +245,7 @@ describe.skip('WFA Controller Tests', () => {
 describe.skip('Validation Visualizer Tests', () => {
   test('Validation visualizer can be instantiated', async () => {
     try {
-      const { ValidationVisualizer } = await import('../backend/validation/wfa/validation-visualizer.js');
+      const { ValidationVisualizer } = await import('../../backend/validation/wfa/validation-visualizer.js');
       const visualizer = new ValidationVisualizer();
       
       assert.ok(visualizer !== undefined);
@@ -258,7 +258,7 @@ describe.skip('Validation Visualizer Tests', () => {
 describe.skip('Backpressure Handler Tests', () => {
   test('Backpressure handler exists', async () => {
     try {
-      const module = await import('../backend/exchange/backpressure.js');
+      const module = await import('../../backend/exchange/backpressure.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -269,7 +269,7 @@ describe.skip('Backpressure Handler Tests', () => {
 describe.skip('Exchange Cache Tests', () => {
   test('Exchange cache exists', async () => {
     try {
-      const module = await import('../backend/exchange/cache.js');
+      const module = await import('../../backend/exchange/cache.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -280,7 +280,7 @@ describe.skip('Exchange Cache Tests', () => {
 describe.skip('Exchange Deduplication Tests', () => {
   test('Exchange deduplication exists', async () => {
     try {
-      const module = await import('../backend/exchange/deduplication.js');
+      const module = await import('../../backend/exchange/deduplication.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -291,7 +291,7 @@ describe.skip('Exchange Deduplication Tests', () => {
 describe.skip('Exchange Distributed Locks Tests', () => {
   test('Distributed locks exists', async () => {
     try {
-      const module = await import('../backend/exchange/distributed-locks.js');
+      const module = await import('../../backend/exchange/distributed-locks.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -302,7 +302,7 @@ describe.skip('Exchange Distributed Locks Tests', () => {
 describe.skip('Exchange Latency Profiler Tests', () => {
   test('Latency profiler exists', async () => {
     try {
-      const module = await import('../backend/exchange/latency-profiler.js');
+      const module = await import('../../backend/exchange/latency-profiler.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -313,7 +313,7 @@ describe.skip('Exchange Latency Profiler Tests', () => {
 describe.skip('Exchange Partitioner Tests', () => {
   test('Exchange partitioner exists', async () => {
     try {
-      const module = await import('../backend/exchange/partitioner.js');
+      const module = await import('../../backend/exchange/partitioner.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -324,7 +324,7 @@ describe.skip('Exchange Partitioner Tests', () => {
 describe.skip('Exchange Reconciliation Tests', () => {
   test('Exchange reconciliation exists', async () => {
     try {
-      const module = await import('../backend/exchange/reconciliation.js');
+      const module = await import('../../backend/exchange/reconciliation.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -335,7 +335,7 @@ describe.skip('Exchange Reconciliation Tests', () => {
 describe.skip('Exchange WS Connection Pool Tests', () => {
   test('WS connection pool exists', async () => {
     try {
-      const module = await import('../backend/exchange/ws-connection-pool.js');
+      const module = await import('../../backend/exchange/ws-connection-pool.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -346,7 +346,7 @@ describe.skip('Exchange WS Connection Pool Tests', () => {
 describe.skip('Slippage Index Tests', () => {
   test('Slippage index exports all components', async () => {
     try {
-      const module = await import('../backend/slippage/index.js');
+      const module = await import('../../backend/slippage/index.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
@@ -357,7 +357,7 @@ describe.skip('Slippage Index Tests', () => {
 describe.skip('Slippage Types Tests', () => {
   test('Slippage types module exists', async () => {
     try {
-      const module = await import('../backend/slippage/types.js');
+      const module = await import('../../backend/slippage/types.js');
       assert.ok(module !== undefined);
     } catch (e) {
       assert.ok(true);
