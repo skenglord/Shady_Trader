@@ -17,7 +17,7 @@ async function getModelPath(symbol: string, regime: string): Promise<string | nu
   const key = `${symbol}_${regime}`;
   if (modelPathCache.has(key)) return modelPathCache.get(key)!;
 
-  const rows = await runQuery<{ model_path: string }>(
+  const rows = await runQuery(
     `SELECT model_path FROM ml_models
      WHERE symbol = ? AND regime = ? AND is_active = 1
      ORDER BY trained_at DESC LIMIT 1`,
@@ -115,7 +115,7 @@ export async function logPrediction(
 }
 
 export async function reconcilePredictions(symbol: string): Promise<void> {
-  const unresolved = await runQuery<{ id: number; candle_time: string; predicted_direction: string }>(
+  const unresolved = await runQuery(
     `SELECT id, candle_time, predicted_direction FROM ml_predictions
      WHERE symbol = ? AND actual_direction IS NULL
      AND candle_time < datetime('now', '-2 hours')
@@ -124,7 +124,7 @@ export async function reconcilePredictions(symbol: string): Promise<void> {
   );
 
   for (const row of unresolved) {
-    const candles = await runQuery<{ open: number; close: number }>(
+    const candles = await runQuery(
       `SELECT open, close FROM candles
        WHERE symbol = ? AND time >= ? ORDER BY time ASC LIMIT 2`,
       [symbol, new Date(row.candle_time).getTime()]

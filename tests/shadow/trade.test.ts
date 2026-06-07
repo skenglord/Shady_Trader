@@ -34,6 +34,15 @@ setMockRunQuery(async (sql, params = [], type = 'run') => {
     return { changes: 1 };
   }
 
+  if (sql.includes('INSERT OR REPLACE INTO balances')) {
+    if (sql.includes("'default'")) {
+      mockBalances.main_balance = Number(params[0]);
+      mockBalances.bot_balance = Number(params[1]);
+      mockBalances.active_trade_balance = Number(params[2]);
+    }
+    return { changes: 1 };
+  }
+
   if (sql.includes('DELETE FROM shadow_trades')) return { changes: 1 };
   if (sql.includes('INSERT INTO shadow_trades')) return { changes: 1 };
 

@@ -60,7 +60,7 @@ async function runPythonTrainer(
 async function trainForSymbolRegime(symbol: string, regime: string) {
   logger.info(`[train] Starting ${symbol} / ${regime}`);
 
-  const candles = await runQuery<Record<string, number>>(
+  const candles = await runQuery(
     `SELECT c.time, c.open, c.high, c.low, c.close, c.volume
      FROM candles c
      WHERE c.symbol = ? AND c.timeframe = '1h'

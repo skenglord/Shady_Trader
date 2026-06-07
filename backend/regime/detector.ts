@@ -1,6 +1,7 @@
 import type {
   CompositeRegime, TrendDirection, TrendStrength, VolatilityRegime
 } from '../types/regime.js';
+import { logger } from '../logging/logger.js';
 
 export enum RegimeType {
   STRONG_BULL = "strongbull",
@@ -170,7 +171,7 @@ Output JSON only:
           }
         }
       } catch (e: any) {
-        console.error("AI Narrative Generation failed:", e.message);
+        logger.error("AI Narrative Generation failed", { error: e.message, service: 'regime-detector' });
         if (e.message && e.message.includes("fetch failed")) {
            RegimeDetector.aiEnabled = false;
         }
@@ -236,7 +237,7 @@ Output JSON only:
   _classifyRegime(metrics: any) {
     const { adx, price_change_30d, price_change_7d, volume_ratio, rsi_avg_7d } = metrics;
 
-    // console.log(`[RegimeDetector] Classifying: adx=${adx}, price30d=${price_change_30d}, price7d=${price_change_7d}, vol=${volume_ratio}`);
+    // logger.info('Classifying: adx=${adx}, price30d=${price_change_30d}, price7d=${price_change_7d}, vol=${volume_ratio}', { service: 'regimedetector' });
 
     if (
       adx > this.STRONG_BULL_THRESHOLDS.adx_min &&

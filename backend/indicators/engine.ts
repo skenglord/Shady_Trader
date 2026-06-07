@@ -152,8 +152,8 @@ export class IndicatorEngine {
   }
 
   calculateAll(candles: Candle[]) {
-    if (candles.length < 20) {
-      return [];
+    if (candles.length < 50) {
+      throw new Error('Need at least 50 candles for warmup');
     }
 
     const closes = candles.map(c => c.close);

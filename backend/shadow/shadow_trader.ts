@@ -559,20 +559,25 @@ export class ShadowTrader {
     const performance: any = {};
     for (const mode of Object.values(RiskMode)) {
       const portfolio = this.portfolios[mode];
-      
-      const stats = await runQuery(`
-        SELECT COUNT(*) as count, SUM(pnl) as totalPnl
+
+      const stats = await runQuery(
+        `SELECT COUNT(*) as count, COALESCE(SUM(pnl), 0) as totalPnl
         FROM shadow_trades
         WHERE risk_mode = ? AND status = 'closed'
-      `, [mode], 'all');
-      const stat = stats[0];
+      `,
+        [mode],
+        'all'
+      );
+      const stat = stats[0] || { count: 0, totalPnl: 0 };
 
-      const wins = await runQuery(`
-        SELECT COUNT(*) as count
+      const wins = await runQuery(
+        `SELECT COUNT(*) as count
         FROM shadow_trades
         WHERE risk_mode = ? AND status = 'closed' AND pnl > 0
-      `, [mode], 'all');
-      const winCount = wins[0].count;
+      `,
+        [mode],
+        'all'
+      );
 
       // Get history
       const closedTrades = await runQuery(`
@@ -593,6 +598,11 @@ export class ShadowTrader {
       // Add current point
       history.push({ time: Date.now(), balance: portfolio.balance });
 
+      // The `wins` query above (line ~573) computes the count of closed
+      // shadow trades with pnl > 0 for this risk mode. Bind its result here
+      // so the winRate calculation below can use it. Defensive defaults: if
+      // `wins` somehow came back empty (e.g. partial DB failure), default to 0.
+      const winCount = wins[0]?.count ?? 0;
       const winRate = stat.count > 0 ? winCount / stat.count : 0;
       const totalPnl = stat.totalPnl || 0;
       const roi = ((portfolio.balance - portfolio.initialBalance) / portfolio.initialBalance) * 100;

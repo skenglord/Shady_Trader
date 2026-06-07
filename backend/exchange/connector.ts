@@ -360,6 +360,82 @@ export class ExchangeConnector {
   }
 
   async fetchCoinAPIHistorical(symbol: string, timeframe: string, limit: number = 100): Promise<any[]> {
+    // This method's original HTTP-based CoinAPI implementation has been moved
+    // to `fetchCoinAPIHistoricalHttp` below. The default path now uses local
+    // aggregation from a finer-grained base timeframe, which keeps the engine
+    // running even when no real-time feed is available.
+    return await this.aggregateFromBaseTimeframe(symbol, timeframe, limit);
+  }
+
+  /** Aggregate candles from a finer-grained base timeframe (e.g. 1m → 5m).
+   *  This is used by getCandles() when the requested timeframe has no direct
+   *  data in the local DB but a base timeframe (typically 1m) does. It keeps
+   *  the trading cycle alive when live feeds are unavailable so that
+   *  regime detection, signal generation, and DB persistence continue to run. */
+  async aggregateFromBaseTimeframe(symbol: string, timeframe: string, limit: number = 100): Promise<any[]> {
+    const msPerCandle: Record<string, number> = {
+      '1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000
+    };
+    const targetMs = msPerCandle[timeframe] || 3_600_000;
+    if (targetMs === 60_000) {
+      // Already 1m — no aggregation needed; return the raw rows from the caller.
+      return [];
+    }
+
+    // Find the finest base timeframe that has data for this symbol.
+    // runQuery is async, so we can't use Array.find (sync callback). Loop
+    // with await instead.
+    const candidates = ['1m', '5m', '15m', '1h', '4h', '1d'];
+    let baseTimeframe: string | undefined;
+    for (const tf of candidates) {
+      if (msPerCandle[tf] >= targetMs) continue;
+      const cnt: any[] = await runQuery(
+        'SELECT COUNT(*) as n FROM candles WHERE symbol = ? AND timeframe = ?',
+        [symbol, tf], 'all'
+      );
+      if (cnt[0]?.n >= 20) { baseTimeframe = tf; break; }
+    }
+    if (!baseTimeframe) return [];
+
+    // Pull enough base candles to build `limit` target candles.
+    const baseMs = msPerCandle[baseTimeframe];
+    const baseLimit = Math.ceil((targetMs / baseMs) * limit) + 10;
+    const baseRows = await runQuery(
+      `SELECT time, open, high, low, close, volume
+       FROM candles
+       WHERE symbol = ? AND timeframe = ?
+       ORDER BY time DESC
+       LIMIT ?`,
+      [symbol, baseTimeframe, baseLimit], 'all'
+    );
+    if (baseRows.length < 20) return [];
+
+    // Group base candles by target-timeframe bucket and aggregate OHLCV.
+    const sorted = [...baseRows].sort((a: any, b: any) => a.time - b.time);
+    const buckets = new Map<number, any[]>();
+    for (const r of sorted) {
+      const bucketTime = Math.floor(r.time / targetMs) * targetMs;
+      if (!buckets.has(bucketTime)) buckets.set(bucketTime, []);
+      buckets.get(bucketTime)!.push(r);
+    }
+    const aggregated: any[] = [];
+    for (const [bucketTime, candles] of [...buckets.entries()].sort((a, b) => a[0] - b[0])) {
+      aggregated.push({
+        time: bucketTime,
+        open: candles[0].open,
+        high: Math.max(...candles.map((c: any) => c.high)),
+        low: Math.min(...candles.map((c: any) => c.low)),
+        close: candles[candles.length - 1].close,
+        volume: candles.reduce((s: number, c: any) => s + (c.volume || 0), 0),
+      });
+    }
+    logger.info(`[ExchangeConnector] Aggregated ${aggregated.length} ${timeframe} candles from ${baseRows.length} ${baseTimeframe} base candles for ${symbol}`, { service: 'connector' });
+    return aggregated.slice(-limit);
+  }
+  /** Original CoinAPI HTTP fetch. Kept for when a real COINAPI_API_KEY is
+   *  configured. The default path is the local aggregator above, which works
+   *  offline. */
+  async fetchCoinAPIHistoricalHttp(symbol: string, timeframe: string, limit: number = 100): Promise<any[]> {
     const baseSymbol = this.symbolMap[symbol] || symbol.split('/')[0];
     const quoteSymbol = symbol.includes('/') ? symbol.split('/')[1] : 'USD';
     // Map timeframe to CoinAPI period_id
@@ -547,7 +623,14 @@ export class ExchangeConnector {
 
         // Never synthesize fake data — return what we have
         if (this.exchangeName === 'coingecko' || rows.length === 0) {
-          console.warn(`[ExchangeConnector] Only ${rows.length} candles available for ${symbol} ${timeframe}. Returning partial data.`);
+          // Try to aggregate from a finer-grained timeframe that we DO have
+          // (e.g., 1m candles → 5m candles). This keeps the engine running when
+          // the configured timeframe has no direct data but 1m data exists.
+          const aggregated = await this.aggregateFromBaseTimeframe(symbol, timeframe, limit);
+          if (aggregated.length >= 20) {
+            return aggregated;
+          }
+          logger.warn(`[ExchangeConnector] Only ${rows.length} candles available for ${symbol} ${timeframe}. Returning partial data.`, { service: 'connector' });
           return rows;
         }
 

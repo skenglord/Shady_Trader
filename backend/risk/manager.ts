@@ -243,7 +243,7 @@ export class RiskManager {
         this.originalPositionSizes[mode] = this.RISK_CONFIGS[mode].positionSize;
       }
     } catch (e) {
-      console.error('Failed to load risk configs:', e);
+      logger.error('Failed to load risk configs', { error: String(e), service: 'manager' });
     }
   }
 
@@ -252,7 +252,7 @@ export class RiskManager {
       await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['risk_configs', JSON.stringify(configs)]);
       this.RISK_CONFIGS = { ...this.RISK_CONFIGS, ...configs };
     } catch (e) {
-      console.error('Failed to save risk configs:', e);
+      logger.error('Failed to save risk configs', { error: String(e), service: 'manager' });
     }
   }
 
@@ -316,7 +316,7 @@ export class RiskManager {
       const reducedSize = originalSize * 0.5;
       if (config.positionSize !== reducedSize) {
         config.positionSize = reducedSize;
-        console.log(`[RiskManager] Circuit breaker: Position size for ${mode} reduced to ${(reducedSize * 100).toFixed(1)}% due to ${losses} consecutive losses`);
+        logger.info(`Circuit breaker: Position size for ${mode} reduced to ${(reducedSize * 100).toFixed(1)}% due to ${losses} consecutive losses`, { service: 'riskmanager' });
       }
     }
     if (losses >= 7) {
@@ -324,7 +324,7 @@ export class RiskManager {
       const furtherReducedSize = originalSize * 0.25;
       if (config.positionSize !== furtherReducedSize) {
         config.positionSize = furtherReducedSize;
-        console.log(`[RiskManager] Circuit breaker: Position size for ${mode} further reduced to ${(furtherReducedSize * 100).toFixed(1)}% due to ${losses} consecutive losses`);
+        logger.info(`Circuit breaker: Position size for ${mode} further reduced to ${(furtherReducedSize * 100).toFixed(1)}% due to ${losses} consecutive losses`, { service: 'riskmanager' });
       }
     }
   }

@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, beforeEach, afterEach, mock } from 'node:test';
+import assert from 'node:assert';
 
 import { scoreEnsemble, EnsembleInput } from '../backend/ml/ensemble_scorer.js';
 
@@ -21,27 +22,27 @@ describe('scoreEnsemble', () => {
   it('returns 0.5 with shouldTrade=false when fallback=true', () => {
     const input = { ...base, mlPrediction: { ...base.mlPrediction, fallback: true } };
     const result = scoreEnsemble(input);
-    expect(result.finalScore).toBe(0.5);
-    expect(result.shouldTrade).toBe(false);
-    expect(result.direction).toBe('buy');
+    assert.strictEqual(result.finalScore, 0.5);
+    assert.strictEqual(result.shouldTrade, false);
+    assert.strictEqual(result.direction, 'buy');
   });
 
   it('bullish regime weight > 1 amplifies XGBoost probability', () => {
     const result = scoreEnsemble(base);
-    expect(result.finalScore).toBeGreaterThan(0.65);
-    expect(result.direction).toBe('buy');
+    assert.ok(result.finalScore > 0.65);
+    assert.strictEqual(result.direction, 'buy');
   });
 
   it('negative gemma adjustment reduces final score', () => {
     const input = { ...base, gemmaAdjustment: -0.3 };
     const result = scoreEnsemble(input);
-    expect(result.finalScore).toBeLessThan(0.65);
+    assert.ok(result.finalScore < 0.65);
   });
 
   it('positive gemma adjustment increases final score', () => {
     const input = { ...base, gemmaAdjustment: 0.2 };
     const result = scoreEnsemble(input);
-    expect(result.finalScore).toBeGreaterThan(0.65);
+    assert.ok(result.finalScore > 0.65);
   });
 
   it('clamped between 0.01 and 0.99 regardless of extreme inputs', () => {
@@ -54,8 +55,8 @@ describe('scoreEnsemble', () => {
       cachedSentiment: 1.0
     };
     const result = scoreEnsemble(extreme);
-    expect(result.finalScore).toBeLessThanOrEqual(0.99);
-    expect(result.finalScore).toBeGreaterThanOrEqual(0.01);
+    assert.ok(result.finalScore <= 0.99);
+    assert.ok(result.finalScore >= 0.01);
   });
 
   it('bear regime weight reduces score below XGBoost base', () => {
@@ -67,15 +68,15 @@ describe('scoreEnsemble', () => {
       mlPrediction: { ...base.mlPrediction, probability: 0.60 }
     };
     const result = scoreEnsemble(bearInput);
-    expect(result.finalScore).toBeLessThan(0.60);
+    assert.ok(result.finalScore < 0.60);
   });
 
   it('reasoning string is populated and contains all components', () => {
     const result = scoreEnsemble(base);
-    expect(result.reasoning).toContain('XGBoost:');
-    expect(result.reasoning).toContain('Gemma');
-    expect(result.reasoning).toContain('Regime');
-    expect(result.reasoning).toContain('Final:');
+    assert.ok(result.reasoning.includes('XGBoost:'));
+    assert.ok(result.reasoning.includes('Gemma'));
+    assert.ok(result.reasoning.includes('Regime'));
+    assert.ok(result.reasoning.includes('Final:'));
   });
 
   it('shouldTrade false when finalScore within threshold band', () => {
@@ -87,7 +88,7 @@ describe('scoreEnsemble', () => {
       regimeConfidence: 80,
     };
     const result = scoreEnsemble(input);
-    expect(result.shouldTrade).toBe(false);
+    assert.strictEqual(result.shouldTrade, false);
   });
 });
 
@@ -95,14 +96,14 @@ import { CandleExitManager, parseExitConfig } from '../backend/strategy/candle_e
 
 describe('CandleExitManager', () => {
   beforeEach(() => {
-    vi.useFakeTimers();
+    mock.timers.enable({ apis: ['setTimeout'] });
     process.env.ML_EXIT_CHECKPOINTS = '0.10,0.20,0.50';
     process.env.ML_EXIT_CLOSE_ON_GREEN_AT = '0.20';
     process.env.ML_EXIT_FORCE_CLOSE_AT = '0.90';
   });
 
   afterEach(() => {
-    vi.useRealTimers();
+    mock.timers.reset();
     delete process.env.ML_EXIT_CHECKPOINTS;
     delete process.env.ML_EXIT_CLOSE_ON_GREEN_AT;
     delete process.env.ML_EXIT_FORCE_CLOSE_AT;
@@ -110,10 +111,10 @@ describe('CandleExitManager', () => {
 
   it('parseExitConfig reads env vars correctly', () => {
     const config = parseExitConfig(300_000);
-    expect(config.checkpoints).toEqual([0.10, 0.20, 0.50]);
-    expect(config.closeOnGreenAt).toBe(0.20);
-    expect(config.forceCloseAt).toBe(0.90);
-    expect(config.timeframeMs).toBe(300_000);
+    assert.deepStrictEqual(config.checkpoints, [0.10, 0.20, 0.50]);
+    assert.strictEqual(config.closeOnGreenAt, 0.20);
+    assert.strictEqual(config.forceCloseAt, 0.90);
+    assert.strictEqual(config.timeframeMs, 300_000);
   });
 
   it('fires green_at_checkpoint when price above entry at closeOnGreenAt', async () => {
@@ -135,12 +136,12 @@ describe('CandleExitManager', () => {
       async (event) => { exitEvents.push(event.reason); }
     );
 
-    expect(mgr.activeTradeCount).toBe(1);
-    vi.advanceTimersByTime(timeframeMs * 0.20 + 1);
+    assert.strictEqual(mgr.activeTradeCount, 1);
+    mock.timers.tick(timeframeMs * 0.20 + 1);
     await Promise.resolve();
 
-    expect(exitEvents).toContain('green_at_checkpoint');
-    expect(mgr.activeTradeCount).toBe(0);
+    assert.ok(exitEvents.includes('green_at_checkpoint'));
+    assert.strictEqual(mgr.activeTradeCount, 0);
   });
 
   it('does NOT close when in red at closeOnGreenAt checkpoint', async () => {
@@ -156,10 +157,10 @@ describe('CandleExitManager', () => {
       async (event) => { exitEvents.push(event.reason); }
     );
 
-    vi.advanceTimersByTime(timeframeMs * 0.20 + 1);
+    mock.timers.tick(timeframeMs * 0.20 + 1);
     await Promise.resolve();
 
-    expect(exitEvents).toHaveLength(0);
+    assert.strictEqual(exitEvents.length, 0);
   });
 
   it('force_close fires at forceCloseAt regardless of P&L', async () => {
@@ -175,11 +176,11 @@ describe('CandleExitManager', () => {
       async (event) => { exitReasons.push(event.reason); }
     );
 
-    vi.advanceTimersByTime(timeframeMs * 0.90 + 1);
+    mock.timers.tick(timeframeMs * 0.90 + 1);
     await Promise.resolve();
 
-    expect(exitReasons).toContain('force_close');
-    expect(mgr.activeTradeCount).toBe(0);
+    assert.ok(exitReasons.includes('force_close'));
+    assert.strictEqual(mgr.activeTradeCount, 0);
   });
 
   it('cancelAll stops all timers for a trade', async () => {
@@ -193,14 +194,14 @@ describe('CandleExitManager', () => {
       async (event) => { exitEvents.push(event.reason); }
     );
 
-    expect(mgr.activeTradeCount).toBe(1);
+    assert.strictEqual(mgr.activeTradeCount, 1);
     mgr.cancelAll('trade-004');
-    expect(mgr.activeTradeCount).toBe(0);
+    assert.strictEqual(mgr.activeTradeCount, 0);
 
-    vi.advanceTimersByTime(500_000);
+    mock.timers.tick(500_000);
     await Promise.resolve();
 
-    expect(exitEvents).toHaveLength(0);
+    assert.strictEqual(exitEvents.length, 0);
   });
 
   it('refuses to schedule duplicate exits for same tradeId', () => {
@@ -211,7 +212,7 @@ describe('CandleExitManager', () => {
     mgr.scheduleExits('trade-005', 100, Date.now(), config, () => 101, noop);
     mgr.scheduleExits('trade-005', 100, Date.now(), config, () => 101, noop);
 
-    expect(mgr.activeTradeCount).toBe(1);
+    assert.strictEqual(mgr.activeTradeCount, 1);
   });
 });
 
@@ -233,42 +234,42 @@ describe('GemmaAdjuster JSON parsing', () => {
 
   it('parses clean JSON correctly', () => {
     const raw = '{"adjustment": 0.15, "reason": "ETF news confirms bullish trend"}';
-    expect(parseGemmaResponse(raw)).toBeCloseTo(0.15);
+    assert.ok(Math.abs(parseGemmaResponse(raw)! - 0.15) < 0.001);
   });
 
   it('strips markdown fences before parsing', () => {
     const raw = '```json\n{"adjustment": -0.2, "reason": "ETF outflow bearish"}\n```';
-    expect(parseGemmaResponse(raw)).toBeCloseTo(-0.2);
+    assert.ok(Math.abs(parseGemmaResponse(raw)! - (-0.2)) < 0.001);
   });
 
   it('returns null for non-JSON response', () => {
     const raw = 'I cannot provide financial advice.';
-    expect(parseGemmaResponse(raw)).toBeNull();
+    assert.strictEqual(parseGemmaResponse(raw), null);
   });
 
   it('clamps adjustment above 0.4 to 0.4', () => {
     const raw = '{"adjustment": 0.9, "reason": "extreme bullish"}';
-    expect(parseGemmaResponse(raw)).toBe(0.4);
+    assert.strictEqual(parseGemmaResponse(raw), 0.4);
   });
 
   it('clamps adjustment below -0.4 to -0.4', () => {
     const raw = '{"adjustment": -0.99, "reason": "extreme bearish"}';
-    expect(parseGemmaResponse(raw)).toBe(-0.4);
+    assert.strictEqual(parseGemmaResponse(raw), -0.4);
   });
 
   it('coerces string number to float', () => {
     const raw = '{"adjustment": "0.12", "reason": "slight positive"}';
-    expect(parseGemmaResponse(raw)).toBeCloseTo(0.12);
+    assert.ok(Math.abs(parseGemmaResponse(raw)! - 0.12) < 0.001);
   });
 
   it('returns null when adjustment key missing', () => {
     const raw = '{"sentiment": "bullish", "reason": "positive news"}';
-    expect(parseGemmaResponse(raw)).toBeNull();
+    assert.strictEqual(parseGemmaResponse(raw), null);
   });
 
   it('handles extra unexpected keys without failing', () => {
     const raw = '{"adjustment": 0.05, "reason": "ok", "extra_field": [1,2,3]}';
-    expect(parseGemmaResponse(raw)).toBeCloseTo(0.05);
+    assert.ok(Math.abs(parseGemmaResponse(raw)! - 0.05) < 0.001);
   });
 });
 
@@ -299,23 +300,23 @@ describe('FeatureResponse parsing', () => {
       n_rows: 2
     };
     const result = validateFeatureResponse(response);
-    expect(result.valid).toBe(true);
-    expect(result.rows).toBe(2);
-    expect(result.cols).toBe(3);
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.rows, 2);
+    assert.strictEqual(result.cols, 3);
   });
 
   it('rejects null input', () => {
-    expect(validateFeatureResponse(null).valid).toBe(false);
+    assert.strictEqual(validateFeatureResponse(null).valid, false);
   });
 
   it('rejects response with missing features key', () => {
-    expect(validateFeatureResponse({ feature_cols: ['a'] }).valid).toBe(false);
+    assert.strictEqual(validateFeatureResponse({ feature_cols: ['a'] }).valid, false);
   });
 
   it('handles empty features array gracefully', () => {
     const result = validateFeatureResponse({ features: [], feature_cols: [] });
-    expect(result.valid).toBe(true);
-    expect(result.rows).toBe(0);
+    assert.strictEqual(result.valid, true);
+    assert.strictEqual(result.rows, 0);
   });
 });
 
@@ -337,9 +338,9 @@ describe('MLPrediction fallback integration', () => {
     };
 
     const result = scoreEnsemble(input);
-    expect(result.shouldTrade).toBe(false);
-    expect(result.finalScore).toBe(0.5);
-    expect(result.reasoning).toContain('fallback');
+    assert.strictEqual(result.shouldTrade, false);
+    assert.strictEqual(result.finalScore, 0.5);
+    assert.ok(result.reasoning.includes('fallback'));
   });
 
   it('ensemble score is deterministic for same inputs', () => {
@@ -354,6 +355,6 @@ describe('MLPrediction fallback integration', () => {
 
     const r1 = scoreEnsemble(input);
     const r2 = scoreEnsemble(input);
-    expect(r1.finalScore).toBe(r2.finalScore);
+    assert.strictEqual(r1.finalScore, r2.finalScore);
   });
 });

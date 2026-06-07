@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import OpenAI from 'openai';
 import Redis from 'ioredis';
+import { logger } from '../logging/logger.js';
 
 const SENTIMENT_SYSTEM_PROMPT = `You are a news sentiment classifier for crypto markets.
 Score each headline from -1.0 (extreme bearish) to 1.0 (extreme bullish).
@@ -66,8 +67,8 @@ export class SentimentWorker {
           const avg = parsed.reduce((a, b) => a + b, 0) / parsed.length;
           await this.redis.setex('sentiment:score:latest', 300, avg.toFixed(4));
         }
-      } catch (e) {
-        console.warn('Sentiment refresh failed', e);
+      } catch (e: any) {
+        logger.warn('Sentiment refresh failed', { error: String(e), service: 'sentiment-worker' });
       }
       
       // 5 minute wait

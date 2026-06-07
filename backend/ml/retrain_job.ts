@@ -22,7 +22,7 @@ interface TrainReport {
 }
 
 async function fetchCandlesForTraining(symbol: string): Promise<Record<string, number>[]> {
-  return runQuery<Record<string, number>>(
+  return runQuery(
     `SELECT time, open, high, low, close, volume
      FROM candles
      WHERE symbol = ? AND timeframe = '5m'
