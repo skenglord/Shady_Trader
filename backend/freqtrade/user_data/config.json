@@ -1,0 +1,70 @@
+{
+  "$schema": "https://www.freqtrade.io/schema/config-v3.json",
+  "max_open_trades": 3,
+  "stake_currency": "USDT",
+  "stake_amount": "unlimited",
+  "tradable_balance_ratio": 0.99,
+  "dry_run": true,
+  "dry_run_wallet": 1000,
+  "unfilledtimeout": {
+    "entry": 10,
+    "exit": 30
+  },
+  "trading_mode": "futures",
+  "margin_mode": "isolated",
+  "exchange": {
+    "name": "${EXCHANGE_NAME:-binance}",
+    "key": "${EXCHANGE_API_KEY:-}",
+    "secret": "${EXCHANGE_API_SECRET:-}",
+    "password": "${EXCHANGE_API_PASSWORD:-}",
+    "ccxt_config": {},
+    "ccxt_sync_config": {
+      "options": {
+        "defaultType": "future"
+      }
+    },
+    "pair_whitelist": [
+      "BTC/USDT:USDT",
+      "ETH/USDT:USDT"
+    ],
+    "pair_blacklist": []
+  },
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
+  "timeframe": "1h",
+  "order_types": {
+    "entry": "limit",
+    "exit": "limit",
+    "stoploss": "market",
+    "stoploss_on_exchange": false
+  },
+  "entry_pricing": {
+    "price_side": "same",
+    "use_order_book": true,
+    "order_book_top": 1
+  },
+  "exit_pricing": {
+    "price_side": "same",
+    "use_order_book": true,
+    "order_book_top": 1
+  },
+  "api_server": {
+    "enabled": true,
+    "listen_ip_address": "127.0.0.1",
+    "listen_port": 8081,
+    "verbosity": "info",
+    "enable_openapi": false,
+    "jwt_secret_key": "${FREQTRADE_JWT_SECRET_KEY}",
+    "username": "${FREQTRADE_API_USER:-freqtrade}",
+    "password": "${FREQTRADE_API_PASS:-freqtrade}"
+  },
+  "bot_name": "shady_trader_freqtrade",
+  "initial_state": "stopped",
+  "force_entry_enable": false,
+  "internals": {
+    "process_throttle_secs": 5
+  }
+}

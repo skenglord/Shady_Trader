@@ -32,3 +32,11 @@ models/
 # SQLite transient files
 *.db-wal
 *.db-shm
+
+# Freqtrade sidecar (Python venv, downloaded data, runtime artifacts)
+backend/freqtrade/venv/
+backend/freqtrade/.pid
+backend/freqtrade/freqtrade.log
+backend/freqtrade/user_data/data/
+backend/freqtrade/user_data/tradesv3.sqlite
+backend/freqtrade/user_data/tradesv3.dryrun.sqlite

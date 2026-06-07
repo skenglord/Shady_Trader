@@ -1,5 +1,7 @@
 import { Queue, Worker } from 'bullmq';
 import IORedis from 'ioredis';
+import { existsSync } from 'fs';
+import path from 'path';
 import { MarketDataService } from './api/marketDataService.js';
 import { OptimizationEngine } from './strategy/optimization_engine.js';
 import { logger } from './logging/logger.js';
@@ -22,7 +24,8 @@ function getRedisConnection(): IORedis | null {
       port: parseInt(process.env.REDIS_PORT || '6379'),
       password: process.env.REDIS_PASSWORD || '',
       maxRetriesPerRequest: null,
-      lazyConnect: true,
+      lazyConnect: false,
+      retryStrategy: (times) => Math.min(times * 200, 2000),
     });
     
     redisConnection.on('connect', () => {
@@ -48,9 +51,28 @@ function getRedisConnection(): IORedis | null {
   }
 }
 
-// Job queues (lazy initialization)
+// ──────────────────────────────────────────────────────────────────────
+// Standard queues (lazy initialization)
+// ──────────────────────────────────────────────────────────────────────
 let marketDataQueue: Queue | null = null;
 let optimizationQueue: Queue | null = null;
+let dataPipelineQueue: Queue | null = null;
+let dataPipelineWorker: Worker | null = null;
+
+// ──────────────────────────────────────────────────────────────────────
+// Freqtrade queues (3.1 — all three serialised at concurrency:1 per B9)
+// ──────────────────────────────────────────────────────────────────────
+let freqtradeDataQueue: Queue | null = null;
+let freqtradeBacktestQueue: Queue | null = null;
+let freqtradeValidateQueue: Queue | null = null;
+let freqtradeWorkersRegistered = false;
+let freqtradeDataWorker: Worker | null = null;
+let freqtradeBacktestWorker: Worker | null = null;
+let freqtradeValidateWorker: Worker | null = null;
+
+// ──────────────────────────────────────────────────────────────────────
+// Standard queue getters
+// ──────────────────────────────────────────────────────────────────────
 
 export function getMarketDataQueue(): Queue | null {
   const conn = getRedisConnection();
@@ -59,12 +81,9 @@ export function getMarketDataQueue(): Queue | null {
       marketDataQueue = new Queue('market-data', {
         connection: conn,
         defaultJobOptions: {
-          priority: 5, // Medium priority for market data
+          priority: 5,
           attempts: 3,
-          backoff: {
-            type: 'exponential',
-            delay: 5000
-          }
+          backoff: { type: 'exponential', delay: 5000 }
         }
       });
     } catch (err) {
@@ -84,12 +103,9 @@ export function getOptimizationQueue(): Queue | null {
       optimizationQueue = new Queue('optimization', {
         connection: conn,
         defaultJobOptions: {
-          priority: 3, // Lower priority for optimization
+          priority: 3,
           attempts: 2,
-          backoff: {
-            type: 'exponential',
-            delay: 30000
-          }
+          backoff: { type: 'exponential', delay: 30000 }
         }
       });
     } catch (err) {
@@ -102,10 +118,6 @@ export function getOptimizationQueue(): Queue | null {
   return optimizationQueue;
 }
 
-// Data pipeline queue for high-priority data processing
-let dataPipelineQueue: Queue | null = null;
-let dataPipelineWorker: Worker | null = null;
-
 export function getDataPipelineQueue(): Queue | null {
   const conn = getRedisConnection();
   if (!dataPipelineQueue && conn && redisAvailable) {
@@ -113,12 +125,9 @@ export function getDataPipelineQueue(): Queue | null {
       dataPipelineQueue = new Queue('data-pipeline', {
         connection: conn,
         defaultJobOptions: {
-          priority: 10, // High priority for data pipeline
+          priority: 10,
           attempts: 5,
-          backoff: {
-            type: 'exponential',
-            delay: 1000
-          },
+          backoff: { type: 'exponential', delay: 1000 },
           removeOnComplete: 50,
           removeOnFail: 20
         }
@@ -133,7 +142,184 @@ export function getDataPipelineQueue(): Queue | null {
   return dataPipelineQueue;
 }
 
-// Initialize workers (called after services are ready)
+// ──────────────────────────────────────────────────────────────────────
+// Freqtrade queue getters (3.1-3.2)
+// ──────────────────────────────────────────────────────────────────────
+
+export function getFreqtradeDataQueue(): Queue | null {
+  const conn = getRedisConnection();
+  if (!freqtradeDataQueue && conn && redisAvailable) {
+    try {
+      freqtradeDataQueue = new Queue('freqtrade-data', {
+        connection: conn,
+        defaultJobOptions: {
+          attempts: 1,           // download-data not auto-retried
+          removeOnComplete: 20,
+          removeOnFail: 10
+        }
+      });
+    } catch (err) {
+      logger.warn('Failed to create freqtrade-data queue', {
+        error: err instanceof Error ? err.message : String(err),
+        service: 'JobQueue'
+      });
+    }
+  }
+  return freqtradeDataQueue;
+}
+
+export function getFreqtradeBacktestQueue(): Queue | null {
+  const conn = getRedisConnection();
+  if (!freqtradeBacktestQueue && conn && redisAvailable) {
+    try {
+      freqtradeBacktestQueue = new Queue('freqtrade-backtest', {
+        connection: conn,
+        defaultJobOptions: {
+          attempts: 1,
+          removeOnComplete: 20,
+          removeOnFail: 10
+        }
+      });
+    } catch (err) {
+      logger.warn('Failed to create freqtrade-backtest queue', {
+        error: err instanceof Error ? err.message : String(err),
+        service: 'JobQueue'
+      });
+    }
+  }
+  return freqtradeBacktestQueue;
+}
+
+export function getFreqtradeValidateQueue(): Queue | null {
+  const conn = getRedisConnection();
+  if (!freqtradeValidateQueue && conn && redisAvailable) {
+    try {
+      freqtradeValidateQueue = new Queue('freqtrade-validate', {
+        connection: conn,
+        defaultJobOptions: {
+          attempts: 1,
+          removeOnComplete: 20,
+          removeOnFail: 10
+        }
+      });
+    } catch (err) {
+      logger.warn('Failed to create freqtrade-validate queue', {
+        error: err instanceof Error ? err.message : String(err),
+        service: 'JobQueue'
+      });
+    }
+  }
+  return freqtradeValidateQueue;
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// registerFreqtradeWorkers (3.3 + 3.3b)
+// Idempotent — safe to call from startSchedulers() on every restart.
+// Gates on FREQTRADE_ENABLED=true AND venv presence so the main app
+// starts normally even when the sidecar isn't installed.
+// ──────────────────────────────────────────────────────────────────────
+
+export async function registerFreqtradeWorkers(): Promise<void> {
+  if (freqtradeWorkersRegistered) return; // idempotent guard
+
+  const enabled = process.env.FREQTRADE_ENABLED === 'true';
+  if (!enabled) {
+    logger.info('FREQTRADE_ENABLED not set — skipping freqtrade worker registration', {
+      service: 'JobQueue'
+    });
+    return;
+  }
+
+  // Check venv exists (install_freqtrade.sh must have run first)
+  const thisFileDir = path.dirname(new URL(import.meta.url).pathname);
+  const venvBin = path.join(thisFileDir, 'freqtrade', 'venv', 'bin', 'freqtrade');
+  if (!existsSync(venvBin)) {
+    logger.warn('Freqtrade venv not found — run `npm run freqtrade:install` first', {
+      service: 'JobQueue',
+      venvBin
+    });
+    return;
+  }
+
+  const conn = getRedisConnection();
+  if (!conn || !redisAvailable) {
+    logger.warn('Redis not available — cannot register freqtrade workers', { service: 'JobQueue' });
+    return;
+  }
+
+  // Lazy-import workers to avoid hard dep when freqtrade isn't installed
+  const { processFreqtradeDataJob } = await import('./freqtrade/workers/dataWorker.js');
+  const { processFreqtradeBacktestJob } = await import('./freqtrade/workers/backtestWorker.js');
+  const { processFreqtradeValidateJob } = await import('./freqtrade/workers/validateWorker.js');
+
+  const concurrency = parseInt(process.env.FREQTRADE_QUEUE_CONCURRENCY || '1', 10);
+
+  // B9: serialise download + backtest so they don't race on user_data/
+  freqtradeDataWorker = new Worker('freqtrade-data', processFreqtradeDataJob, {
+    connection: conn,
+    concurrency
+  });
+  freqtradeBacktestWorker = new Worker('freqtrade-backtest', processFreqtradeBacktestJob, {
+    connection: conn,
+    concurrency
+  });
+  freqtradeValidateWorker = new Worker('freqtrade-validate', processFreqtradeValidateJob, {
+    connection: conn,
+    concurrency
+  });
+
+  // Error handlers
+  for (const [name, worker] of [
+    ['freqtrade-data', freqtradeDataWorker],
+    ['freqtrade-backtest', freqtradeBacktestWorker],
+    ['freqtrade-validate', freqtradeValidateWorker],
+  ] as [string, Worker][]) {
+    worker.on('failed', (job, err) => {
+      logger.error(`${name} job failed`, {
+        jobId: job?.id,
+        error: err.message,
+        attempts: job?.attemptsMade,
+        service: 'JobQueue'
+      });
+    });
+  }
+
+  // 3.3b — Weekly cron: Sunday 03:00 UTC (Decision 6 §12)
+  const dataQueue = getFreqtradeDataQueue();
+  if (dataQueue) {
+    try {
+      await dataQueue.add(
+        'weekly-download',
+        {
+          jobId: 'cron-weekly',
+          exchange: process.env.EXCHANGE_NAME || 'binance',
+          pairs: (process.env.FREQTRADE_DEFAULT_PAIRS || 'BTC/USDT,ETH/USDT').split(','),
+          timeframes: ['1h', '4h', '1d'],
+          tradingMode: (process.env.FREQTRADE_TRADING_MODE || 'spot') as 'spot' | 'futures' | 'margin',
+          dataFormat: 'parquet' as const
+        },
+        {
+          repeat: { pattern: '0 3 * * 0' }, // Every Sunday 03:00 UTC
+          jobId: 'freqtrade-weekly-download-cron'
+        }
+      );
+      logger.info('Freqtrade weekly download cron registered (Sun 03:00 UTC)', { service: 'JobQueue' });
+    } catch (err) {
+      logger.warn('Failed to register freqtrade weekly cron', {
+        error: err instanceof Error ? err.message : String(err),
+        service: 'JobQueue'
+      });
+    }
+  }
+
+  freqtradeWorkersRegistered = true;
+  logger.info('Freqtrade BullMQ workers registered', { service: 'JobQueue', concurrency });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// Standard worker initialization (called after services are ready)
+// ──────────────────────────────────────────────────────────────────────
+
 export function initializeWorkers(marketDataService: MarketDataService, optimizationEngine: OptimizationEngine) {
   const conn = getRedisConnection();
   if (!conn || !redisAvailable) {
@@ -187,23 +373,17 @@ export function initializeWorkers(marketDataService: MarketDataService, optimiza
   dataPipelineWorker = new Worker('data-pipeline', async (job) => {
     logger.info('Processing data pipeline job', { jobId: job.id, priority: job.opts.priority, service: 'JobQueue' });
     try {
-      const { operation, data } = job.data;
-
-      // Process based on operation type
+      const { operation } = job.data;
       switch (operation) {
         case 'indicator_calculation':
-          // Handle parallel indicator calculation
           break;
         case 'cache_invalidation':
-          // Handle cache invalidation
           break;
         case 'data_deduplication':
-          // Handle data deduplication
           break;
         default:
           logger.warn('Unknown data pipeline operation', { operation });
       }
-
       logger.info('Data pipeline job completed successfully', { jobId: job.id, service: 'JobQueue' });
     } catch (error) {
       logger.error('Data pipeline job failed', {
@@ -215,8 +395,8 @@ export function initializeWorkers(marketDataService: MarketDataService, optimiza
     }
   }, {
     connection: conn,
-    concurrency: 4, // Higher concurrency for data pipeline
-    limiter: { max: 100, duration: 60000 }, // Allow more jobs per minute
+    concurrency: 4,
+    limiter: { max: 100, duration: 60000 },
   });
 
   // Worker event handlers
@@ -249,51 +429,65 @@ export function initializeWorkers(marketDataService: MarketDataService, optimiza
   logger.info('BullMQ workers initialized', { service: 'JobQueue' });
 }
 
-// Queue monitoring
+// ──────────────────────────────────────────────────────────────────────
+// Queue health (3.2 — includes freqtrade queues)
+// ──────────────────────────────────────────────────────────────────────
+
 export async function getQueueHealth() {
   try {
     const mdQueue = getMarketDataQueue();
     const optQueue = getOptimizationQueue();
     const dpQueue = getDataPipelineQueue();
+    const ftDataQueue = getFreqtradeDataQueue();
+    const ftBacktestQueue = getFreqtradeBacktestQueue();
+    const ftValidateQueue = getFreqtradeValidateQueue();
+
+    const empty = { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 };
 
     if (!mdQueue || !optQueue) {
       return {
-        marketData: { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 },
-        optimization: { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 },
-        dataPipeline: { waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 },
+        marketData: empty,
+        optimization: empty,
+        dataPipeline: empty,
+        freqtradeData: empty,
+        freqtradeBacktest: empty,
+        freqtradeValidate: empty,
         timestamp: Date.now(),
         redisAvailable,
       };
     }
 
-    const [marketDataStats, optimizationStats, dataPipelineStats] = await Promise.all([
+    const [
+      marketDataStats,
+      optimizationStats,
+      dataPipelineStats,
+      ftDataStats,
+      ftBacktestStats,
+      ftValidateStats
+    ] = await Promise.all([
       mdQueue.getJobCounts(),
       optQueue.getJobCounts(),
-      dpQueue ? dpQueue.getJobCounts() : Promise.resolve({ waiting: 0, active: 0, completed: 0, failed: 0, delayed: 0 }),
+      dpQueue ? dpQueue.getJobCounts() : Promise.resolve(empty),
+      ftDataQueue ? ftDataQueue.getJobCounts() : Promise.resolve(empty),
+      ftBacktestQueue ? ftBacktestQueue.getJobCounts() : Promise.resolve(empty),
+      ftValidateQueue ? ftValidateQueue.getJobCounts() : Promise.resolve(empty),
     ]);
 
+    const normalise = (s: Record<string, number>) => ({
+      waiting: s.waiting || 0,
+      active: s.active || 0,
+      completed: s.completed || 0,
+      failed: s.failed || 0,
+      delayed: s.delayed || 0,
+    });
+
     return {
-      marketData: {
-        waiting: marketDataStats.waiting || 0,
-        active: marketDataStats.active || 0,
-        completed: marketDataStats.completed || 0,
-        failed: marketDataStats.failed || 0,
-        delayed: marketDataStats.delayed || 0,
-      },
-      optimization: {
-        waiting: optimizationStats.waiting || 0,
-        active: optimizationStats.active || 0,
-        completed: optimizationStats.completed || 0,
-        failed: optimizationStats.failed || 0,
-        delayed: optimizationStats.delayed || 0,
-      },
-      dataPipeline: {
-        waiting: dataPipelineStats.waiting || 0,
-        active: dataPipelineStats.active || 0,
-        completed: dataPipelineStats.completed || 0,
-        failed: dataPipelineStats.failed || 0,
-        delayed: dataPipelineStats.delayed || 0,
-      },
+      marketData: normalise(marketDataStats),
+      optimization: normalise(optimizationStats),
+      dataPipeline: normalise(dataPipelineStats),
+      freqtradeData: normalise(ftDataStats),
+      freqtradeBacktest: normalise(ftBacktestStats),
+      freqtradeValidate: normalise(ftValidateStats),
       timestamp: Date.now(),
       redisAvailable,
     };
@@ -306,19 +500,28 @@ export async function getQueueHealth() {
   }
 }
 
+// ──────────────────────────────────────────────────────────────────────
 // Graceful shutdown
+// ──────────────────────────────────────────────────────────────────────
+
 export async function closeQueues() {
   logger.info('Closing job queues', { service: 'JobQueue' });
 
   const closePromises: Promise<void>[] = [];
 
-  if (marketDataWorker) closePromises.push(marketDataWorker.close().then(() => {}).catch(() => {}));
-  if (optimizationWorker) closePromises.push(optimizationWorker.close().then(() => {}).catch(() => {}));
-  if (dataPipelineWorker) closePromises.push(dataPipelineWorker.close().then(() => {}).catch(() => {}));
-  if (marketDataQueue) closePromises.push(marketDataQueue.close().then(() => {}).catch(() => {}));
-  if (optimizationQueue) closePromises.push(optimizationQueue.close().then(() => {}).catch(() => {}));
-  if (dataPipelineQueue) closePromises.push(dataPipelineQueue.close().then(() => {}).catch(() => {}));
-  if (redisConnection) closePromises.push(redisConnection.quit().then(() => {}).catch(() => {}));
+  if (marketDataWorker)       closePromises.push(marketDataWorker.close().then(() => {}).catch(() => {}));
+  if (optimizationWorker)     closePromises.push(optimizationWorker.close().then(() => {}).catch(() => {}));
+  if (dataPipelineWorker)     closePromises.push(dataPipelineWorker.close().then(() => {}).catch(() => {}));
+  if (freqtradeDataWorker)    closePromises.push(freqtradeDataWorker.close().then(() => {}).catch(() => {}));
+  if (freqtradeBacktestWorker) closePromises.push(freqtradeBacktestWorker.close().then(() => {}).catch(() => {}));
+  if (freqtradeValidateWorker) closePromises.push(freqtradeValidateWorker.close().then(() => {}).catch(() => {}));
+  if (marketDataQueue)         closePromises.push(marketDataQueue.close().then(() => {}).catch(() => {}));
+  if (optimizationQueue)       closePromises.push(optimizationQueue.close().then(() => {}).catch(() => {}));
+  if (dataPipelineQueue)       closePromises.push(dataPipelineQueue.close().then(() => {}).catch(() => {}));
+  if (freqtradeDataQueue)      closePromises.push(freqtradeDataQueue.close().then(() => {}).catch(() => {}));
+  if (freqtradeBacktestQueue)  closePromises.push(freqtradeBacktestQueue.close().then(() => {}).catch(() => {}));
+  if (freqtradeValidateQueue)  closePromises.push(freqtradeValidateQueue.close().then(() => {}).catch(() => {}));
+  if (redisConnection)         closePromises.push(redisConnection.quit().then(() => {}).catch(() => {}));
 
   await Promise.all(closePromises);
 

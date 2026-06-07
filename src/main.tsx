@@ -1,4 +1,4 @@
-import React, { StrictMode } from 'react';
+import React, { Component, StrictMode } from 'react';
 import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
@@ -15,28 +15,29 @@ window.onunhandledrejection = (event) => {
   event.preventDefault();
 };
 
-// Error boundary - shows error UI instead of reloading
-class ErrorBoundary extends React.Component<
-  { children: React.ReactNode },
-  { hasError: boolean; error: Error | null }
-> {
-  constructor(props: { children: React.ReactNode }) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-  static getDerivedStateFromError(error: Error) {
+// Error boundary - shows error UI instead of reloading.
+// Note: using `react-error-boundary` would be cleaner, but to keep the
+// dependency surface minimal we implement it as a class component using
+// the named import `Component` from react (avoids TS issues that occur
+// when extending `React.Component` through the namespace default in
+// some bundler-resolved setups).
+interface ErrorBoundaryProps { children: React.ReactNode }
+interface ErrorBoundaryState { hasError: boolean; error: Error | null }
+class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  state: ErrorBoundaryState = { hasError: false, error: null };
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
     return { hasError: true, error };
   }
-  componentDidCatch(error: Error, info: React.ErrorInfo) {
+  componentDidCatch(error: Error, _info: React.ErrorInfo) {
     console.error('Error boundary caught:', error.message);
   }
-  render() {
+  render(): React.ReactNode {
     if (this.state.hasError) {
       return (
         <div style={{ padding: 40, color: '#f55', background: '#111', minHeight: '100vh' }}>
           <h1>Error</h1>
           <p>{this.state.error?.message}</p>
-          <button onClick={() => this.setState({ hasError: false })}>Continue</button>
+          <button onClick={(): void => { this.setState({ hasError: false }); }}>Continue</button>
         </div>
       );
     }
