@@ -40,3 +40,14 @@ backend/freqtrade/freqtrade.log
 backend/freqtrade/user_data/data/
 backend/freqtrade/user_data/tradesv3.sqlite
 backend/freqtrade/user_data/tradesv3.dryrun.sqlite
+backend/freqtrade/user_data/hyperopt_results/
+backend/freqtrade/user_data/strategies/ShadyTraderReferenceStrategy.json
+
+# Agent/tooling and QA harness artifacts
+.hermes/plans/
+.kilocode/
+logs/
+qa-output/
+qa-output-*/
+cli-smoke-output.txt
+fix_script.py
