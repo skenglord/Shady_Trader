@@ -3,13 +3,18 @@ import assert from 'node:assert';
 import express from 'express';
 import request from 'supertest';
 import { apiRouter } from '../../backend/api/routes.js';
-import { setMockRunQuery } from '../../backend/database.js';
+import { setMockRunQuery, clearMockRunQuery } from '../../backend/database.js';
 
 // Test auth tokens. Set in beforeEach so requireRole() resolves to a role
 // (instead of returning 503 "auth not configured"). Real tokens aren't needed
 // because we don't make outbound calls from these tests.
 const TEST_ADMIN_TOKEN = 'test-admin-token-do-not-use-in-prod';
 const TEST_TRADER_TOKEN = 'test-trader-token-do-not-use-in-prod';
+
+// Snapshot of process.env at module load. Restored in afterEach so we don't
+// leak our admin/trader tokens (or any other env mutation) into other tests
+// running in parallel within the same Node process.
+const originalEnv = { ...process.env };
 
 function setupRouteMocks() {
   setMockRunQuery(async (sql: string, params?: any[], method?: string) => {
@@ -23,7 +28,12 @@ function setupRouteMocks() {
   });
 }
 
-describe('Deep Deterministic Tests - API Routes', () => {
+// `concurrency: false` is required because this test mocks the global
+// `runQuery` in `backend/database.ts`. With concurrent execution, other test
+// files running in the same process would see the mock and fail
+// intermittently (the flakiness pattern we hit before this fix). All
+// `deep-deterministic/*` test files share this constraint.
+describe('Deep Deterministic Tests - API Routes', { concurrency: false }, () => {
   let app: express.Application;
 
   beforeEach(() => {
@@ -36,6 +46,10 @@ describe('Deep Deterministic Tests - API Routes', () => {
   });
 
   afterEach(() => {
+    // CRITICAL: reset both the DB mock AND the env vars so we don't leak
+    // state into any other test file that happens to run after this one.
+    clearMockRunQuery();
+    process.env = { ...originalEnv };
   });
 
   describe('Health Endpoints', () => {

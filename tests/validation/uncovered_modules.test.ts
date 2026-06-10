@@ -17,7 +17,7 @@ describe.skip('Exchange Adapter Tests', () => {
     });
 
     test('getCapabilities returns available methods', () => {
-      const connector = new ExchangeConnector('coinmarketcap', 'key');
+      const connector = new ExchangeConnector('coinmarketcap', 'key', '');
       
       const capabilities = connector.getCapabilities();
       
@@ -25,7 +25,7 @@ describe.skip('Exchange Adapter Tests', () => {
     });
 
     test('setActiveSymbol changes the active symbol', () => {
-      const connector = new ExchangeConnector('coinmarketcap', 'key');
+      const connector = new ExchangeConnector('coinmarketcap', 'key', '');
       
       connector.setActiveSymbol('ETH/USDT');
       
@@ -35,7 +35,7 @@ describe.skip('Exchange Adapter Tests', () => {
 
   describe.skip('ExchangeConnector - API Methods', () => {
     test('placeOrder validates order parameters', async () => {
-      const connector = new ExchangeConnector('coinmarketcap', '');
+      const connector = new ExchangeConnector('coinmarketcap', '', '');
       
       try {
         await connector.placeOrder('BTC/USDT', 'buy', 1, 'market');
@@ -46,7 +46,7 @@ describe.skip('Exchange Adapter Tests', () => {
     });
 
     test('getCandles returns data or empty array', async () => {
-      const connector = new ExchangeConnector('coinmarketcap', '');
+      const connector = new ExchangeConnector('coinmarketcap', '', '');
       
       const candles = await connector.getCandles('BTC/USDT', '1h', 100);
       
@@ -135,7 +135,7 @@ describe.skip('Monte Carlo Correlation Matrix Tests', () => {
   test('Correlation matrix can calculate correlations', async () => {
     try {
       const { CorrelationMatrix } = await import('../../backend/monte-carlo/engine/correlation-matrix.js');
-      const matrix = new CorrelationMatrix();
+      const matrix = new CorrelationMatrix([]);
       
       assert.ok(matrix !== undefined);
     } catch (e) {

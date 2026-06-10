@@ -2,7 +2,7 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { ShadowTrader } from '../../backend/shadow/shadow_trader.js';
 import { RiskMode } from '../../backend/risk/manager.js';
-import { setMockRunQuery } from '../../backend/database.js';
+import { setMockRunQuery, clearMockRunQuery } from '../../backend/database.js';
 
 function setupShadowMocks() {
   setMockRunQuery(async (sql: string, params?: any[], method?: string) => {
@@ -18,7 +18,7 @@ function setupShadowMocks() {
   });
 }
 
-describe('Deep Deterministic Tests - ShadowTrader', () => {
+describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () => {
   let shadowTrader: ShadowTrader;
 
   beforeEach(() => {
@@ -27,7 +27,9 @@ describe('Deep Deterministic Tests - ShadowTrader', () => {
   });
 
   afterEach(() => {
-    // Clean up
+    // CRITICAL: reset the global DB mock so it doesn't leak into other test
+    // files running concurrently in the same process.
+    clearMockRunQuery();
   });
 
   describe('Constructor and Initial State', () => {
@@ -128,7 +130,7 @@ describe('Deep Deterministic Tests - ShadowTrader', () => {
 
     test('processSignal respects circuit breakers', async () => {
       // Set up circuit breaker condition
-      shadowTrader.riskManager.consecutiveLosses[RiskMode.MODERATE] = 5;
+      (shadowTrader.riskManager as any).consecutiveLosses[RiskMode.MODERATE] = 5;
 
       const signal = {
         symbol: 'BTC/USDT',

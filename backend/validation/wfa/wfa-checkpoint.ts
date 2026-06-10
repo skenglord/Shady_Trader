@@ -7,7 +7,7 @@ import { logger } from '../../logging/logger.js';
 import { DataPartition } from './data-partitioner';
 import { RiskMode } from '../../risk/manager';
 
-interface WFACheckpoint {
+interface WFACheckpointRecord {
   jobId: string;
   symbol: string;
   mode: RiskMode;
@@ -18,6 +18,38 @@ interface WFACheckpoint {
   validationReport?: ValidationReport;
   timestamp: number;
   version: string;
+}
+
+export class WFACheckpoint implements WFACheckpointRecord {
+  jobId: string;
+  symbol: string;
+  mode: RiskMode;
+  partitions: DataPartition[];
+  completedPartitions: number;
+  optimizationResults: OptimizationResult[];
+  overfittingDiagnostic?: OverfittingDiagnostic;
+  validationReport?: ValidationReport;
+  timestamp: number;
+  version: string;
+
+  constructor(
+    jobId = 'test-job',
+    symbol = 'BTC/USDT',
+    mode = RiskMode.MODERATE,
+    partitions: DataPartition[] = [],
+    completedPartitions = 0,
+    optimizationResults: OptimizationResult[] = [],
+    timestamp = Date.now()
+  ) {
+    this.jobId = jobId;
+    this.symbol = symbol;
+    this.mode = mode;
+    this.partitions = partitions;
+    this.completedPartitions = completedPartitions;
+    this.optimizationResults = optimizationResults;
+    this.timestamp = timestamp;
+    this.version = '1.0.0';
+  }
 }
 
 export class WFACheckpointManager {
@@ -48,7 +80,7 @@ export class WFACheckpointManager {
       return;
     }
 
-    const checkpoint: WFACheckpoint = {
+    const checkpoint: WFACheckpointRecord = {
       jobId,
       symbol,
       mode,
@@ -83,12 +115,12 @@ export class WFACheckpointManager {
   /**
    * Load checkpoint for WFA job
    */
-  async loadCheckpoint(jobId: string): Promise<WFACheckpoint | null> {
+  async loadCheckpoint(jobId: string): Promise<WFACheckpointRecord | null> {
     const filePath = this.getCheckpointFilePath(jobId);
 
     try {
       const data = await fs.promises.readFile(filePath, 'utf8');
-      const checkpoint: WFACheckpoint = JSON.parse(data);
+      const checkpoint: WFACheckpointRecord = JSON.parse(data);
 
       // Validate checkpoint version
       if (checkpoint.version !== '1.0.0') {
@@ -161,7 +193,7 @@ export class WFACheckpointManager {
 
         try {
           const data = await fs.promises.readFile(filePath, 'utf8');
-          const checkpoint: WFACheckpoint = JSON.parse(data);
+          const checkpoint: WFACheckpointRecord = JSON.parse(data);
 
           if (!oldestTimestamp || checkpoint.timestamp < oldestTimestamp) {
             oldestTimestamp = checkpoint.timestamp;
@@ -313,5 +345,3 @@ export class WFACheckpointManager {
     }
   }
 }
-
-export type { WFACheckpoint };

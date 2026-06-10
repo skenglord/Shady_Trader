@@ -63,7 +63,7 @@ describe('bulk_ingest_candles.py', () => {
     // Create DB with table using Python
     execSync(`"${venvPython}" -c "${createTablesScript(dbPath).replace(/"/g, '\\"')}"`, {
       encoding: 'utf-8',
-      shell: true,
+      shell: '/bin/sh',
     });
 
     // Create synthetic feather + parquet files with Python

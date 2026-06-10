@@ -394,7 +394,7 @@ export class FreqtradeBridge {
       '-c', this.configPath,
       '--userdir', this.userDataDir
     ]);
-    const result = await this.runAndCaptureStdout(jobId, args, { timeoutMs: 30_000 });
+    const result = await this.runAndCaptureStdout(jobId, args, { timeoutMs: 30_000, exchange: 'n/a' });
     const duration = Date.now() - start;
     this.logger.info('freqtrade list-strategies completed', {
       jobId,
@@ -528,7 +528,7 @@ export class FreqtradeBridge {
         );
       }
       const parsedExport = await readAndParseJson(fallback);
-      if (!parsedExport.ok) {
+      if (parsedExport.ok === false) {
         throw new Error(`failed to parse ${fallback}: ${parsedExport.error}`);
       }
       return withMetadata(parsedExport.data, {
@@ -537,7 +537,7 @@ export class FreqtradeBridge {
     }
 
     const parsedExport = await readAndParseJson(exportFilename);
-    if (!parsedExport.ok) {
+    if (parsedExport.ok === false) {
       throw new Error(`failed to parse ${exportFilename}: ${parsedExport.error}`);
     }
 

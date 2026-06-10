@@ -1,16 +1,16 @@
 // Monte Carlo Simulation Engine - Unit Tests
 import { describe, it, expect, beforeEach } from 'vitest';
-import { PathGenerator } from './engine/path-generator';
-import { CorrelationMatrix } from './engine/correlation-matrix';
-import { RiskCalculator } from './engine/risk-calculator';
-import { StressTestRunner, BlackSwanScenario } from './engine/stress-test-engine';
-import { MonteCarloEngine } from './engine/monte-carlo-engine';
+import { PathGenerator } from '../../backend/monte-carlo/engine/path-generator';
+import { CorrelationMatrix } from '../../backend/monte-carlo/engine/correlation-matrix';
+import { RiskCalculator } from '../../backend/monte-carlo/engine/risk-calculator';
+import { StressTestRunner, BlackSwanScenario } from '../../backend/monte-carlo/engine/stress-test-engine';
+import { MonteCarloEngine } from '../../backend/monte-carlo/engine/monte-carlo-engine';
 import {
   validateCorrelationMatrix,
   ensurePositiveDefinite,
   validateSimulationParams,
   checkConvergence
-} from './utils/validation';
+} from '../../backend/monte-carlo/utils/validation';
 
 describe.skip('Monte Carlo Simulation Engine', () => {
   describe.skip('PathGenerator', () => {
@@ -241,7 +241,7 @@ describe.skip('Monte Carlo Simulation Engine', () => {
           timeHorizon: 1,
           confidenceLevels: [0.95, 0.99],
           numPaths: 1000,
-          model: 'gbm'
+          model: 'gbm' as const
         }
       };
       
@@ -288,13 +288,13 @@ describe.skip('Monte Carlo Simulation Engine', () => {
           timeHorizon: 1,
           confidenceLevels: [0.95],
           numPaths: 5000,
-          model: 'gbm'
+          model: 'gbm' as const
         }
       };
       
       const result = await engine.simulate(request);
       
-      expect(result.result!.convergence).toBeLessThan(0.1);
+      expect((result.result! as any).convergence).toBeLessThan(0.1);
     });
   });
 

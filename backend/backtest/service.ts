@@ -131,8 +131,9 @@ export async function runBacktestStandalone(
 
     // ── Trade simulation (TP / SL) ──
     const riskPerUnit = Math.abs(signal.entryPrice - signal.stopLoss);
-    const slMult = config.slMultiplier ?? 1;
-    const tpMult = config.tpMultiplier ?? 1;
+    const riskConfig = config as Record<string, unknown>;
+    const slMult = (riskConfig.slMultiplier ?? 1) as number;
+    const tpMult = (riskConfig.tpMultiplier ?? 1) as number;
     const lev = config.leverage ?? 1;
 
     const adjustedStopLoss =

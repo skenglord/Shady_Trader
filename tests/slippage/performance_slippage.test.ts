@@ -164,6 +164,7 @@ describe.skip('Performance Regression Benchmarks - Slippage Engine (<1ms latency
         depth: {
           bidVolume: new Decimal('1000'),
           askVolume: new Decimal('1000'),
+          totalDepth: new Decimal('2000'),
           bidLevels: 10,
           askLevels: 10,
           vpin: 0.1

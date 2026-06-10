@@ -1,4 +1,5 @@
 import { test, describe, beforeEach } from 'node:test';
+import { expect } from 'vitest';
 import assert from 'node:assert';
 import { OverfittingDetector, OverfittingMetrics, StabilityAnalysis } from '../../backend/validation/wfa/overfitting-detector';
 import { OptimizationResult, ParameterSet } from '../../backend/validation/wfa/rolling-optimizer';

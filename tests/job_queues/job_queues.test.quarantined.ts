@@ -28,14 +28,14 @@ describe('job_queues', () => {
 
   test('getMarketDataQueue returns null when Redis unavailable', async () => {
     resetQueueModules();
-    const { getMarketDataQueue } = await import('../backend/job_queues.js');
+    const { getMarketDataQueue } = await import('../../backend/job_queues.js');
     const queue = getMarketDataQueue();
     assert.strictEqual(queue, null);
   });
 
   test('getOptimizationQueue returns null when Redis unavailable', async () => {
     resetQueueModules();
-    const { getOptimizationQueue } = await import('../backend/job_queues.js');
+    const { getOptimizationQueue } = await import('../../backend/job_queues.js');
     const queue = getOptimizationQueue();
     assert.strictEqual(queue, null);
   });
@@ -48,7 +48,7 @@ describe('job_queues', () => {
     } as any;
     const optimizationEngine = { optimize: async () => {} } as any;
     
-    const { initializeWorkers } = await import('../backend/job_queues.js');
+    const { initializeWorkers } = await import('../../backend/job_queues.js');
     
     await new Promise(resolve => setTimeout(resolve, 100));
     const result = initializeWorkers(marketDataService, optimizationEngine);
@@ -57,7 +57,7 @@ describe('job_queues', () => {
 
   test('getQueueHealth returns zero counts when queues unavailable', async () => {
     resetQueueModules();
-    const { getQueueHealth } = await import('../backend/job_queues.js');
+    const { getQueueHealth } = await import('../../backend/job_queues.js');
     
     await new Promise(resolve => setTimeout(resolve, 100));
     const health = await getQueueHealth();
@@ -69,7 +69,7 @@ describe('job_queues', () => {
 
   test('closeQueues handles null workers gracefully', async () => {
     resetQueueModules();
-    const { closeQueues } = await import('../backend/job_queues.js');
+    const { closeQueues } = await import('../../backend/job_queues.js');
     
     await new Promise(resolve => setTimeout(resolve, 100));
     await closeQueues();
@@ -77,7 +77,7 @@ describe('job_queues', () => {
 
   test('TradingEngine start method starts successfully', async () => {
     resetQueueModules();
-    const { TradingEngine } = await import('../backend/main.js');
+    const { TradingEngine } = await import('../../backend/main.js');
     
     const wss = new WebSocketServer({ noServer: true });
     const engine = new TradingEngine(wss);

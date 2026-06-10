@@ -9,12 +9,17 @@
  *
  * Run with: tsx --test tests/freqtrade/freqtrade_e2e.test.ts
  */
-import { describe, test, beforeEach, afterEach, mock } from 'node:test';
+import { describe, test, beforeEach, afterEach, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import express from 'express';
 import request from 'supertest';
+
+after(async () => {
+  const { closeQueues } = await import('../../backend/job_queues.js');
+  await closeQueues().catch(() => undefined);
+});
 
 // ────────────────────────────────────────────────────────────────────────────
 // 1. Mock child_process.spawn for bridge tests

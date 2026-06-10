@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert';
-import { OptimizationEngine } from '../../backend/strategy/optimization_engine.js';
+import { OptimizationEngine, type AiClientFactory } from '../../backend/strategy/optimization_engine.js';
 import { RiskMode, DEFAULT_RISK_CONFIGS } from '../../backend/risk/manager.js';
 
 function cloneConfigs() {
@@ -48,7 +48,7 @@ describe.skip('OptimizationEngine', () => {
       }
     };
 
-    const aiClientFactory = () => ({
+    const aiClientFactory = (() => ({
       models: {
         generateContent: async () => ({
           text: JSON.stringify({
@@ -56,7 +56,7 @@ describe.skip('OptimizationEngine', () => {
           })
         })
       }
-    });
+    })) as unknown as AiClientFactory;
 
     const engine = new OptimizationEngine(riskManager, {
       queryFn: async () => [],
@@ -84,11 +84,11 @@ describe.skip('OptimizationEngine', () => {
 
     const engine = new OptimizationEngine(riskManager, {
       queryFn: async () => [],
-      aiClientFactory: () => ({
+      aiClientFactory: (() => ({
         models: {
           generateContent: async () => ({ text: '{bad_json' })
         }
-      })
+      })) as unknown as AiClientFactory
     });
 
     await engine.optimize('weakbull');

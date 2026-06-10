@@ -160,7 +160,8 @@ describe.skip('End-to-End Trading Bot Tests [LEGACY-QUARANTINED]', () => {
     await engine.init();
 
     // Test WebSocket connection establishment
-    const ws = new WebSocket(`ws://localhost:${wss.address().port}`);
+    const address = wss.address() as import('net').AddressInfo;
+    const ws = new WebSocket(`ws://localhost:${address.port}`);
     await new Promise((resolve) => {
       ws.onopen = resolve;
     });
@@ -399,7 +400,7 @@ describe.skip('End-to-End Trading Bot Tests [LEGACY-QUARANTINED]', () => {
 
     // Change setting
     engine.symbol = 'ETH/USDT';
-    await engine.saveSettings();
+    await (engine as any).saveSettings();
 
     // Simulate restart
     const newEngine = new TradingEngine(wss);
@@ -412,7 +413,7 @@ describe.skip('End-to-End Trading Bot Tests [LEGACY-QUARANTINED]', () => {
 
     // Restore original
     engine.symbol = originalSymbol;
-    await engine.saveSettings();
+    await (engine as any).saveSettings();
 
     wss.close();
   });

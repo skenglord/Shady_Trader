@@ -717,10 +717,10 @@ apiRouter.post('/start', (req, res) => {
   }
 });
 
-apiRouter.post('/stop', (req, res) => {
+apiRouter.post('/stop', async (req, res) => {
   const engine = getTradingEngine();
   if (engine && engine.isRunning) {
-    engine.stop();
+    await engine.stop();
     res.json({ success: true, message: 'Trading engine stopped' });
   } else {
     res.status(400).json({ success: false, message: 'Engine not running' });
@@ -741,7 +741,7 @@ apiRouter.post('/timeframe', validateTimeframeBody, async (req, res) => {
   `, ['timeframe', timeframe]);
 
   if (engine) {
-    engine.setTimeframe(timeframe);
+    await engine.setTimeframe(timeframe);
     res.json({ success: true, message: `Timeframe updated to ${timeframe}` });
   } else {
     res.status(500).json({ success: false, message: 'Engine not initialized' });
@@ -985,7 +985,7 @@ apiRouter.post('/settings', validateSettingsBody, async (req, res) => {
   
   const engine = getTradingEngine();
   if (engine) {
-    engine.loadSettings();
+    await engine.loadSettings();
   }
   
   res.json({ success: true });

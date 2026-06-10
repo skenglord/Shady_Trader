@@ -168,6 +168,10 @@ export class TradingEngine {
   aiSentimentAnalysis: boolean = false;
   private marketPollInterval: NodeJS.Timeout | null = null;
   private optimizationInterval: NodeJS.Timeout | null = null;
+  private loopSleepTimer: NodeJS.Timeout | null = null;
+  private stopLoopSleep: (() => void) | null = null;
+  private cycleInProgress = false;
+  private cycleAbortToken = 0;
   private startupDiagnostics: {
     exchangeEnabled: boolean;
     exchangeName: string;
@@ -220,9 +224,6 @@ export class TradingEngine {
     this.stateManager = getServiceManager(redisInstance, 'trading-engine');
     this.redisClient = redisInstance;
 
-    // Load initial state from Redis
-    this.loadStateFromRedis();
-
     this.exchange = null; // Initialize as null
     this.indicators = new IndicatorEngine();
     this.regimeDetector = new RegimeDetector();
@@ -272,11 +273,6 @@ export class TradingEngine {
         error: error.message
       });
     }
-
-    // Setup DB backup cron (every hour)
-    // setInterval(() => {
-    //   this.backupDatabase();
-    // }, 60 * 60 * 1000);
 
     this.setupSignalHandlers();
   }
@@ -434,9 +430,32 @@ export class TradingEngine {
     logger.info('Job queue schedulers started', { service: 'TradingEngine' });
   }
 
-  stopSchedulers() {
-    // No-op - queues are now managed by closeQueues()
-    logger.debug('stopSchedulers called (queues use closeQueues)', { service: 'TradingEngine' });
+  async stopSchedulers() {
+    this.cycleAbortToken++;
+    this.cycleInProgress = false;
+
+    if (this.marketPollInterval) {
+      clearInterval(this.marketPollInterval);
+      this.marketPollInterval = null;
+    }
+    if (this.optimizationInterval) {
+      clearInterval(this.optimizationInterval);
+      this.optimizationInterval = null;
+    }
+    if (this.stopLoopSleep) {
+      const stopSleep = this.stopLoopSleep;
+      this.stopLoopSleep = null;
+      stopSleep();
+    }
+
+    await closeQueues().catch((err) =>
+      logger.warn('Failed to close job queues during scheduler stop', {
+        error: err instanceof Error ? err.message : String(err),
+        service: 'TradingEngine'
+      })
+    );
+
+    logger.debug('Trading engine schedulers stopped', { service: 'TradingEngine' });
   }
 
   // Method to get queue health for monitoring
@@ -463,6 +482,8 @@ export class TradingEngine {
   }
 
   async init() {
+    await this.loadStateFromRedis();
+
     // Wait for database initialization
     let retry = 0;
     while (retry < 5) {
@@ -585,7 +606,7 @@ export class TradingEngine {
       this.broadcast({ type: 'status', data: { symbol: this.symbol, timeframe: this.timeframe, exchange: this.exchange?.exchangeName || this.startupDiagnostics?.exchangeName } });
       
       if (this.isRunning) {
-        this.runCycle().catch((err) => logger.error("Promise rejected", { error: String(err), service: "trading-engine" }));
+        await this.runCycle();
       }
     } catch (e) {
       logger.error('Failed to load settings', { error: String(e), service: 'main' });
@@ -641,6 +662,7 @@ export class TradingEngine {
       try {
         await this.runCycle();
       } catch (error: any) {
+        if (!this.isRunning) break;
         logger.error('Error in trading cycle:', { error: error.message });
         this.broadcast({ type: 'error', data: { message: error.message } });
         // Add delay on error to prevent tight error loops
@@ -658,6 +680,7 @@ export class TradingEngine {
       if (this.isRunning) {
         await this.sleepWithTimeout(sleepTime, 60000);
       }
+      if (!this.isRunning) break;
     }
 
     // Ensure clean exit
@@ -674,25 +697,47 @@ export class TradingEngine {
 
   private sleepWithTimeout(ms: number, timeoutMs: number = 30000): Promise<void> {
     return new Promise((resolve, reject) => {
+      let timer: NodeJS.Timeout;
+      let stopSleep: (() => void) | null = null;
+
       const timeout = setTimeout(() => {
+        if (this.loopSleepTimer === timer) {
+          this.loopSleepTimer = null;
+          this.stopLoopSleep = null;
+        }
         reject(new Error('Sleep timeout'));
       }, timeoutMs);
-      const timer = setTimeout(() => {
+
+      timer = setTimeout(() => {
+        if (this.loopSleepTimer === timer) {
+          this.loopSleepTimer = null;
+          this.stopLoopSleep = null;
+        }
         clearTimeout(timeout);
         resolve();
       }, ms);
+
+      this.loopSleepTimer = timer;
+      stopSleep = () => {
+        if (this.loopSleepTimer !== timer) return;
+        this.loopSleepTimer = null;
+        this.stopLoopSleep = null;
+        clearTimeout(timeout);
+        resolve();
+      };
+      this.stopLoopSleep = stopSleep;
     });
   }
 
-  stop() {
+  async stop() {
     this.isRunning = false;
-    this.stopSchedulers();
+    await this.stopSchedulers();
     logger.info('Trading engine stopped', { service: 'TradingEngine' });
     this.broadcast({ type: 'status', data: { isRunning: false } });
   }
 
   async killBot() {
-    this.stop();
+    await this.stop();
 
     // Fetch current price to close trades accurately
     let currentPrice = 0;
@@ -765,32 +810,51 @@ export class TradingEngine {
     logger.info('Bot Killed: All positions closed and funds returned to main balance', { service: 'main' });
   }
 
-  setTimeframe(timeframe: string) {
+  async setTimeframe(timeframe: string) {
     this.timeframe = timeframe;
     logger.info(`Timeframe changed to ${timeframe}`, { service: 'main' });
     this.broadcast({ type: 'status', data: { timeframe } });
     if (this.isRunning) {
-      this.runCycle().catch((err) => logger.error("Promise rejected", { error: String(err), service: "trading-engine" }));
+      await this.runCycle();
     }
   }
 
-  async runCycle() {
-    logger.info(`Starting cycle at ${new Date().toISOString()}`, { service: 'cycle' });
-    // 1. Fetch new candles
-    let candles = [];
-    try {
-      candles = this.exchange ? await this.exchange.getCandles(this.symbol, this.timeframe, 200) : [];
-    } catch (e) {
-      logger.warn(`Exchange API failed to fetch candles: ${e}`, { service: 'main' });
+  private abortCycleIfNeeded(cycleToken: number, step: string): boolean {
+    if (!this.isRunning || cycleToken !== this.cycleAbortToken) {
+      logger.debug('Trading cycle aborted before next step', { service: 'TradingEngine', step });
+      return true;
     }
-    if (candles.length < 20) return;
+    return false;
+  }
 
-    // 2. Calculate indicators
-    const df = this.indicators.calculateAll(candles);
-    if (df.length === 0) return;
+  async runCycle() {
+    if (!this.isRunning) return;
+    if (this.cycleInProgress) {
+      logger.debug('Skipping overlapping trading cycle', { service: 'TradingEngine' });
+      return;
+    }
 
-    // 3. Detect regime
-    let regimeResult;
+    const cycleToken = this.cycleAbortToken;
+    this.cycleInProgress = true;
+    try {
+      logger.info(`Starting cycle at ${new Date().toISOString()}`, { service: 'cycle' });
+      // 1. Fetch new candles
+      let candles = [];
+      try {
+        candles = this.exchange ? await this.exchange.getCandles(this.symbol, this.timeframe, 200) : [];
+      } catch (e) {
+        logger.warn(`Exchange API failed to fetch candles: ${e}`, { service: 'main' });
+      }
+      if (this.abortCycleIfNeeded(cycleToken, 'after_fetch_candles')) return;
+      if (candles.length < 20) return;
+
+      // 2. Calculate indicators
+      const df = this.indicators.calculateAll(candles);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_calculate_indicators')) return;
+      if (df.length === 0) return;
+
+      // 3. Detect regime
+      let regimeResult;
     if (this.manualRegime) {
       regimeResult = {
         regime: this.manualRegime,
@@ -806,6 +870,7 @@ export class TradingEngine {
       let shadowPerformance: any;
       try {
         shadowPerformance = await this.shadowTrader.getPerformance();
+        if (this.abortCycleIfNeeded(cycleToken, 'after_shadow_performance')) return;
         // Stamp the snapshot so the fallback path can report how stale it is.
         // We attach to a fresh shallow object so we don't mutate the engine's
         // return value (in case it's a shared cache or frozen ref).
@@ -823,7 +888,9 @@ export class TradingEngine {
 
       // Fetch latest market data and news for AI context
       const marketData = await this.marketDataService.getLatestMarketData();
+      if (this.abortCycleIfNeeded(cycleToken, 'after_market_data')) return;
       const marketNews = await this.marketDataService.getLatestNews(10);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_market_news')) return;
 
       const marketContext = {
         btc_dominance: marketData?.btc_dominance ? `${marketData.btc_dominance.toFixed(1)}%` : "N/A",
@@ -833,6 +900,7 @@ export class TradingEngine {
       };
 
       regimeResult = await this.regimeDetector.detect(df, this.aiSentimentAnalysis, shadowPerformance, marketContext);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_regime_detection')) return;
     }
 
     // ── v6.0: persist three-axis composite to regimes_v2 each cycle ──
@@ -849,6 +917,7 @@ export class TradingEngine {
           regimeResult.composite, regimeResult.stability ?? 1.0,
           regimeResult.atrPercentile ?? null, regimeResult.atrUsable ? 1 : 0
         ], 'run');
+        if (this.abortCycleIfNeeded(cycleToken, 'after_regimes_v2_persist')) return;
       } catch (e: any) {
         logger.debug('regimes_v2 persist skipped', { service: 'TradingEngine', error: e?.message });
       }
@@ -862,6 +931,7 @@ export class TradingEngine {
         INSERT INTO regime_history (timestamp, regime, confidence, reasoning)
         VALUES (?, ?, ?, ?)
       `, [Date.now(), this.currentRegime, regimeResult.confidence, regimeResult.reasoning]);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_regime_history_persist')) return;
 
       // Audit log: regime change
       try {
@@ -871,6 +941,7 @@ export class TradingEngine {
           INSERT INTO audit_system_events (id, event_type, message, timestamp, severity, metadata)
           VALUES (?, ?, ?, ?, ?, ?)
         `, [auditId, 'regime_change', `Regime changed to ${this.currentRegime}`, timestamp, 'info', JSON.stringify({ confidence: regimeResult.confidence, reasoning: regimeResult.reasoning })]);
+        if (this.abortCycleIfNeeded(cycleToken, 'after_regime_audit_persist')) return;
       } catch (error) {
         logger.error('Failed to log regime change audit', { error: String(error), service: 'main' });
       }
@@ -895,8 +966,9 @@ export class TradingEngine {
 
           const response = await openai.chat.completions.create({
             model: process.env.OLLAMA_MODEL || "llama3",
-            messages: [{ role: "user", content: prompt }]
+            messages: [{ role: 'user', content: prompt }]
           });
+          if (this.abortCycleIfNeeded(cycleToken, 'after_ai_mode_recommendation')) return;
 
           const text = response.choices[0].message.content;
           if (text) {
@@ -905,6 +977,7 @@ export class TradingEngine {
             if (validModes.includes(newMode)) {
               this.activeMode = newMode;
               await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
+              if (this.abortCycleIfNeeded(cycleToken, 'after_ai_mode_persist')) return;
               this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
               logger.info(`AI switched strategy to ${newMode}`, { service: 'main' });
             }
@@ -920,6 +993,7 @@ export class TradingEngine {
           }
           this.activeMode = newMode;
           await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
+          if (this.abortCycleIfNeeded(cycleToken, 'after_fallback_mode_persist')) return;
           this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
         }
       }
@@ -927,6 +1001,7 @@ export class TradingEngine {
 
     // 4. Generate signal
     const signal = await this.signalGenerator.generateSignal(df, this.currentRegime, this.symbol, this.aiSignalGeneration, this.strategy, this.activeMode);
+    if (this.abortCycleIfNeeded(cycleToken, 'after_signal_generation')) return;
     
     // Compute live confidence every cycle — dynamic 0-100 score based on
     // indicator proximity, even when no full signal triggers
@@ -983,6 +1058,7 @@ export class TradingEngine {
         liveConfidence?.score || null,
         signal?.mlScore || null
       ]);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_live_signal_persist')) return;
       // Broadcast signal record for frontend markers
       this.broadcast({
         type: 'signal_record',
@@ -1024,6 +1100,7 @@ export class TradingEngine {
           liveConfidence?.score || null,
           signal.mlScore || null
         ]);
+        if (this.abortCycleIfNeeded(cycleToken, 'after_signal_persist')) return;
         // Broadcast signal record for frontend markers
         this.broadcast({
           type: 'signal_record',
@@ -1049,6 +1126,7 @@ export class TradingEngine {
       // 5. Execute shadow trades — guarded by Redis execution lock (Block 8)
       const currentPrice = df[df.length - 1].close;
       const lockToken = await acquireTradeLock(this.symbol, this.redisClient);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_trade_lock')) return;
       if (!lockToken) {
         logger.warn('Trade lock held — skipping execution', { service: 'TradingEngine', symbol: this.symbol });
       } else {
@@ -1061,6 +1139,7 @@ export class TradingEngine {
             this.exchange,
             this.currentRegime
           );
+          if (this.abortCycleIfNeeded(cycleToken, 'after_process_signal')) return;
         } finally {
           await releaseTradeLock(this.symbol, lockToken, this.redisClient);
         }
@@ -1070,6 +1149,7 @@ export class TradingEngine {
     // 6. Update positions
     const currentPrice = df[df.length - 1].close;
     await this.shadowTrader.updatePositions(currentPrice, this.activeMode, this.balanceManager, this.exchange, df[df.length - 1]);
+    if (this.abortCycleIfNeeded(cycleToken, 'after_update_positions')) return;
 
     // 7. Broadcast updates
     // Same try/catch + last-good-cache pattern as above. The broadcast is
@@ -1089,12 +1169,16 @@ export class TradingEngine {
     this.broadcast({ type: 'performance', data: performance });
 
     const balances = await this.balanceManager.getBalances();
+    if (this.abortCycleIfNeeded(cycleToken, 'after_balances')) return;
     this.broadcast({ type: 'balances', data: balances });
 
     // Broadcast latest candle for chart - always, so frontend can update current candle price
     const latestCandle = df[df.length - 1];
     if (latestCandle) {
       this.broadcast({ type: 'candle', data: latestCandle });
+    }
+    } finally {
+      this.cycleInProgress = false;
     }
   }
 

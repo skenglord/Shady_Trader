@@ -14,6 +14,7 @@
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { Job } from 'bullmq';
+import type { BacktestResult } from '../../backend/freqtrade/bridge.js';
 
 // ────────────────────────────────────────────────────────────────────────────
 // 1. Mock runQuery for worker tests
@@ -164,8 +165,11 @@ describe('Freqtrade data worker (processFreqtradeDataJob)', () => {
 
   test('handles error during download', async () => {
     const { FreqtradeBridge } = await import('../../backend/freqtrade/bridge.js');
-    FreqtradeBridge.prototype.downloadData = async function* () {
-      throw new Error('Connection refused');
+    FreqtradeBridge.prototype.downloadData = async function () {
+      async function* failing() {
+        throw new Error('Connection refused');
+      }
+      return failing();
     };
 
     const { processFreqtradeDataJob } = await import('../../backend/freqtrade/workers/dataWorker.js');
@@ -205,8 +209,19 @@ describe('Freqtrade data worker (processFreqtradeDataJob)', () => {
 
   test('handles AsyncIterable with errors as failed', async () => {
     const { FreqtradeBridge } = await import('../../backend/freqtrade/bridge.js');
-    FreqtradeBridge.prototype.downloadData = async function* () {
-      yield { type: 'error', line: 'ERROR: Download failed for BTC/USDT' };
+    FreqtradeBridge.prototype.downloadData = async function () {
+      async function* failing() {
+        yield {
+          type: 'error' as const,
+          line: 'ERROR: Download failed for BTC/USDT',
+          jobId: 'test-data-003',
+          exchange: 'binance',
+          pairsCompleted: 0,
+          pairsTotal: 1,
+          timestamp: Date.now(),
+        };
+      }
+      return failing();
     };
 
     const { processFreqtradeDataJob } = await import('../../backend/freqtrade/workers/dataWorker.js');
@@ -247,7 +262,13 @@ describe('Freqtrade backtest worker (processFreqtradeBacktestJob)', () => {
     const { FreqtradeBridge } = await import('../../backend/freqtrade/bridge.js');
 
     FreqtradeBridge.prototype.runBacktest = async (req: any) => ({
-      metadata: { success: true, exitCode: 0, duration: 10.5 },
+      metadata: {
+        jobId: 'test-bt-001',
+        exchange: 'n/a',
+        durationMs: 10.5,
+        exitCode: 0,
+        success: true,
+      },
       trades: [{ pair: 'BTC/USDT', profit: 0.02, exit_reason: 'stop_loss' }],
       warnings: ['Low liquidity detected'],
     });
@@ -899,7 +920,7 @@ describe('FreqtradeBridge module exports', () => {
         },
       ],
       warnings: [],
-    });
+    }) as BacktestResult & { trades: Array<{ pair: string }> };
 
     assert.ok(valid.metadata.success);
     assert.equal(valid.trades.length, 1);
@@ -921,7 +942,7 @@ describe('FreqtradeBridge module exports', () => {
       venvDir: '/opt/venvs/freqtrade',
       userDataDir: '/var/data/freqtrade',
       configPath: '/etc/freqtrade/config.json',
-      freqtradePath: '/usr/local/bin/freqtrade',
+      freqtradeBin: '/usr/local/bin/freqtrade',
     });
 
     assert.ok(bridge);

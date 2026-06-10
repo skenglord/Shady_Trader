@@ -8,7 +8,14 @@ export class PathGenerator {
   private gpuKernel: any;
   private seed: number;
 
-  constructor(private config: PathGeneratorConfig) {
+  constructor(private config: PathGeneratorConfig = {
+    initialPrice: 100,
+    drift: 0.05,
+    volatility: 0.2,
+    timeSteps: 252,
+    numPaths: 10000,
+    seed: 42
+  }) {
     this.useGPU = this.detectWebGL() && config.useGPU !== false;
     this.seed = config.seed || 12345;
   }

@@ -8,7 +8,7 @@ import path from 'path';
 const execAsync = promisify(exec);
 
 type QueryFn = (query: string, params?: any[], mode?: 'all' | 'get' | 'run') => Promise<any>;
-type AiClientFactory = (apiKey: string) => OpenAI;
+export type AiClientFactory = (apiKey: string) => OpenAI;
 
 export class OptimizationEngine {
   private riskManager: RiskManager;
@@ -42,10 +42,11 @@ export class OptimizationEngine {
     `, [regime], 'all');
 
     try {
-      const { stdout } = await execAsync(`python3 ${pythonScript}`, {
-        input: JSON.stringify(recentTrials),
+      const execPromise = execAsync(`python3 ${pythonScript}`, {
         timeout: 10000
       });
+      execPromise.child.stdin?.end(JSON.stringify(recentTrials));
+      const { stdout } = await execPromise;
       
       const bestParams = JSON.parse(stdout);
       return bestParams;

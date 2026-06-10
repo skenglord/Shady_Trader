@@ -363,3 +363,5 @@ export class StressTestRunner {
     };
   }
 }
+
+export const StressTestEngine = StressTestRunner;

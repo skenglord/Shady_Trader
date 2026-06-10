@@ -1,7 +1,7 @@
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { TradingEngine } from '../../backend/main.js';
-import { setMockRunQuery } from '../../backend/database.js';
+import { setMockRunQuery, clearMockRunQuery } from '../../backend/database.js';
 import Redis from 'ioredis';
 
 // Mock Redis class that doesn't connect
@@ -62,7 +62,7 @@ function setupMocks() {
   });
 }
 
-describe('Deep Deterministic Tests - TradingEngine (main.ts)', () => {
+describe('Deep Deterministic Tests - TradingEngine (main.ts)', { concurrency: false }, () => {
   let engine: TradingEngine;
   let mockWss: any;
   let mockRedis: MockRedis;
@@ -76,10 +76,20 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', () => {
     };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (engine && typeof engine.stopSchedulers === 'function') {
-      engine.stopSchedulers();
+      await engine.stopSchedulers();
     }
+    // CRITICAL: reset the global DB mock so it doesn't leak into other test
+    // files running concurrently in the same process. We set it to a no-op
+    // stub (not null) so any *post-test* async work that calls runQuery
+    // (e.g. a setInterval scheduled inside runCycle that fires after the
+    // test has ended) does not throw "Database not initialized" and
+    // pollute the failure summary with a spurious error.
+    setMockRunQuery(async () => []);
+    // The nested Edge Cases describe owns final clearMockRunQuery() in its own
+    // afterEach hook so this delayed clear cannot race with that test's
+    // custom SELECT 1 retry mock.
   });
 
   describe('Constructor and Initialization', () => {
@@ -208,7 +218,7 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', () => {
       engine.isExchangeEnabled = false;
       
       const start = Date.now();
-      await engine.sleepWithTimeout(10, 100);
+      await (engine as any).sleepWithTimeout(10, 100);
       const elapsed = Date.now() - start;
       
       assert.ok(elapsed >= 10);
@@ -221,7 +231,7 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', () => {
       
       let errorThrown = false;
       try {
-        await engine.sleepWithTimeout(100, 10);
+        await (engine as any).sleepWithTimeout(100, 10);
       } catch (e: any) {
         errorThrown = true;
         assert.ok(e.message.includes('Sleep timeout'));
@@ -288,7 +298,7 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', () => {
       engine.isExchangeEnabled = false;
       
       let stopSchedulersCalled = false;
-      engine.stopSchedulers = () => { stopSchedulersCalled = true; };
+      (engine as any).stopSchedulers = async () => { stopSchedulersCalled = true; };
       
       engine.stop();
       
@@ -306,6 +316,48 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', () => {
       
       await engine.runCycle();
       assert.ok(true);
+    });
+
+    test('runCycle returns immediately when engine is stopped', async () => {
+      engine = new TradingEngine(mockWss as any, mockRedis as any);
+      engine.isExchangeEnabled = false;
+      engine.isRunning = false;
+      let exchangeCalled = false;
+      engine.exchange = {
+        getCandles: async () => {
+          exchangeCalled = true;
+          throw new Error('runCycle should not call exchange after stop');
+        }
+      } as any;
+
+      await engine.runCycle();
+      assert.strictEqual(exchangeCalled, false);
+    });
+
+    test('stop clears the current cycle sleep timer', async () => {
+      engine = new TradingEngine(mockWss as any, mockRedis as any);
+      engine.isExchangeEnabled = false;
+      engine.isRunning = true;
+
+      const sleepPromise = (engine as any).sleepWithTimeout(5000, 10000);
+      engine.stop();
+
+      await sleepPromise;
+      assert.strictEqual(engine.isRunning, false);
+    });
+
+    test('setTimeframe awaits runCycle when engine is running', async () => {
+      engine = new TradingEngine(mockWss as any, mockRedis as any);
+      engine.isExchangeEnabled = false;
+      engine.isRunning = true;
+      let runCycleCalls = 0;
+      engine.runCycle = async () => {
+        runCycleCalls++;
+      };
+
+      await engine.setTimeframe('1h');
+      assert.strictEqual(engine.timeframe, '1h');
+      assert.strictEqual(runCycleCalls, 1);
     });
 
     test('runCycle processes when exchange has sufficient candles', async () => {
@@ -377,7 +429,7 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', () => {
         reasoning: 'test',
         metrics: {},
         timestamp: Date.now()
-      });
+      } as any);
       engine.regimeDetector.shouldUpdateRegime = () => true;
       engine.signalGenerator.generateSignal = async () => null;
       
@@ -388,11 +440,11 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', () => {
   });
 
   describe('Timeframe Changes', () => {
-    test('setTimeframe updates the timeframe property', () => {
+    test('setTimeframe updates the timeframe property', async () => {
       engine = new TradingEngine(mockWss as any, mockRedis as any);
       engine.isExchangeEnabled = false;
       
-      engine.setTimeframe('1h');
+      await engine.setTimeframe('1h');
       
       assert.strictEqual(engine.timeframe, '1h');
     });
@@ -410,7 +462,7 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', () => {
   });
 });
 
-describe('TradingEngine Methods - Edge Cases', () => {
+describe('TradingEngine Methods - Edge Cases', { concurrency: false }, () => {
   let engine: TradingEngine;
   let mockWss: any;
   let mockRedis: MockRedis;
@@ -424,10 +476,20 @@ describe('TradingEngine Methods - Edge Cases', () => {
     };
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     if (engine && typeof engine.stopSchedulers === 'function') {
-      engine.stopSchedulers();
+      await engine.stopSchedulers();
     }
+    // CRITICAL: reset the global DB mock so it doesn't leak into other test
+    // files running concurrently in the same process. We set it to a no-op
+    // stub (not null) so any *post-test* async work that calls runQuery
+    // (e.g. a setInterval scheduled inside runCycle that fires after the
+    // test has ended) does not throw "Database not initialized" and
+    // pollute the failure summary with a spurious error.
+    setMockRunQuery(async () => []);
+    // Schedule the actual clear on a later tick so any pending callbacks
+    // that fire in the same tick can still resolve cleanly.
+    setTimeout(() => clearMockRunQuery(), 20);
   });
 
   test('init retries database connection on failure', async () => {
@@ -445,7 +507,7 @@ describe('TradingEngine Methods - Edge Cases', () => {
     engine.isExchangeEnabled = false;
     await engine.init();
     
-    assert.ok(callCount >= 3);
+    assert.ok(callCount >= 3, `expected at least 3 SELECT 1 attempts, got ${callCount}`);
   });
 
   test('backupDatabase handles missing database file', async () => {

@@ -65,8 +65,9 @@ freqtradeJobDurationSeconds.get = async function () {
  * the internal registry map is emptied, so we need to re-register before
  * the next metrics() call (Failure 4).
  */
-function ensureRegistered(metric: { name: string }): void {
-    if (!freqtradeMetricsRegistry.getSingleMetric(metric.name)) {
+function ensureRegistered(metric: { reset(): void }): void {
+    const metricName = (metric as unknown as { name: string }).name;
+    if (!freqtradeMetricsRegistry.getSingleMetric(metricName)) {
         // registerMetric throws if already registered; we check first
         try {
             (freqtradeMetricsRegistry as any).registerMetric(metric);
