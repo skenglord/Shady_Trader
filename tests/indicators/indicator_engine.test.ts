@@ -20,9 +20,9 @@ function makeCandles(count: number): Candle[] {
 }
 
 describe('IndicatorEngine', () => {
-  test('throws when candle count is below warmup minimum', () => {
+  test('returns an empty series when candle count is below warmup minimum', () => {
     const engine = new IndicatorEngine();
-    assert.throws(() => engine.calculateAll(makeCandles(10)), /Need at least 50 candles/);
+    assert.deepStrictEqual(engine.calculateAll(makeCandles(10)), []);
   });
 
   test('calculates aligned indicators and filters warmup rows', () => {

@@ -742,10 +742,11 @@ export class TradingEngine {
     // Fetch current price to close trades accurately
     let currentPrice = 0;
     try {
-      if (!this.exchange) throw new Error('Exchange not initialized');
-      const candles = await this.exchange.getCandles(this.symbol, this.timeframe, 1);
-      if (candles && candles.length > 0) {
-        currentPrice = candles[0].close;
+      if (this.exchange && typeof this.exchange.getCandles === 'function') {
+        const candles = await this.exchange.getCandles(this.symbol, this.timeframe, 1);
+        if (candles && candles.length > 0) {
+          currentPrice = candles[0].close;
+        }
       }
     } catch (e: any) {
       logger.error('Failed to fetch current price for killBot, using entry prices', { error: e?.message, service: 'trading-engine' });
@@ -772,7 +773,7 @@ export class TradingEngine {
 
         if (mode === this.activeMode) {
           const tradeCost = trade.amount * trade.price / trade.leverage;
-          this.balanceManager.recordTradeResult(pnl, tradeCost);
+          await this.balanceManager.recordTradeResult(pnl, tradeCost);
           
           if (this.exchange && this.exchange.apiKey) {
             try {
@@ -805,8 +806,10 @@ export class TradingEngine {
       }
     }
 
-    this.broadcast({ type: 'performance', data: this.shadowTrader.getPerformance() });
-    this.broadcast({ type: 'balances', data: this.balanceManager.getBalances() });
+    const performance = await this.shadowTrader.getPerformance();
+    const finalBalances = await this.balanceManager.getBalances();
+    this.broadcast({ type: 'performance', data: performance });
+    this.broadcast({ type: 'balances', data: finalBalances });
     logger.info('Bot Killed: All positions closed and funds returned to main balance', { service: 'main' });
   }
 

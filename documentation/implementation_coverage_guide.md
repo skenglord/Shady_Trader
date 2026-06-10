@@ -165,7 +165,7 @@ if (avgAtr > 0 && currentAtr > avgAtr * 3) {
 
 **Implementation**: `npm test` scope expanded, green status restored.
 
-**Status**: ✅ 53 tests passing (as noted in lines 99, 101, 115).
+**Status**: ✅ `npm test` passes in serial/spec mode with 397 tests, 396 passing, 1 skipped; `npm run quality:coverage` remains the remaining blocker.
 
 ---
 

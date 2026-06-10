@@ -400,7 +400,7 @@ npm run freqtrade:ingest    # Bulk-ingest parquet/feather into candles DB
 
 1. **Runtime MVP Launch**: Verified locally on May 12, 2026 via `npm run dev` with frontend served and backend endpoints responding on `PORT=3000`
 2. **Graceful Degradation**: Verified Redis-offline startup path with database and engine still reporting ready while Redis is marked `degraded`
-3. **Baseline Verification Gap Closed**: Legacy CI path was green at the time of the prior milestone (53/53 tests passing). Current `npm run lint` passes, and full `npm test` passes in this audit.
+3. **Baseline Verification Gap Closed**: Legacy CI path was green at the time of the prior milestone (53/53 tests passing). Current `npm run lint` and `npm run build` pass, full `npm test` passes in serial/spec mode, and `npm run quality:coverage` is the remaining quality-gate blocker.
 4. **Phase 1B Lifecycle Stabilization (June 10, 2026)**: Chose production strategy B over the test-only DB init workaround. `stopSchedulers()` now aborts in-flight work, clears intervals/timers, and closes queues; `stop()`, `killBot()`, `/stop`, `/timeframe`, and settings reload await engine lifecycle work; `runCycle()` is overlap-guarded and abortable via `cycleInProgress` + `cycleAbortToken`.
 5. **Redis Online (June 3, 2026)**: Installed `redis-server` 8.0.2 via apt, daemonized on `127.0.0.1:6379`, added `REDIS_HOST`/`REDIS_PORT` to `.env`, and fixed three IORedis clients (`backend/main.ts`, `backend/api/routes.ts`, `backend/job_queues.ts`) that were configured with `lazyConnect: true` and `retryStrategy: () => null` — preventing any connection from ever being established. Now Redis reports `ok`, BullMQ workers initialize, and state is persisted under `service:trading-engine:*` keys.
 
@@ -480,7 +480,7 @@ The repository contains a large Adaptive Trading System codebase with comprehens
 - **Build**: ✅ `npm run build` passes; Vite emits only a large-chunk warning.
 - **Targeted Test Suite**: `tests/deep-deterministic/deep_deterministic_main.test.ts` — 33/33 pass, 0 fail, 0 skipped.
 - **Full Test Suite**: `npm test -- --test-reporter=spec --test-concurrency=1 --test-timeout=120000` — 397 tests, 396 pass, 1 skipped.
-- **Test Coverage**: Coverage scripts exist, but do not cite current coverage percentages unless `npm run quality:coverage` completes successfully.
+- **Test Coverage**: ❌ `npm run quality:coverage` currently fails the gate: lines=44.14% (min 50%), branches=73.24% (min 65%).
 - **Playwright Tests**: Historical reports exist, but no current Playwright pass count was verified in this audit.
 
 **Last Known Working Configuration:**

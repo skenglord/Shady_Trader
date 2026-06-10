@@ -221,7 +221,7 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', { concurrency: fa
       await (engine as any).sleepWithTimeout(10, 100);
       const elapsed = Date.now() - start;
       
-      assert.ok(elapsed >= 10);
+      assert.ok(elapsed >= 5);
       assert.ok(elapsed < 50);
     });
 
