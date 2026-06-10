@@ -4,6 +4,7 @@ import { IndicatorEngine } from './indicators/engine.js';
 import { RegimeDetector, RegimeType } from './regime/detector.js';
 import { SignalGenerator } from './strategy/signal_generator.js';
 import { ShadowTrader } from './shadow/shadow_trader.js';
+import { validateModeForLive } from './risk/manager.js';
 import { BalanceManager } from './balance/manager.js';
 import { MarketDataService } from './api/marketDataService.js';
 import { OptimizationEngine } from './strategy/optimization_engine.js';
@@ -11,7 +12,7 @@ import { MonteCarloEngine } from './monte-carlo/engine/monte-carlo-engine.js';
 import { SlippageEngine, CostEstimator, LiquidityAnalyzer, SlippageCircuitBreaker } from './slippage/index.js';
 import { Decimal } from 'decimal.js';
 import { randomUUID } from 'crypto';
-import { getMarketDataQueue, getOptimizationQueue, getQueueHealth, initializeWorkers, closeQueues } from './job_queues.js';
+import { getMarketDataQueue, getOptimizationQueue, getQueueHealth, initializeWorkers, closeQueues, registerFreqtradeWorkers } from './job_queues.js';
 import fs from 'fs';
 import path from 'path';
 import { logger } from './logging/logger.js';
@@ -20,6 +21,7 @@ import paperTradingRouter from './paper-trading/paper-trading.controller.js';
 import { PaperTradingService } from './paper-trading/paper-trading-service.js';
 import { PaperTradingWebSocketHandler } from './paper-trading/websocket-handler.js';
 import { getServiceManager, StatelessServiceManager } from './stateless-manager.js';
+import { acquireTradeLock, releaseTradeLock } from './execution/executionLock.js';
 import Redis from 'ioredis';
 
 export class TradingEngine {
@@ -41,6 +43,7 @@ export class TradingEngine {
   wss: WebSocketServer;
   db: any; // Keep for now if used elsewhere, but remove from constructor
   stateManager: StatelessServiceManager;
+  private redisClient?: Redis;
 
   // Default values (actual state stored in Redis)
   private _currentRegime: RegimeType = RegimeType.UNCERTAIN;
@@ -165,6 +168,10 @@ export class TradingEngine {
   aiSentimentAnalysis: boolean = false;
   private marketPollInterval: NodeJS.Timeout | null = null;
   private optimizationInterval: NodeJS.Timeout | null = null;
+  private loopSleepTimer: NodeJS.Timeout | null = null;
+  private stopLoopSleep: (() => void) | null = null;
+  private cycleInProgress = false;
+  private cycleAbortToken = 0;
   private startupDiagnostics: {
     exchangeEnabled: boolean;
     exchangeName: string;
@@ -195,10 +202,14 @@ export class TradingEngine {
           host: process.env.REDIS_HOST || 'localhost',
           port: parseInt(process.env.REDIS_PORT || '6379'),
           password: process.env.REDIS_PASSWORD || '',
-          lazyConnect: true,
-          maxRetriesPerRequest: 1,
-          enableOfflineQueue: false,
-          retryStrategy: () => null,
+          lazyConnect: false,
+          maxRetriesPerRequest: 3,
+          enableOfflineQueue: true,
+          retryStrategy: (times) => Math.min(times * 200, 2000),
+        });
+        // Kick off the connection — lazyConnect=false still doesn't connect synchronously
+        redisInstance.connect().catch((err) => {
+          logger.warn('Redis initial connect failed', { error: err instanceof Error ? err.message : String(err) });
         });
       } catch (e) {
         logger.warn('Redis unavailable', { error: e instanceof Error ? e.message : String(e) });
@@ -211,9 +222,7 @@ export class TradingEngine {
       });
     }
     this.stateManager = getServiceManager(redisInstance, 'trading-engine');
-
-    // Load initial state from Redis
-    this.loadStateFromRedis();
+    this.redisClient = redisInstance;
 
     this.exchange = null; // Initialize as null
     this.indicators = new IndicatorEngine();
@@ -265,17 +274,30 @@ export class TradingEngine {
       });
     }
 
-    // Setup DB backup cron (every hour)
-    // setInterval(() => {
-    //   this.backupDatabase();
-    // }, 60 * 60 * 1000);
-
     this.setupSignalHandlers();
   }
 
   private isShuttingDown = false;
 
+  // Last known good performance snapshot — used as a fallback if
+  // getPerformance() ever throws (e.g. unhandled DB errors, uncaught
+  // ReferenceError in shadow_trader). Without this, a single bad call
+  // aborts the cycle, fires the catch logger, and on a 5s cycle produces
+  // ~72 errors/min until something native segfaults. With this, a bad
+  // call returns stale-but-valid data and the cycle continues normally.
+  // The fix in backend/shadow/shadow_trader.ts (winCount binding) is the
+  // primary fix; this is the belt-and-suspenders defensive layer.
+  private lastPerformance: any = {};
+
+  // Signal handlers must only be attached once per process — otherwise
+  // every TradingEngine instance (e.g. across HMR, dev restarts, or
+  // repeated test setup) leaks SIGTERM/SIGINT listeners on the global
+  // process EventEmitter and trips the MaxListenersExceededWarning.
+  private static signalHandlersAttached = false;
+
   private setupSignalHandlers() {
+    if (TradingEngine.signalHandlersAttached) return;
+    TradingEngine.signalHandlersAttached = true;
     process.on('SIGTERM', () => this.gracefulShutdown('SIGTERM'));
     process.on('SIGINT', () => this.gracefulShutdown('SIGINT'));
     logger.debug('Signal handlers registered', { service: 'TradingEngine' });
@@ -393,16 +415,47 @@ export class TradingEngine {
       });
     }
 
+    // 3.4: Register freqtrade workers (idempotent; gated on FREQTRADE_ENABLED + venv)
+    registerFreqtradeWorkers().catch((err) =>
+      logger.warn('Freqtrade worker registration failed (non-fatal)', {
+        error: err instanceof Error ? err.message : String(err),
+        service: 'TradingEngine'
+      })
+    );
+
     // Run initial market data fetch
-    this.marketDataService.fetchMarketData().catch(console.error);
-    this.marketDataService.fetchNews().catch(console.error);
+    this.marketDataService.fetchMarketData().catch((err) => logger.error("Promise rejected", { error: String(err), service: "trading-engine" }));
+    this.marketDataService.fetchNews().catch((err) => logger.error("Promise rejected", { error: String(err), service: "trading-engine" }));
 
     logger.info('Job queue schedulers started', { service: 'TradingEngine' });
   }
 
-  stopSchedulers() {
-    // No-op - queues are now managed by closeQueues()
-    logger.debug('stopSchedulers called (queues use closeQueues)', { service: 'TradingEngine' });
+  async stopSchedulers() {
+    this.cycleAbortToken++;
+    this.cycleInProgress = false;
+
+    if (this.marketPollInterval) {
+      clearInterval(this.marketPollInterval);
+      this.marketPollInterval = null;
+    }
+    if (this.optimizationInterval) {
+      clearInterval(this.optimizationInterval);
+      this.optimizationInterval = null;
+    }
+    if (this.stopLoopSleep) {
+      const stopSleep = this.stopLoopSleep;
+      this.stopLoopSleep = null;
+      stopSleep();
+    }
+
+    await closeQueues().catch((err) =>
+      logger.warn('Failed to close job queues during scheduler stop', {
+        error: err instanceof Error ? err.message : String(err),
+        service: 'TradingEngine'
+      })
+    );
+
+    logger.debug('Trading engine schedulers stopped', { service: 'TradingEngine' });
   }
 
   // Method to get queue health for monitoring
@@ -429,6 +482,8 @@ export class TradingEngine {
   }
 
   async init() {
+    await this.loadStateFromRedis();
+
     // Wait for database initialization
     let retry = 0;
     while (retry < 5) {
@@ -441,6 +496,13 @@ export class TradingEngine {
       }
     }
     await this.loadSettings();
+    // ── v6.0 Block 6: degen live-mode safety guard ──
+    try {
+      validateModeForLive(process.env.RISK_MODE_DEFAULT ?? 'conservative');
+    } catch (err: any) {
+      logger.error('Live mode validation failed', { error: err.message });
+      throw err;
+    }
     // Initialize sub-components that need DB access
     try {
       await this.shadowTrader.init();
@@ -456,7 +518,7 @@ export class TradingEngine {
       const backupPath = path.join(process.cwd(), `trading_backup_${Date.now()}.db`);
       if (fs.existsSync(dbPath)) {
         fs.copyFileSync(dbPath, backupPath);
-        console.log(`Database backed up to ${backupPath}`);
+        logger.info(`Database backed up to ${backupPath}`, { service: 'main' });
         
         // Clean up old backups (keep last 5)
         const files = fs.readdirSync(process.cwd());
@@ -467,7 +529,7 @@ export class TradingEngine {
         }
       }
     } catch (e) {
-      console.error('Failed to backup database:', e);
+      logger.error('Failed to backup database', { error: String(e), service: 'main' });
     }
   }
 
@@ -517,43 +579,37 @@ export class TradingEngine {
       };
 
       if (this.isExchangeEnabled) {
-        const requiresApiKey = exchangeName === 'coinmarketcap' || exchangeName === 'coinapi' || exchangeName === 'coingecko';
-        if (requiresApiKey && !exchangeApiKey) {
-          const message = `Exchange "${exchangeName}" requires an API key. Set COINAPI_API_KEY or EXCHANGE_API_KEY env var, or configure in Settings.`;
-          if (process.env.NODE_ENV === 'production') {
-            throw new Error(message);
-          }
-          console.warn(`[TradingEngine] ${message}. Exchange disabled until configured.`);
-          if (this.exchange) this.exchange.shutdown();
-          this.exchange = null;
-          this.startupDiagnostics.exchangeConfigured = false;
-          this.startupDiagnostics.exchangeReason = message;
-        } else {
-          if (this.exchange) this.exchange.shutdown();
-          this.exchange = new ExchangeConnector(
-            exchangeName,
-            exchangeApiKey,
-            exchangeApiSecret,
-            exchangeApiPassword || undefined,
-            useTestnet
-          );
-          this.exchange.setActiveSymbol(this.symbol);
-          this.startupDiagnostics.exchangeConfigured = true;
-          this.startupDiagnostics.exchangeReason = 'ok';
-        }
+        // Note: we instantiate the ExchangeConnector regardless of whether an
+        // API key is configured. The connector's `getCandles()` path works
+        // fully offline by aggregating from a finer-grained base timeframe
+        // (e.g. 1m → 5m) in the local DB. Live price/order calls still
+        // require a key, but the trading cycle can run end-to-end on stale
+        // data so that regime_history, signals, and regime_v2 persistence
+        // continue to function in dev.
+        if (this.exchange) this.exchange.shutdown();
+        this.exchange = new ExchangeConnector(
+          exchangeName,
+          exchangeApiKey,
+          exchangeApiSecret,
+          exchangeApiPassword || undefined,
+          useTestnet
+        );
+        this.exchange.setActiveSymbol(this.symbol);
+        this.startupDiagnostics.exchangeConfigured = Boolean(exchangeApiKey);
+        this.startupDiagnostics.exchangeReason = exchangeApiKey ? 'ok' : 'no_api_key_live_calls_disabled';
       } else {
         this.exchange = null;
         this.startupDiagnostics.exchangeConfigured = false;
         this.startupDiagnostics.exchangeReason = 'exchange_disabled';
       }
-      
+
       this.broadcast({ type: 'status', data: { symbol: this.symbol, timeframe: this.timeframe, exchange: this.exchange?.exchangeName || this.startupDiagnostics?.exchangeName } });
       
       if (this.isRunning) {
-        this.runCycle().catch(console.error);
+        await this.runCycle();
       }
     } catch (e) {
-      console.error('Failed to load settings:', e);
+      logger.error('Failed to load settings', { error: String(e), service: 'main' });
       this.exchange = null;
       this.startupDiagnostics.exchangeConfigured = false;
       this.startupDiagnostics.exchangeReason = e instanceof Error ? e.message : 'load_settings_failed';
@@ -606,6 +662,7 @@ export class TradingEngine {
       try {
         await this.runCycle();
       } catch (error: any) {
+        if (!this.isRunning) break;
         logger.error('Error in trading cycle:', { error: error.message });
         this.broadcast({ type: 'error', data: { message: error.message } });
         // Add delay on error to prevent tight error loops
@@ -623,6 +680,7 @@ export class TradingEngine {
       if (this.isRunning) {
         await this.sleepWithTimeout(sleepTime, 60000);
       }
+      if (!this.isRunning) break;
     }
 
     // Ensure clean exit
@@ -639,35 +697,58 @@ export class TradingEngine {
 
   private sleepWithTimeout(ms: number, timeoutMs: number = 30000): Promise<void> {
     return new Promise((resolve, reject) => {
+      let timer: NodeJS.Timeout;
+      let stopSleep: (() => void) | null = null;
+
       const timeout = setTimeout(() => {
+        if (this.loopSleepTimer === timer) {
+          this.loopSleepTimer = null;
+          this.stopLoopSleep = null;
+        }
         reject(new Error('Sleep timeout'));
       }, timeoutMs);
-      const timer = setTimeout(() => {
+
+      timer = setTimeout(() => {
+        if (this.loopSleepTimer === timer) {
+          this.loopSleepTimer = null;
+          this.stopLoopSleep = null;
+        }
         clearTimeout(timeout);
         resolve();
       }, ms);
+
+      this.loopSleepTimer = timer;
+      stopSleep = () => {
+        if (this.loopSleepTimer !== timer) return;
+        this.loopSleepTimer = null;
+        this.stopLoopSleep = null;
+        clearTimeout(timeout);
+        resolve();
+      };
+      this.stopLoopSleep = stopSleep;
     });
   }
 
-  stop() {
+  async stop() {
     this.isRunning = false;
-    this.stopSchedulers();
+    await this.stopSchedulers();
     logger.info('Trading engine stopped', { service: 'TradingEngine' });
     this.broadcast({ type: 'status', data: { isRunning: false } });
   }
 
   async killBot() {
-    this.stop();
-    
+    await this.stop();
+
     // Fetch current price to close trades accurately
     let currentPrice = 0;
     try {
+      if (!this.exchange) throw new Error('Exchange not initialized');
       const candles = await this.exchange.getCandles(this.symbol, this.timeframe, 1);
       if (candles && candles.length > 0) {
         currentPrice = candles[0].close;
       }
-    } catch (e) {
-      console.error('Failed to fetch current price for killBot, using entry prices');
+    } catch (e: any) {
+      logger.error('Failed to fetch current price for killBot, using entry prices', { error: e?.message, service: 'trading-engine' });
     }
 
     // Close all shadow positions
@@ -698,7 +779,7 @@ export class TradingEngine {
               const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
               await this.exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
             } catch (e: any) {
-              console.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`);
+              logger.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`, { service: 'main' });
             }
           }
         }
@@ -726,35 +807,54 @@ export class TradingEngine {
 
     this.broadcast({ type: 'performance', data: this.shadowTrader.getPerformance() });
     this.broadcast({ type: 'balances', data: this.balanceManager.getBalances() });
-    console.log('Bot Killed: All positions closed and funds returned to main balance');
+    logger.info('Bot Killed: All positions closed and funds returned to main balance', { service: 'main' });
   }
 
-  setTimeframe(timeframe: string) {
+  async setTimeframe(timeframe: string) {
     this.timeframe = timeframe;
-    console.log(`Timeframe changed to ${timeframe}`);
+    logger.info(`Timeframe changed to ${timeframe}`, { service: 'main' });
     this.broadcast({ type: 'status', data: { timeframe } });
     if (this.isRunning) {
-      this.runCycle().catch(console.error);
+      await this.runCycle();
     }
+  }
+
+  private abortCycleIfNeeded(cycleToken: number, step: string): boolean {
+    if (!this.isRunning || cycleToken !== this.cycleAbortToken) {
+      logger.debug('Trading cycle aborted before next step', { service: 'TradingEngine', step });
+      return true;
+    }
+    return false;
   }
 
   async runCycle() {
-    console.log(`[Cycle] Starting cycle at ${new Date().toISOString()}`);
-    // 1. Fetch new candles
-    let candles = [];
-    try {
-      candles = this.exchange ? await this.exchange.getCandles(this.symbol, this.timeframe, 200) : [];
-    } catch (e) {
-      console.warn(`Exchange API failed to fetch candles: ${e}`);
+    if (!this.isRunning) return;
+    if (this.cycleInProgress) {
+      logger.debug('Skipping overlapping trading cycle', { service: 'TradingEngine' });
+      return;
     }
-    if (candles.length < 20) return;
 
-    // 2. Calculate indicators
-    const df = this.indicators.calculateAll(candles);
-    if (df.length === 0) return;
+    const cycleToken = this.cycleAbortToken;
+    this.cycleInProgress = true;
+    try {
+      logger.info(`Starting cycle at ${new Date().toISOString()}`, { service: 'cycle' });
+      // 1. Fetch new candles
+      let candles = [];
+      try {
+        candles = this.exchange ? await this.exchange.getCandles(this.symbol, this.timeframe, 200) : [];
+      } catch (e) {
+        logger.warn(`Exchange API failed to fetch candles: ${e}`, { service: 'main' });
+      }
+      if (this.abortCycleIfNeeded(cycleToken, 'after_fetch_candles')) return;
+      if (candles.length < 20) return;
 
-    // 3. Detect regime
-    let regimeResult;
+      // 2. Calculate indicators
+      const df = this.indicators.calculateAll(candles);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_calculate_indicators')) return;
+      if (df.length === 0) return;
+
+      // 3. Detect regime
+      let regimeResult;
     if (this.manualRegime) {
       regimeResult = {
         regime: this.manualRegime,
@@ -765,11 +865,32 @@ export class TradingEngine {
       };
     } else {
       // Fetch recent shadow performance for AI context (MD 1.3)
-      const shadowPerformance = await this.shadowTrader.getPerformance();
+      // Wrapped in try/catch with last-good-cache fallback: a single bad
+      // call no longer aborts the cycle or fires the error-rate alarm.
+      let shadowPerformance: any;
+      try {
+        shadowPerformance = await this.shadowTrader.getPerformance();
+        if (this.abortCycleIfNeeded(cycleToken, 'after_shadow_performance')) return;
+        // Stamp the snapshot so the fallback path can report how stale it is.
+        // We attach to a fresh shallow object so we don't mutate the engine's
+        // return value (in case it's a shared cache or frozen ref).
+        this.lastPerformance = { ...shadowPerformance, _cachedAt: Date.now() };
+      } catch (perfErr: any) {
+        logger.error('getPerformance failed in runCycle (using last good snapshot)', {
+          service: 'TradingEngine',
+          error: perfErr?.message ?? String(perfErr),
+          fallbackAge: this.lastPerformance?._cachedAt
+            ? `${Date.now() - this.lastPerformance._cachedAt}ms`
+            : 'never',
+        });
+        shadowPerformance = this.lastPerformance || {};
+      }
 
       // Fetch latest market data and news for AI context
       const marketData = await this.marketDataService.getLatestMarketData();
+      if (this.abortCycleIfNeeded(cycleToken, 'after_market_data')) return;
       const marketNews = await this.marketDataService.getLatestNews(10);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_market_news')) return;
 
       const marketContext = {
         btc_dominance: marketData?.btc_dominance ? `${marketData.btc_dominance.toFixed(1)}%` : "N/A",
@@ -779,6 +900,27 @@ export class TradingEngine {
       };
 
       regimeResult = await this.regimeDetector.detect(df, this.aiSentimentAnalysis, shadowPerformance, marketContext);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_regime_detection')) return;
+    }
+
+    // ── v6.0: persist three-axis composite to regimes_v2 each cycle ──
+    if (regimeResult.composite) {
+      try {
+        await runQuery(`
+          INSERT INTO regimes_v2
+            (symbol, timestamp, trend_dir, trend_strength, vol_regime,
+             composite, stability, atr_percentile, atr_usable)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
+          this.symbol, Date.now(),
+          regimeResult.trendDir, regimeResult.trendStrength, regimeResult.volRegime,
+          regimeResult.composite, regimeResult.stability ?? 1.0,
+          regimeResult.atrPercentile ?? null, regimeResult.atrUsable ? 1 : 0
+        ], 'run');
+        if (this.abortCycleIfNeeded(cycleToken, 'after_regimes_v2_persist')) return;
+      } catch (e: any) {
+        logger.debug('regimes_v2 persist skipped', { service: 'TradingEngine', error: e?.message });
+      }
     }
     
     if (this.manualRegime || this.regimeDetector.shouldUpdateRegime(this.currentRegime, regimeResult.regime, regimeResult.confidence)) {
@@ -789,6 +931,7 @@ export class TradingEngine {
         INSERT INTO regime_history (timestamp, regime, confidence, reasoning)
         VALUES (?, ?, ?, ?)
       `, [Date.now(), this.currentRegime, regimeResult.confidence, regimeResult.reasoning]);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_regime_history_persist')) return;
 
       // Audit log: regime change
       try {
@@ -798,8 +941,9 @@ export class TradingEngine {
           INSERT INTO audit_system_events (id, event_type, message, timestamp, severity, metadata)
           VALUES (?, ?, ?, ?, ?, ?)
         `, [auditId, 'regime_change', `Regime changed to ${this.currentRegime}`, timestamp, 'info', JSON.stringify({ confidence: regimeResult.confidence, reasoning: regimeResult.reasoning })]);
+        if (this.abortCycleIfNeeded(cycleToken, 'after_regime_audit_persist')) return;
       } catch (error) {
-        console.error('Failed to log regime change audit:', error);
+        logger.error('Failed to log regime change audit', { error: String(error), service: 'main' });
       }
 
       this.broadcast({ type: 'regime', data: regimeResult });
@@ -822,8 +966,9 @@ export class TradingEngine {
 
           const response = await openai.chat.completions.create({
             model: process.env.OLLAMA_MODEL || "llama3",
-            messages: [{ role: "user", content: prompt }]
+            messages: [{ role: 'user', content: prompt }]
           });
+          if (this.abortCycleIfNeeded(cycleToken, 'after_ai_mode_recommendation')) return;
 
           const text = response.choices[0].message.content;
           if (text) {
@@ -832,21 +977,23 @@ export class TradingEngine {
             if (validModes.includes(newMode)) {
               this.activeMode = newMode;
               await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
+              if (this.abortCycleIfNeeded(cycleToken, 'after_ai_mode_persist')) return;
               this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
-              console.log(`AI switched strategy to ${newMode}`);
+              logger.info(`AI switched strategy to ${newMode}`, { service: 'main' });
             }
           }
         } catch (error: any) {
-          console.error("AI Strategy Switch failed:", error.message);
+          logger.error("AI Strategy Switch failed", { error: error.message, service: 'trading-engine' });
           // Fallback
           let newMode = 'moderate';
-          if (this.currentRegime === 'strong_bull' || this.currentRegime === 'bear') {
+          if (this.currentRegime === 'strongbull' || this.currentRegime === 'bear') {
             newMode = 'aggressive';
           } else if (this.currentRegime === 'sideways') {
             newMode = 'conservative';
           }
           this.activeMode = newMode;
           await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
+          if (this.abortCycleIfNeeded(cycleToken, 'after_fallback_mode_persist')) return;
           this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
         }
       }
@@ -854,6 +1001,7 @@ export class TradingEngine {
 
     // 4. Generate signal
     const signal = await this.signalGenerator.generateSignal(df, this.currentRegime, this.symbol, this.aiSignalGeneration, this.strategy, this.activeMode);
+    if (this.abortCycleIfNeeded(cycleToken, 'after_signal_generation')) return;
     
     // Compute live confidence every cycle — dynamic 0-100 score based on
     // indicator proximity, even when no full signal triggers
@@ -910,6 +1058,7 @@ export class TradingEngine {
         liveConfidence?.score || null,
         signal?.mlScore || null
       ]);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_live_signal_persist')) return;
       // Broadcast signal record for frontend markers
       this.broadcast({
         type: 'signal_record',
@@ -927,7 +1076,7 @@ export class TradingEngine {
         }
       });
     } catch (err: any) {
-      console.warn('[Signal] Failed to record signal:', err?.message);
+      logger.warn('Failed to record signal', { error: err?.message, service: 'trading-engine' });
     }
     
     if (signal) {
@@ -951,6 +1100,7 @@ export class TradingEngine {
           liveConfidence?.score || null,
           signal.mlScore || null
         ]);
+        if (this.abortCycleIfNeeded(cycleToken, 'after_signal_persist')) return;
         // Broadcast signal record for frontend markers
         this.broadcast({
           type: 'signal_record',
@@ -969,38 +1119,66 @@ export class TradingEngine {
             ml_score: signal.mlScore || null
           }
         });
-      } catch (err) {
-        console.error('[SignalRecord] Failed to save signal:', err);
+      } catch (err: any) {
+        logger.error('Failed to save signal', { error: String(err), service: 'trading-engine' });
       }
 
-      // 5. Execute shadow trades
+      // 5. Execute shadow trades — guarded by Redis execution lock (Block 8)
       const currentPrice = df[df.length - 1].close;
-      await this.shadowTrader.processSignal(
-        signal,
-        currentPrice,
-        this.activeMode,
-        this.balanceManager,
-        this.exchange,
-        this.currentRegime
-      );
+      const lockToken = await acquireTradeLock(this.symbol, this.redisClient);
+      if (this.abortCycleIfNeeded(cycleToken, 'after_trade_lock')) return;
+      if (!lockToken) {
+        logger.warn('Trade lock held — skipping execution', { service: 'TradingEngine', symbol: this.symbol });
+      } else {
+        try {
+          await this.shadowTrader.processSignal(
+            signal,
+            currentPrice,
+            this.activeMode,
+            this.balanceManager,
+            this.exchange,
+            this.currentRegime
+          );
+          if (this.abortCycleIfNeeded(cycleToken, 'after_process_signal')) return;
+        } finally {
+          await releaseTradeLock(this.symbol, lockToken, this.redisClient);
+        }
+      }
     }
 
     // 6. Update positions
     const currentPrice = df[df.length - 1].close;
     await this.shadowTrader.updatePositions(currentPrice, this.activeMode, this.balanceManager, this.exchange, df[df.length - 1]);
+    if (this.abortCycleIfNeeded(cycleToken, 'after_update_positions')) return;
 
     // 7. Broadcast updates
-    const performance = this.shadowTrader.getPerformance();
-    
+    // Same try/catch + last-good-cache pattern as above. The broadcast is
+    // cosmetic for the dashboard, but if it throws, it aborts the cycle.
+    let performance: any;
+    try {
+      performance = this.shadowTrader.getPerformance();
+      this.lastPerformance = { ...performance, _cachedAt: Date.now() };
+    } catch (perfErr: any) {
+      logger.error('getPerformance failed in broadcast (using last good snapshot)', {
+        service: 'TradingEngine',
+        error: perfErr?.message ?? String(perfErr),
+      });
+      performance = this.lastPerformance || {};
+    }
+
     this.broadcast({ type: 'performance', data: performance });
 
     const balances = await this.balanceManager.getBalances();
+    if (this.abortCycleIfNeeded(cycleToken, 'after_balances')) return;
     this.broadcast({ type: 'balances', data: balances });
 
     // Broadcast latest candle for chart - always, so frontend can update current candle price
     const latestCandle = df[df.length - 1];
     if (latestCandle) {
       this.broadcast({ type: 'candle', data: latestCandle });
+    }
+    } finally {
+      this.cycleInProgress = false;
     }
   }
 
@@ -1018,7 +1196,7 @@ export class TradingEngine {
     let candles: any[] = [];
     
     if (startTime && endTime) {
-      console.log(`Running backtest from ${new Date(startTime).toISOString()} to ${new Date(endTime).toISOString()}`);
+      logger.info('Running backtest from ${new Date(startTime).toISOString()} to ${new Date(endTime).toISOString()}', { service: 'main' });
       // Use getHistoricalCandles to fetch and cache data
       // Calculate how many candles we need based on timeframe
       let limit = 20000;
@@ -1031,10 +1209,10 @@ export class TradingEngine {
       
       if (this.exchange) {
         candles = await this.exchange.getHistoricalCandles(this.symbol, this.timeframe, startTime, limit, endTime);
-        console.log(`[Backtest] Fetched ${candles.length} candles from exchange`);
+        logger.info('Fetched ${candles.length} candles from exchange', { service: 'backtest' });
       } else {
         candles = [];
-        console.log(`[Backtest] No exchange connector found`);
+        logger.info('No exchange connector found', { service: 'backtest' });
       }
       
       // Filter by endTime just in case
@@ -1047,7 +1225,7 @@ export class TradingEngine {
           candles = [];
         }
       } catch (e) {
-        console.warn(`Exchange API failed to fetch candles for backtest: ${e}`);
+        logger.warn('Exchange API failed to fetch candles for backtest: ${e}', { service: 'main' });
         candles = [];
       }
     }
@@ -1087,7 +1265,7 @@ export class TradingEngine {
       const signal = await this.signalGenerator.generateSignal(slice, lastRegime, this.symbol, this.aiSignalGeneration, this.strategy, this.activeMode);
       
       if (signal) {
-        console.log(`[Backtest] Signal generated at ${new Date(df[i].time).toISOString()}: ${signal.side} ${signal.symbol} confidence=${signal.confidence}`);
+        logger.info('Signal generated at ${new Date(df[i].time).toISOString()}: ${signal.side} ${signal.symbol} confidence=${signal.confidence}', { service: 'backtest' });
       }
 
       if (signal && signal.confidence >= (config.confidenceThreshold || 0)) {
@@ -1181,7 +1359,7 @@ export async function startTradingEngine(wss: WebSocketServer, redis?: Redis) {
     engine = new TradingEngine(wss, redis);
     await engine.init();
     // Start engine asynchronously
-    engine.start().catch(console.error);
+    engine.start().catch((err) => logger.error("Promise rejected", { error: String(err), service: "trading-engine" }));
   }
   return engine;
 }

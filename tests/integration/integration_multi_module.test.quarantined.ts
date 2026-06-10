@@ -4,7 +4,7 @@ import { TradingEngine, getTradingEngine, startTradingEngine } from '../../backe
 import { ShadowTrader } from '../../backend/shadow/shadow_trader.js';
 import { RiskManager, RiskMode } from '../../backend/risk/manager.js';
 import { IndicatorEngine } from '../../backend/indicators/engine.js';
-import { RegimeDetector } from '../../backend/regime/detector.js';
+import { RegimeDetector, RegimeType } from '../../backend/regime/detector.js';
 import { SignalGenerator } from '../../backend/strategy/signal_generator.js';
 import { setMockRunQuery } from '../../backend/database.js';
 import Redis from 'ioredis';
@@ -99,7 +99,7 @@ describe('Advanced Integration Tests - Multi-Module Interactions', () => {
         signal,
         RiskMode.MODERATE,
         0,
-        'strong_bull'
+        RegimeType.STRONG_BULL
       );
       assert.ok(isValid);
 
@@ -162,7 +162,7 @@ describe('Advanced Integration Tests - Multi-Module Interactions', () => {
         { time: Date.now(), open: 100, high: 105, low: 95, close: 102, volume: 1000, rsi: 55, macd: 1, signal: 0.5 }
       ];
 
-      const signal = await generator.generateSignal(df, 'strong_bull', 'BTC/USDT', false, 'regime', 'moderate');
+      const signal = await generator.generateSignal(df, RegimeType.STRONG_BULL, 'BTC/USDT', false, 'regime', 'moderate');
 
       if (signal) {
         assert.ok(signal.side);

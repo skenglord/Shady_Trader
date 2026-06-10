@@ -34,6 +34,15 @@ setMockRunQuery(async (sql, params = [], type = 'run') => {
     return { changes: 1 };
   }
 
+  if (sql.includes('INSERT OR REPLACE INTO balances')) {
+    if (sql.includes("'default'")) {
+      mockBalances.main_balance = Number(params[0]);
+      mockBalances.bot_balance = Number(params[1]);
+      mockBalances.active_trade_balance = Number(params[2]);
+    }
+    return { changes: 1 };
+  }
+
   if (sql.includes('DELETE FROM shadow_trades')) return { changes: 1 };
   if (sql.includes('INSERT INTO shadow_trades')) return { changes: 1 };
 
@@ -81,7 +90,7 @@ test('ShadowTrader should move funds when opening trade', async () => {
     await trader.reset();
     trader.portfolios[RiskMode.MODERATE].initialBalance = 5000;
     trader.portfolios[RiskMode.MODERATE].balance = 5000;
-    await trader.processSignal({ ...signal, confidence: 90 }, 50000, RiskMode.MODERATE, manager, null, 'strong_bull');
+    await trader.processSignal({ ...signal, confidence: 90 }, 50000, RiskMode.MODERATE, manager, null, 'strongbull');
     
     const afterBalances = await manager.getBalances();
     assert.ok(afterBalances.botBalance < initialBalances.botBalance); // Funds moved into active trade bucket

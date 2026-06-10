@@ -90,13 +90,13 @@ async function callGemmaWithRetry(
       const result = GemmaAdjustmentSchema.safeParse(parsed);
 
       if (result.success) return result.data;
-      logger.warn('[gemma_adjuster] Zod validation failed:', result.error.issues);
+      logger.warn('[gemma_adjuster] Zod validation failed', { issues: result.error.issues as unknown as Record<string, unknown> });
 
     } catch (err: unknown) {
       if ((err as Error).name === 'AbortError') {
         logger.warn(`[gemma_adjuster] Timeout on attempt ${attempt}`);
       } else {
-        logger.warn('[gemma_adjuster] Call failed:', err);
+        logger.warn('[gemma_adjuster] Call failed', { err: err as unknown as Record<string, unknown> });
       }
     }
   }

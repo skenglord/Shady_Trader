@@ -3,10 +3,11 @@ import * as path from 'path';
 import { OptimizationResult } from './rolling-optimizer';
 import { OverfittingDiagnostic } from './overfitting-detector';
 import { ValidationReport } from './statistical-validator';
+import { logger } from '../../logging/logger.js';
 import { DataPartition } from './data-partitioner';
 import { RiskMode } from '../../risk/manager';
 
-interface WFACheckpoint {
+interface WFACheckpointRecord {
   jobId: string;
   symbol: string;
   mode: RiskMode;
@@ -17,6 +18,38 @@ interface WFACheckpoint {
   validationReport?: ValidationReport;
   timestamp: number;
   version: string;
+}
+
+export class WFACheckpoint implements WFACheckpointRecord {
+  jobId: string;
+  symbol: string;
+  mode: RiskMode;
+  partitions: DataPartition[];
+  completedPartitions: number;
+  optimizationResults: OptimizationResult[];
+  overfittingDiagnostic?: OverfittingDiagnostic;
+  validationReport?: ValidationReport;
+  timestamp: number;
+  version: string;
+
+  constructor(
+    jobId = 'test-job',
+    symbol = 'BTC/USDT',
+    mode = RiskMode.MODERATE,
+    partitions: DataPartition[] = [],
+    completedPartitions = 0,
+    optimizationResults: OptimizationResult[] = [],
+    timestamp = Date.now()
+  ) {
+    this.jobId = jobId;
+    this.symbol = symbol;
+    this.mode = mode;
+    this.partitions = partitions;
+    this.completedPartitions = completedPartitions;
+    this.optimizationResults = optimizationResults;
+    this.timestamp = timestamp;
+    this.version = '1.0.0';
+  }
 }
 
 export class WFACheckpointManager {
@@ -47,7 +80,7 @@ export class WFACheckpointManager {
       return;
     }
 
-    const checkpoint: WFACheckpoint = {
+    const checkpoint: WFACheckpointRecord = {
       jobId,
       symbol,
       mode,
@@ -72,9 +105,9 @@ export class WFACheckpointManager {
       // Clean up old checkpoints
       await this.cleanupOldCheckpoints();
 
-      console.log(`WFA checkpoint saved: ${filePath}`);
+      logger.info('WFA checkpoint saved: ${filePath}', { service: 'wfa-checkpoint' });
     } catch (error) {
-      console.error(`Failed to save WFA checkpoint for job ${jobId}:`, error);
+      logger.error("Failed to save WFA checkpoint", { jobId, error: String(error), service: "wfa-checkpoint" });
       throw error;
     }
   }
@@ -82,25 +115,25 @@ export class WFACheckpointManager {
   /**
    * Load checkpoint for WFA job
    */
-  async loadCheckpoint(jobId: string): Promise<WFACheckpoint | null> {
+  async loadCheckpoint(jobId: string): Promise<WFACheckpointRecord | null> {
     const filePath = this.getCheckpointFilePath(jobId);
 
     try {
       const data = await fs.promises.readFile(filePath, 'utf8');
-      const checkpoint: WFACheckpoint = JSON.parse(data);
+      const checkpoint: WFACheckpointRecord = JSON.parse(data);
 
       // Validate checkpoint version
       if (checkpoint.version !== '1.0.0') {
-        console.warn(`Checkpoint version mismatch for job ${jobId}: expected 1.0.0, got ${checkpoint.version}`);
+        logger.warn('Checkpoint version mismatch for job ${jobId}: expected 1.0.0, got ${checkpoint.version}', { service: 'wfa-checkpoint' });
       }
 
-      console.log(`WFA checkpoint loaded: ${filePath}`);
+      logger.info('WFA checkpoint loaded: ${filePath}', { service: 'wfa-checkpoint' });
       return checkpoint;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
         return null; // No checkpoint exists
       }
-      console.error(`Failed to load WFA checkpoint for job ${jobId}:`, error);
+      logger.error("Failed to load WFA checkpoint", { jobId, error: String(error), service: "wfa-checkpoint" });
       return null;
     }
   }
@@ -113,10 +146,10 @@ export class WFACheckpointManager {
 
     try {
       await fs.promises.unlink(filePath);
-      console.log(`WFA checkpoint deleted: ${filePath}`);
+      logger.info('WFA checkpoint deleted: ${filePath}', { service: 'wfa-checkpoint' });
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-        console.error(`Failed to delete WFA checkpoint for job ${jobId}:`, error);
+        logger.error("Failed to delete WFA checkpoint", { jobId, error: String(error), service: "wfa-checkpoint" });
       }
     }
   }
@@ -131,7 +164,7 @@ export class WFACheckpointManager {
         .filter(file => file.startsWith('wfa_') && file.endsWith('.json'))
         .map(file => file.replace('wfa_', '').replace('.json', ''));
     } catch (error) {
-      console.error('Failed to list WFA checkpoints:', error);
+      logger.error('Failed to list WFA checkpoints', { error: String(error), service: 'wfa-checkpoint' });
       return [];
     }
   }
@@ -160,7 +193,7 @@ export class WFACheckpointManager {
 
         try {
           const data = await fs.promises.readFile(filePath, 'utf8');
-          const checkpoint: WFACheckpoint = JSON.parse(data);
+          const checkpoint: WFACheckpointRecord = JSON.parse(data);
 
           if (!oldestTimestamp || checkpoint.timestamp < oldestTimestamp) {
             oldestTimestamp = checkpoint.timestamp;
@@ -181,7 +214,7 @@ export class WFACheckpointManager {
         newestCheckpoint: newestTimestamp,
       };
     } catch (error) {
-      console.error('Failed to get checkpoint stats:', error);
+      logger.error('Failed to get checkpoint stats', { error: String(error), service: 'wfa-checkpoint' });
       return {
         totalCheckpoints: 0,
         totalSize: 0,
@@ -225,13 +258,13 @@ export class WFACheckpointManager {
       for (const file of filesToRemove) {
         try {
           await fs.promises.unlink(file.path);
-          console.log(`Cleaned up old WFA checkpoint: ${file.name}`);
+          logger.info('Cleaned up old WFA checkpoint: ${file.name}', { service: 'wfa-checkpoint' });
         } catch (error) {
-          console.error(`Failed to clean up checkpoint ${file.name}:`, error);
+          logger.error("Failed to clean up checkpoint", { fileName: file.name, error: String(error), service: "wfa-checkpoint" });
         }
       }
     } catch (error) {
-      console.error('Failed to cleanup old checkpoints:', error);
+      logger.error('Failed to cleanup old checkpoints', { error: String(error), service: 'wfa-checkpoint' });
     }
   }
 
@@ -276,7 +309,7 @@ export class WFACheckpointManager {
 
       return true;
     } catch (error) {
-      console.error('Checkpoint validation failed:', error);
+      logger.error('Checkpoint validation failed', { error: String(error), service: 'wfa-checkpoint' });
       return false;
     }
   }
@@ -307,10 +340,8 @@ export class WFACheckpointManager {
         fs.mkdirSync(this.checkpointDir, { recursive: true });
       }
     } catch (error) {
-      console.error('Failed to create checkpoint directory:', error);
+      logger.error('Failed to create checkpoint directory', { error: String(error), service: 'wfa-checkpoint' });
       throw error;
     }
   }
 }
-
-export type { WFACheckpoint };

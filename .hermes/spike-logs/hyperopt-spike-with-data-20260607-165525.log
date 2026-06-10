@@ -1,0 +1,184 @@
+2026-06-07 16:55:25,150 - freqtrade - INFO - freqtrade 2026.5.1
+2026-06-07 16:55:26,492 - freqtrade.configuration.load_config - INFO - Using config: backend/freqtrade/user_data/config.json ...
+2026-06-07 16:55:26,493 - freqtrade.configuration.environment_vars - INFO - Loading variable 'FREQTRADE__API_SERVER__JWT_SECRET_KEY'
+2026-06-07 16:55:26,493 - freqtrade.configuration.environment_vars - INFO - Key parts: ['API_SERVER', 'JWT_SECRET_KEY']
+2026-06-07 16:55:26,494 - freqtrade.configuration.environment_vars - INFO - Loading variable 'FREQTRADE__EXCHANGE__KEY'
+2026-06-07 16:55:26,494 - freqtrade.configuration.environment_vars - INFO - Key parts: ['EXCHANGE', 'KEY']
+2026-06-07 16:55:26,494 - freqtrade.configuration.environment_vars - INFO - Loading variable 'FREQTRADE__EXCHANGE__NAME'
+2026-06-07 16:55:26,495 - freqtrade.configuration.environment_vars - INFO - Key parts: ['EXCHANGE', 'NAME']
+2026-06-07 16:55:26,495 - freqtrade.configuration.environment_vars - INFO - Loading variable 'FREQTRADE__EXCHANGE__PASSWORD'
+2026-06-07 16:55:26,495 - freqtrade.configuration.environment_vars - INFO - Key parts: ['EXCHANGE', 'PASSWORD']
+2026-06-07 16:55:26,496 - freqtrade.configuration.environment_vars - INFO - Loading variable 'FREQTRADE__EXCHANGE__SECRET'
+2026-06-07 16:55:26,496 - freqtrade.configuration.environment_vars - INFO - Key parts: ['EXCHANGE', 'SECRET']
+2026-06-07 16:55:26,498 - freqtrade.loggers - INFO - Enabling colorized output.
+2026-06-07 16:55:26,498 - freqtrade.loggers - INFO - Logfile configured
+2026-06-07 16:55:26,499 - freqtrade.loggers - INFO - Verbosity set to 0
+2026-06-07 16:55:26,499 - freqtrade.configuration.configuration - INFO - Using additional Strategy lookup path: backend/freqtrade/user_data/strategies
+2026-06-07 16:55:26,499 - freqtrade.configuration.configuration - INFO - Parameter -i/--timeframe detected ... Using timeframe: 1h ...
+2026-06-07 16:55:26,500 - freqtrade.configuration.configuration - INFO - Using max_open_trades: 3 ...
+2026-06-07 16:55:26,500 - freqtrade.configuration.configuration - INFO - Parameter --dry-run-wallet detected, overriding dry_run_wallet to: 1000.0 ...
+2026-06-07 16:55:26,500 - freqtrade.configuration.configuration - INFO - Parameter --timerange detected: 20251209-20260607 ...
+2026-06-07 16:55:26,501 - freqtrade.configuration.configuration - INFO - Using user-data directory: backend/freqtrade/user_data ...
+2026-06-07 16:55:26,502 - freqtrade.configuration.configuration - INFO - Using data directory: backend/freqtrade/user_data/data/binance ...
+2026-06-07 16:55:26,502 - freqtrade.configuration.configuration - INFO - Parameter --epochs detected ... Will run Hyperopt with for 1 epochs ...
+2026-06-07 16:55:26,502 - freqtrade.configuration.configuration - INFO - Parameter -s/--spaces detected: ['buy', 'sell']
+2026-06-07 16:55:26,503 - freqtrade.configuration.configuration - INFO - Parameter --print-json detected ...
+2026-06-07 16:55:26,503 - freqtrade.configuration.configuration - INFO - Parameter -j/--job-workers detected: -1
+2026-06-07 16:55:26,503 - freqtrade.configuration.configuration - INFO - Parameter --min-trades detected: 1
+2026-06-07 16:55:26,504 - freqtrade.configuration.configuration - INFO - Using Hyperopt loss class name: SharpeHyperOptLoss
+2026-06-07 16:55:26,504 - freqtrade.configuration.configuration - INFO - Using pairs ['BTC/USDT:USDT']
+2026-06-07 16:55:26,504 - freqtrade.configuration.configuration - INFO - Using "feather" to store OHLCV data.
+2026-06-07 16:55:26,505 - freqtrade.configuration.configuration - INFO - Filter trades by timerange: 20251209-20260607
+2026-06-07 16:55:26,506 - freqtrade.exchange.check_exchange - INFO - Checking exchange...
+2026-06-07 16:55:26,514 - freqtrade.exchange.check_exchange - INFO - Exchange "binance" is officially supported by the Freqtrade development team.
+2026-06-07 16:55:26,514 - freqtrade.configuration.config_validation - INFO - Validating configuration ...
+2026-06-07 16:55:26,516 - freqtrade.commands.optimize_commands - INFO - Starting freqtrade in Hyperopt mode
+2026-06-07 16:55:26,518 - freqtrade.exchange.exchange - INFO - Instance is running with dry_run enabled
+2026-06-07 16:55:26,519 - freqtrade.exchange.exchange - INFO - Using CCXT 4.5.56
+2026-06-07 16:55:26,519 - freqtrade.exchange.exchange - INFO - Applying additional ccxt config: {'options': {'defaultType': 'future'}}
+2026-06-07 16:55:26,527 - freqtrade.exchange.exchange - INFO - Applying additional ccxt config: {'options': {'defaultType': 'swap'}}
+2026-06-07 16:55:26,534 - freqtrade.exchange.exchange - INFO - Using Exchange "Binance"
+2026-06-07 16:55:31,188 - freqtrade.resolvers.exchange_resolver - INFO - Using resolved exchange 'Binance'...
+2026-06-07 16:55:31,210 - freqtrade.resolvers.iresolver - INFO - Using resolved strategy ShadyTraderReferenceStrategy from 
+'/home/creekz/Shady_Trader/backend/freqtrade/user_data/strategies/ShadyTraderReferenceStrategy.py'...
+2026-06-07 16:55:31,210 - freqtrade.strategy.hyper - INFO - Found no parameter file.
+2026-06-07 16:55:31,211 - freqtrade.resolvers.strategy_resolver - INFO - Override strategy 'timeframe' with value from the configuration: 1h.
+2026-06-07 16:55:31,211 - freqtrade.resolvers.strategy_resolver - INFO - Override strategy 'order_types' with value from the configuration: {'entry': 'limit', 'exit': 'limit', 'stoploss': 'market', 
+'stoploss_on_exchange': False, 'emergency_exit': 'market'}.
+2026-06-07 16:55:31,211 - freqtrade.resolvers.strategy_resolver - INFO - Override strategy 'stake_currency' with value from the configuration: USDT.
+2026-06-07 16:55:31,212 - freqtrade.resolvers.strategy_resolver - INFO - Override strategy 'stake_amount' with value from the configuration: unlimited.
+2026-06-07 16:55:31,212 - freqtrade.resolvers.strategy_resolver - INFO - Override strategy 'unfilledtimeout' with value from the configuration: {'entry': 10, 'exit': 30, 'exit_timeout_count': 0, 
+'unit': 'minutes'}.
+2026-06-07 16:55:31,212 - freqtrade.resolvers.strategy_resolver - INFO - Override strategy 'use_exit_signal' with value from the configuration: True.
+2026-06-07 16:55:31,212 - freqtrade.resolvers.strategy_resolver - INFO - Override strategy 'max_open_trades' with value from the configuration: 3.
+2026-06-07 16:55:31,213 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using minimal_roi: {'0': 0.08, '30': 0.04, '60': 0.02, '120': 0}
+2026-06-07 16:55:31,213 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using timeframe: 1h
+2026-06-07 16:55:31,213 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using stoploss: -0.05
+2026-06-07 16:55:31,214 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using trailing_stop: True
+2026-06-07 16:55:31,214 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using trailing_stop_positive: 0.01
+2026-06-07 16:55:31,214 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using trailing_stop_positive_offset: 0.02
+2026-06-07 16:55:31,214 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using trailing_only_offset_is_reached: True
+2026-06-07 16:55:31,215 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using use_custom_stoploss: False
+2026-06-07 16:55:31,215 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using process_only_new_candles: True
+2026-06-07 16:55:31,215 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using order_types: {'entry': 'limit', 'exit': 'limit', 'stoploss': 'market', 'stoploss_on_exchange': False, 
+'emergency_exit': 'market'}
+2026-06-07 16:55:31,216 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using order_time_in_force: {'entry': 'GTC', 'exit': 'GTC'}
+2026-06-07 16:55:31,216 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using stake_currency: USDT
+2026-06-07 16:55:31,216 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using stake_amount: unlimited
+2026-06-07 16:55:31,217 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using startup_candle_count: 200
+2026-06-07 16:55:31,217 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using unfilledtimeout: {'entry': 10, 'exit': 30, 'exit_timeout_count': 0, 'unit': 'minutes'}
+2026-06-07 16:55:31,218 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using use_exit_signal: True
+2026-06-07 16:55:31,218 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using exit_profit_only: False
+2026-06-07 16:55:31,218 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using ignore_roi_if_entry_signal: False
+2026-06-07 16:55:31,219 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using exit_profit_offset: 0.0
+2026-06-07 16:55:31,219 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using disable_dataframe_checks: False
+2026-06-07 16:55:31,219 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using ignore_buying_expired_candle_after: 0
+2026-06-07 16:55:31,220 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using position_adjustment_enable: False
+2026-06-07 16:55:31,220 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using max_entry_position_adjustment: -1
+2026-06-07 16:55:31,220 - freqtrade.resolvers.strategy_resolver - INFO - Strategy using max_open_trades: 3
+2026-06-07 16:55:31,221 - freqtrade.configuration.config_validation - INFO - Validating configuration ...
+2026-06-07 16:55:31,226 - freqtrade.resolvers.iresolver - INFO - Using resolved pairlist StaticPairList from 
+'/home/creekz/Shady_Trader/backend/freqtrade/venv/lib/python3.13/site-packages/freqtrade/plugins/pairlist/StaticPairList.py'...
+2026-06-07 16:55:31,232 - freqtrade.optimize.backtesting - INFO - Using fee 0.0500% - worst case fee from exchange (lowest tier).
+2026-06-07 16:55:31,247 - freqtrade.strategy.hyper - INFO - No params for sell found, using default values.
+2026-06-07 16:55:31,247 - freqtrade.strategy.hyper - INFO - Strategy Parameter(default): atr_mult = 2.0
+2026-06-07 16:55:31,247 - freqtrade.strategy.hyper - INFO - Strategy Parameter(default): sell_rsi = 70
+2026-06-07 16:55:31,248 - freqtrade.strategy.hyper - INFO - No params for buy found, using default values.
+2026-06-07 16:55:31,248 - freqtrade.strategy.hyper - INFO - Strategy Parameter(default): buy_rsi = 30
+2026-06-07 16:55:31,250 - freqtrade.resolvers.iresolver - INFO - Using resolved hyperoptloss SharpeHyperOptLoss from 
+'/home/creekz/Shady_Trader/backend/freqtrade/venv/lib/python3.13/site-packages/freqtrade/optimize/hyperopt_loss/hyperopt_loss_sharpe.py'...
+2026-06-07 16:55:31,368 - freqtrade.optimize.hyperopt.hyperopt_optimizer - INFO - manager queue <class 'multiprocessing.managers.AutoProxy[Queue]'>
+2026-06-07 16:55:31,369 - freqtrade.optimize.hyperopt.hyperopt - INFO - Using optimizer random state: 29623
+2026-06-07 16:55:31,379 - freqtrade.data.history.datahandlers.idatahandler - WARNING - BTC/USDT:USDT, futures, 1h, data starts at 2025-12-09 00:00:00
+2026-06-07 16:55:31,398 - freqtrade.optimize.backtesting - INFO - Loading data from 2025-12-09 00:00:00 up to 2026-06-07 00:00:00 (180 days).
+2026-06-07 16:55:31,398 - freqtrade.configuration.timerange - WARNING - Moving start-date by 200 candles to account for startup time.
+2026-06-07 16:55:31,400 - freqtrade.data.history.datahandlers.idatahandler - WARNING - No history for BTC/USDT:USDT, funding_rate, 1h found. Use `freqtrade download-data` to download the data
+2026-06-07 16:55:31,402 - freqtrade.data.history.datahandlers.idatahandler - WARNING - No history for BTC/USDT:USDT, mark, 1h found. Use `freqtrade download-data` to download the data
+2026-06-07 16:55:31,462 - freqtrade.optimize.hyperopt.hyperopt_optimizer - INFO - Dataload complete. Calculating indicators
+2026-06-07 16:55:31,484 - freqtrade.optimize.hyperopt.hyperopt_optimizer - INFO - Hyperopting with data from 2025-12-17 08:00:00 up to 2026-06-07 00:00:00 (171 days)..
+2026-06-07 16:55:31,746 - freqtrade.optimize.hyperopt.hyperopt - INFO - Found 12 CPU cores. Let's make them scream!
+2026-06-07 16:55:31,746 - freqtrade.optimize.hyperopt.hyperopt - INFO - Number of parallel jobs set as: -1
+2026-06-07 16:55:31,747 - freqtrade.optimize.hyperopt.hyperopt_optimizer - INFO - Using optuna sampler NSGAIIISampler.
+[I 2026-06-07 16:55:31,747] A new study created in memory with name: no-name-8e8b37ef-67b3-46d9-94b4-79a9275edd2a
+2026-06-07 16:55:31,759 - freqtrade.optimize.hyperopt.hyperopt - INFO - Effective number of parallel workers used: 12
+                                                                                            Hyperopt results                                                                                            
+                                        ┏━━━━━━┳━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┓                                        
+                                        ┃ Best ┃ Epoch ┃ Trades ┃ Win  Draw  Loss  Win% ┃ Avg profit ┃ Profit ┃ Avg duration ┃ Objective ┃ Max Drawdown (Acct) ┃                                        
+                                        ┡━━━━━━╇━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━┩                                        
+                                        └──────┴───────┴────────┴───────────────────────┴────────────┴────────┴──────────────┴───────────┴─────────────────────┘                                        
+Epochs ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1/1 100% • 0:00:02 • 0:00:00
+2026-06-07 16:55:34,583 - freqtrade.optimize.hyperopt.hyperopt - INFO - 1 epoch saved to 
+'backend/freqtrade/user_data/hyperopt_results/strategy_ShadyTraderReferenceStrategy_2026-06-07_16-55-26.fthypt'.
+No good result found for given optimization function in 1 epoch.
+Exception ignored in: <function ResourceTracker.__del__ at 0x7fd3df67fec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7fe3811abec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7fa546a7fec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7f0a39693ec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7f6e57da7ec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7f3de6fa7ec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7f48b008fec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7f5070d7fec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7f315177fec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7f1644997ec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7faf8bc8bec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes
+Exception ignored in: <function ResourceTracker.__del__ at 0x7f7e5a5a7ec0>
+Traceback (most recent call last):
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 82, in __del__
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 91, in _stop
+  File "/usr/lib/python3.13/multiprocessing/resource_tracker.py", line 116, in _stop_locked
+ChildProcessError: [Errno 10] No child processes

@@ -28,16 +28,25 @@ export async function getMLHealth(): Promise<{
     return { enabled: false, modelsReady: false, gemmaCache: false, modelCount: 0 };
   }
 
-  const rows = await runQuery<{ count: number }>(
+  const rows = await runQuery(
     `SELECT COUNT(*) as count FROM ml_models WHERE is_active = 1`
   );
   const modelCount = rows[0]?.count ?? 0;
 
   let gemmaCache = false;
   try {
-    const { StatelessManager } = await import('../stateless-manager.js');
-    const raw = await StatelessManager.get('ml:gemma:adjustment');
-    gemmaCache = raw !== null;
+    // Optional: probe Redis for the cached gemma adjustment. If Redis is
+    // unavailable or the export shape changes, the gemmaCache flag stays
+    // false (the ML cache is a soft optimization, not a hard requirement).
+    const { getServiceManager, getRedis } = await import('../stateless-manager.js') as any;
+    if (typeof getRedis === 'function' && typeof getServiceManager === 'function') {
+      const redis = getRedis();
+      if (redis) {
+        const mgr = getServiceManager(redis, 'ml');
+        const raw = await mgr.get('gemma:adjustment');
+        gemmaCache = raw !== null;
+      }
+    }
   } catch { /* Redis offline — not fatal */ }
 
   return {

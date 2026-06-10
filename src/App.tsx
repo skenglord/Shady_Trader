@@ -1,29 +1,146 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { createChart, ColorType, IChartApi, ISeriesApi, CandlestickSeries, LineSeries, CrosshairMode, createSeriesMarkers, ISeriesMarkersPluginApi } from 'lightweight-charts';
-import { Activity, TrendingUp, TrendingDown, Minus, AlertCircle, Settings, Play, Square, X, Maximize2, Calendar, History, Info, ExternalLink } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, Minus, AlertCircle, Settings, Play, Square, X, Maximize2, Calendar, History, Info, ExternalLink, Database as DatabaseIcon } from 'lucide-react';
+
+// Debug logger — only logs in development mode
+const IS_DEV = import.meta.env?.DEV ?? (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
+const debug = {
+  log: (...args: any[]) => { if (IS_DEV) console.log(...args); },
+  warn: (...args: any[]) => { if (IS_DEV) console.warn(...args); },
+  error: (...args: any[]) => { console.error(...args); }, // Always log errors
+  info: (...args: any[]) => { if (IS_DEV) console.info(...args); },
+};
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+import FreqtradePanel from './components/FreqtradePanel';
 
 const APP_URL = '';
-const ADMIN_TOKEN = 'dev_token_123';
-const TRADER_TOKEN = 'trader_token_456';
+// SECURITY: Auth tokens are injected at build time via Vite define().
+// In dev, they fall back to the .env values. In production, the build must
+// include these via CI/CD secrets. Never commit real tokens.
+// @ts-ignore - Vite injects these at build time
+const ADMIN_TOKEN = (import.meta as any).env?.VITE_ADMIN_TOKEN || '';
+// @ts-ignore - Vite injects these at build time
+const TRADER_TOKEN = (import.meta as any).env?.VITE_TRADER_TOKEN || TRADER_TOKEN_PLACEHOLDER;
+const TRADER_TOKEN_PLACEHOLDER = '__set_VITE_TRADER_TOKEN__';
 
-// Safe fetch wrapper to prevent errors from causing reload loops
-async function safeFetch(url: string, options?: RequestInit): Promise<{ ok: boolean; data?: any; error?: string }> {
-  try {
-    const res = await fetch(url, options);
-    const text = await res.text();
-    if (!res.ok) {
-      return { ok: false, error: `HTTP ${res.status}: ${text.slice(0, 100)}` };
-    }
-    try {
-      return { ok: true, data: JSON.parse(text) };
-    } catch {
-      return { ok: true, data: text };
-    }
-  } catch (e: any) {
-    return { ok: false, error: e.message || 'Network error' };
+// Request deduplication cache — prevents duplicate identical requests in flight.
+// Two-layer strategy:
+//   1. In-flight cache: if the same GET is already running, return the same Promise
+//   2. Response cache: successful GET responses cached for CACHE_TTL_MS (matches the
+//      frontend's 5s polling interval so each unique GET fires at most once per cycle)
+//   3. LRU eviction: response cache capped at MAX_CACHE_ENTRIES to prevent memory leak
+//   4. Write-through invalidation: POST/PUT/DELETE evict matching GET cache entries
+//      via safeFetch.invalidate(urlPrefix)
+const inflightRequests = new Map<string, Promise<{ ok: boolean; data?: any; error?: string }>>();
+const responseCache = new Map<string, { ts: number; data: any }>();
+const CACHE_TTL_MS = 5000; // Match the frontend's 5s polling interval
+const MAX_CACHE_ENTRIES = 100;
+
+function cacheGet(url: string) {
+  const entry = responseCache.get(url);
+  if (!entry) return undefined;
+  if (Date.now() - entry.ts >= CACHE_TTL_MS) {
+    responseCache.delete(url);
+    return undefined;
+  }
+  // Refresh LRU position
+  responseCache.delete(url);
+  responseCache.set(url, entry);
+  return entry;
+}
+
+function cacheSet(url: string, data: any) {
+  responseCache.set(url, { ts: Date.now(), data });
+  // Evict oldest entries if over cap
+  while (responseCache.size > MAX_CACHE_ENTRIES) {
+    const oldestKey = responseCache.keys().next().value;
+    if (oldestKey === undefined) break;
+    responseCache.delete(oldestKey);
   }
 }
+
+function cacheInvalidate(urlPrefix: string) {
+  for (const key of responseCache.keys()) {
+    if (key === urlPrefix || key.startsWith(urlPrefix)) {
+      responseCache.delete(key);
+    }
+  }
+}
+
+async function safeFetch(url: string, options?: RequestInit): Promise<{ ok: boolean; data?: any; error?: string }> {
+  // For GET requests, check cache and deduplicate in-flight calls
+  const method = options?.method?.toUpperCase() || 'GET';
+  if (method === 'GET') {
+    // Check response cache first
+    const cached = cacheGet(url);
+    if (cached) {
+      return { ok: true, data: cached.data };
+    }
+    // Check if same request is already in flight
+    const inflight = inflightRequests.get(url);
+    if (inflight) return inflight;
+  }
+
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+    ...(options?.headers as Record<string, string> || {}),
+  };
+  // Attach auth token for API requests
+  if (url.includes('/api/')) {
+    // Use admin token for admin endpoints, trader for others
+    const adminPaths = ['/settings', '/risk-configs', '/start', '/stop', '/kill', '/backtest', '/optimize', '/import-csv', '/ml/'];
+    const isAdminCall = adminPaths.some(p => url.includes(p));
+    const token = isAdminCall ? ADMIN_TOKEN : TRADER_TOKEN;
+    if (token && !token.includes('PLACEHOLDER')) {
+      headers['x-api-token'] = token;
+    }
+  }
+
+  const request = (async () => {
+    try {
+      const res = await fetch(url, { ...options, headers });
+      const text = await res.text();
+      if (!res.ok) {
+        return { ok: false, error: `HTTP ${res.status}: ${text.slice(0, 100)}` };
+      }
+      try {
+        const data = JSON.parse(text);
+        // Cache successful GET responses
+        if (method === 'GET') {
+          cacheSet(url, data);
+        }
+        return { ok: true, data };
+      } catch {
+        return { ok: true, data: text };
+      }
+    } catch (e: any) {
+      return { ok: false, error: e.message || 'Network error' };
+    } finally {
+      // Remove from in-flight tracker
+      if (method === 'GET') {
+        inflightRequests.delete(url);
+      }
+    }
+  })();
+
+  if (method === 'GET') {
+    inflightRequests.set(url, request);
+  }
+  return request;
+}
+
+// Static helper: invalidate cache entries matching a URL prefix.
+// Call this after a mutation (POST/PUT/DELETE) to ensure the next GET fetches
+// fresh data instead of returning stale cached data.
+//   safeFetch.invalidate(`${APP_URL}/api/balances`);  // busts all balances queries
+//   safeFetch.invalidate(`${APP_URL}/api/positions/open`);  // busts positions
+(safeFetch as any).invalidate = (urlPrefix: string) => cacheInvalidate(urlPrefix);
+
+// Static helper: clear the entire response cache (rarely needed; mostly for tests).
+(safeFetch as any).clearCache = () => {
+  responseCache.clear();
+  inflightRequests.clear();
+};
 
 function getProviderDocsUrl(provider: string): string {
   const docs: Record<string, string> = {
@@ -129,6 +246,7 @@ export default function App() {
   const [isBacktesting, setIsBacktesting] = useState(false);
   const defaultBalances = { mainBalance: 0, botBalance: 0, activeTradeBalance: 0, totalPnl: 0, totalPnlPct: 0 };
   const [balances, setBalances] = useState<typeof defaultBalances>(defaultBalances);
+  const [showFreqtrade, setShowFreqtrade] = useState(false);
 
   // Safe setter that always merges with defaults
   const updateBalances = (data: Partial<typeof defaultBalances>) => {
@@ -213,25 +331,31 @@ export default function App() {
     fetchBotTrades();
 
     // Setup WebSocket with timeout
-    const wsUrl = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+    // Pass the trader token as a query string param — server.ts verifyClient validates it
+    // against API_TRADER_TOKEN. WebSocket browsers cannot send custom headers, so the
+    // token in the query string is the standard WS auth pattern.
+    const wsBase = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
+    const wsUrl = TRADER_TOKEN && TRADER_TOKEN !== TRADER_TOKEN_PLACEHOLDER
+      ? `${wsBase}/?token=${encodeURIComponent(TRADER_TOKEN)}`
+      : wsBase;
     const ws = new WebSocket(wsUrl);
 
     // Connection timeout - prevent hanging forever
     const wsTimeout = setTimeout(() => {
       if (ws.readyState === WebSocket.CONNECTING) {
-        console.warn('WebSocket connection timeout, continuing without WS');
+        debug.warn('WebSocket connection timeout, continuing without WS');
         ws.close();
       }
     }, 5000);
 
     ws.onopen = () => {
       clearTimeout(wsTimeout);
-      console.log('WebSocket connected');
+      debug.log('WebSocket connected');
     };
 
     ws.onerror = (error) => {
       clearTimeout(wsTimeout);
-      console.warn('WebSocket error:', error);
+      debug.warn('WebSocket error:', error);
     };
 
     ws.onclose = () => {
@@ -298,7 +422,7 @@ export default function App() {
           fetchClosedTrades();
         }
       } catch (err) {
-        console.warn('WebSocket error:', err);
+        debug.warn('WebSocket error:', err);
       }
     };
 
@@ -710,7 +834,7 @@ export default function App() {
       });
       setShowConfigModal(false);
     } catch (e) {
-      console.error(e);
+      debug.error(e);
     }
   };
 
@@ -726,7 +850,7 @@ export default function App() {
         setRiskConfigs(data.configs);
       }
     } catch (e) {
-      console.error(e);
+      debug.error(e);
     }
   };
 
@@ -741,7 +865,7 @@ export default function App() {
         throw new Error(`API error: ${res.status}`);
       }
       const data = await res.json();
-      console.log('[AI] Recommend response:', data);
+      debug.log('[AI] Recommend response:', data);
       if (data.success && data.configs) {
         setRiskConfigs(prev => {
           const merged = { ...prev };
@@ -751,17 +875,17 @@ export default function App() {
           return merged;
         });
       } else {
-        console.warn('[AI] Recommend returned no changes');
+        debug.warn('[AI] Recommend returned no changes');
       }
     } catch (e) {
-      console.error('[AI] Recommend failed:', e);
+      debug.error('[AI] Recommend failed:', e);
       alert('AI recommendation failed. Using fallback logic.');
     }
   };
 
   const runBacktest = async (startTime?: number, endTime?: number) => {
     if (!riskConfigs[activeMode]) {
-      console.warn('[Backtest] No risk config for mode:', activeMode);
+      debug.warn('[Backtest] No risk config for mode:', activeMode);
       alert('Risk configuration not loaded yet. Please wait...');
       return;
     }
@@ -775,7 +899,7 @@ export default function App() {
         startTime: startTime || Date.now() - 30 * 24 * 60 * 60 * 1000,
         endTime: endTime || Date.now()
       };
-      console.log('[Backtest] Sending:', JSON.stringify(payload).slice(0, 200));
+      debug.log('[Backtest] Sending:', JSON.stringify(payload).slice(0, 200));
 
       const res = await fetch(`${APP_URL}/api/backtest`, {
         method: 'POST',
@@ -792,7 +916,7 @@ export default function App() {
       }
 
       const data = await res.json();
-      console.log('[Backtest] Result:', JSON.stringify(data).slice(0, 300));
+      debug.log('[Backtest] Result:', JSON.stringify(data).slice(0, 300));
 
       if (data.trades && data.candles) {
         setBacktestTrades(data.trades);
@@ -825,7 +949,7 @@ export default function App() {
             }
           }
           seriesRef.current.setData(uniqueData);
-        console.log(`[chart] setData ${uniqueData.length} items, first=${JSON.stringify(uniqueData[0])}, last=${JSON.stringify(uniqueData[uniqueData.length-1])}`);
+        debug.log(`[chart] setData ${uniqueData.length} items, first=${JSON.stringify(uniqueData[0])}, last=${JSON.stringify(uniqueData[uniqueData.length-1])}`);
           updateIndicators();
         }
       } else if (Array.isArray(data)) {
@@ -833,10 +957,10 @@ export default function App() {
       } else if (data.error) {
         throw new Error(data.error);
       } else {
-        console.warn('[Backtest] Unexpected response shape:', data);
+        debug.warn('[Backtest] Unexpected response shape:', data);
       }
     } catch (e) {
-      console.error('[Backtest] Failed:', e);
+      debug.error('[Backtest] Failed:', e);
       alert(`Backtest failed: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setIsBacktesting(false);
@@ -873,7 +997,7 @@ export default function App() {
       fetchStatus();
       fetchCandles();
     } catch (e) {
-      console.error(e);
+      debug.error(e);
     }
   };
 
@@ -1061,7 +1185,7 @@ export default function App() {
       else if (tf === '1h') historyParam = '180d';
 
       const result = await safeFetch(`${APP_URL}/api/candles?history=${historyParam}`);
-      console.log(`[fetchCandles] tf=${tf} history=${historyParam} ok=${result.ok} hasData=${!!result.data} hasSeries=${!!seriesRef.current} isArray=${Array.isArray(result?.data)} len=${Array.isArray(result?.data) ? result.data.length : 'N/A'}`);
+      debug.log(`[fetchCandles] tf=${tf} history=${historyParam} ok=${result.ok} hasData=${!!result.data} hasSeries=${!!seriesRef.current} isArray=${Array.isArray(result?.data)} len=${Array.isArray(result?.data) ? result.data.length : 'N/A'}`);
       if (result.ok && result.data && seriesRef.current && Array.isArray(result.data)) {
         candlesDataRef.current = result.data;
         const formattedData = result.data
@@ -1083,7 +1207,7 @@ export default function App() {
         }
 
         seriesRef.current.setData(uniqueData);
-        console.log(`[chart] setData ${uniqueData.length} items, first=${JSON.stringify(uniqueData[0])}, last=${JSON.stringify(uniqueData[uniqueData.length-1])}`);
+        debug.log(`[chart] setData ${uniqueData.length} items, first=${JSON.stringify(uniqueData[0])}, last=${JSON.stringify(uniqueData[uniqueData.length-1])}`);
         updateIndicators();
         updateMarkers();
 
@@ -1092,7 +1216,7 @@ export default function App() {
         }
       }
     } catch (e) {
-      console.error(e);
+      debug.error(e);
     } finally {
       setIsLoadingCandles(false);
     }
@@ -1109,10 +1233,10 @@ export default function App() {
       if (result.ok) {
         fetchStatus();
       } else {
-        console.error('Engine toggle failed:', result.error);
+        debug.error('Engine toggle failed:', result.error);
       }
     } catch (e) {
-      console.error(e);
+      debug.error(e);
     }
   };
 
@@ -1155,7 +1279,7 @@ export default function App() {
         });
         setStatus(prev => ({ ...prev, isRunning: true }));
       } catch (e) {
-        console.error('Failed to auto-start engine for manual trade:', e);
+        debug.error('Failed to auto-start engine for manual trade:', e);
       }
     }
 
@@ -1182,7 +1306,7 @@ export default function App() {
       fetchTrades();
       fetchOpenPositions();
     } catch (e) {
-      console.error(e);
+      debug.error(e);
       alert('Failed to execute trade');
     }
   };
@@ -1199,19 +1323,19 @@ export default function App() {
         body: JSON.stringify({ timeframe: tf })
       });
       if (!res.ok) {
-        console.warn('[Timeframe] API rejected:', await res.text());
+        debug.warn('[Timeframe] API rejected:', await res.text());
       }
       setStatus(prev => ({ ...prev, timeframe: tf }));
       fetchCandles(tf);
     } catch (e) {
-      console.error(e);
+      debug.error(e);
     }
   };
 
   const getRegimeColor = (regime: string) => {
     switch (regime) {
-      case 'strong_bull': return 'text-emerald-500 bg-emerald-500 bg-opacity-10 border border-emerald-500 border-opacity-20';
-      case 'weak_bull': return 'text-green-400 bg-green-400 bg-opacity-10 border border-green-400 border-opacity-20';
+      case 'strongbull': return 'text-emerald-500 bg-emerald-500 bg-opacity-10 border border-emerald-500 border-opacity-20';
+      case 'weakbull': return 'text-green-400 bg-green-400 bg-opacity-10 border border-green-400 border-opacity-20';
       case 'bear': return 'text-red-500 bg-red-500 bg-opacity-10 border border-red-500 border-opacity-20';
       case 'sideways': return 'text-blue-400 bg-blue-400 bg-opacity-10 border border-blue-400 border-opacity-20';
       default: return 'text-gray-400 bg-gray-400 bg-opacity-10 border border-gray-400 border-opacity-20';
@@ -1220,8 +1344,8 @@ export default function App() {
 
   const getRegimeIcon = (regime: string) => {
     switch (regime) {
-      case 'strong_bull':
-      case 'weak_bull': return <TrendingUp className="w-4 h-4" />;
+      case 'strongbull':
+      case 'weakbull': return <TrendingUp className="w-4 h-4" />;
       case 'bear': return <TrendingDown className="w-4 h-4" />;
       case 'sideways': return <Minus className="w-4 h-4" />;
       default: return <AlertCircle className="w-4 h-4" />;
@@ -1236,7 +1360,7 @@ export default function App() {
         updateBalances(result.data);
       }
     } catch (e) {
-      console.error('Failed to fetch balances:', e);
+      debug.error('Failed to fetch balances:', e);
     }
   };
 
@@ -1247,7 +1371,7 @@ export default function App() {
         setMarketData(result.data);
       }
     } catch (e) {
-      console.error('Failed to fetch market data:', e);
+      debug.error('Failed to fetch market data:', e);
     }
   };
 
@@ -1258,7 +1382,7 @@ export default function App() {
         setMarketNews(result.data);
       }
     } catch (e) {
-      console.error('Failed to fetch market news:', e);
+      debug.error('Failed to fetch market news:', e);
     }
   };
 
@@ -1273,7 +1397,7 @@ export default function App() {
       await fetchMarketData();
       await fetchMarketNews();
     } catch (e) {
-      console.error('Failed to refresh market data:', e);
+      debug.error('Failed to refresh market data:', e);
     } finally {
       setIsRefreshingMarket(false);
     }
@@ -1292,7 +1416,7 @@ export default function App() {
         await fetchRiskConfigs();
       }
     } catch (e) {
-      console.error('Failed to run optimization:', e);
+      debug.error('Failed to run optimization:', e);
     } finally {
       setIsOptimizing(false);
     }
@@ -1301,15 +1425,12 @@ export default function App() {
   const fetchOpenPositions = async () => {
     try {
       setLastCallTime(Date.now());
-      const url = `${APP_URL}/api/positions/open`;
-      const response = await fetch(url);
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+      const result = await safeFetch(`${APP_URL}/api/positions/open`);
+      if (result.ok && result.data) {
+        setOpenPositions(result.data);
       }
-      const data = await response.json();
-      setOpenPositions(data);
     } catch (e) {
-      console.error('Failed to fetch open positions:', e);
+      debug.error('Failed to fetch open positions:', e);
     }
   };
 
@@ -1325,7 +1446,7 @@ export default function App() {
         body: JSON.stringify({ amount })
       });
       const data = await response.json();
-      console.log('[Balance] Allocate response:', data);
+      debug.log('[Balance] Allocate response:', data);
       if (!response.ok) {
         alert(data.error || `Server error: ${response.status}`);
         return;
@@ -1341,7 +1462,7 @@ export default function App() {
       }
       if (data.error) alert(data.error);
     } catch (e) {
-      console.error('Failed to allocate balance:', e);
+      debug.error('Failed to allocate balance:', e);
       alert('Failed to allocate balance. Check console for details.');
     }
   };
@@ -1361,7 +1482,7 @@ export default function App() {
       if (data.balances) updateBalances(data.balances);
       if (data.error) alert(data.error);
     } catch (e) {
-      console.error('Failed to withdraw balance:', e);
+      debug.error('Failed to withdraw balance:', e);
     }
   };
 
@@ -1375,7 +1496,7 @@ export default function App() {
       const data = await response.json();
       if (data.balances) updateBalances(data.balances);
     } catch (e) {
-      console.error('Failed to half balance:', e);
+      debug.error('Failed to half balance:', e);
     }
   };
 
@@ -1390,7 +1511,7 @@ export default function App() {
       if (data.balances) updateBalances(data.balances);
       if (data.error) alert(data.error);
     } catch (e) {
-      console.error('Failed to double balance:', e);
+      debug.error('Failed to double balance:', e);
     }
   };
 
@@ -1411,7 +1532,7 @@ export default function App() {
         fetchBalances();
       }
     } catch (e) {
-      console.error('Failed to close position:', e);
+      debug.error('Failed to close position:', e);
     }
   };
 
@@ -1430,7 +1551,7 @@ export default function App() {
         fetchOpenPositions();
       }
     } catch (e) {
-      console.error('Failed to update position params:', e);
+      debug.error('Failed to update position params:', e);
     }
   };
 
@@ -1446,7 +1567,7 @@ export default function App() {
         fetchTrades();
         fetchPerformance();
       } catch (e) {
-        console.error('Failed to kill bot:', e);
+        debug.error('Failed to kill bot:', e);
       }
     }
   };
@@ -1463,7 +1584,7 @@ export default function App() {
         body: JSON.stringify({ mode })
       });
     } catch (e) {
-      console.error('Failed to change active mode:', e);
+      debug.error('Failed to change active mode:', e);
     }
   };
 
@@ -1482,9 +1603,9 @@ export default function App() {
           </div>
           
           <div className="flex items-center gap-4">
-            <StatusLight 
-              isLive={true} 
-              apiName={status.exchange ? status.exchange.charAt(0).toUpperCase() + status.exchange.slice(1) : "CoinMarketCap"} 
+            <StatusLight
+              isLive={true}
+              apiName={(status as any).exchange ? (status as any).exchange.charAt(0).toUpperCase() + (status as any).exchange.slice(1) : "CoinMarketCap"}
               isDataPassing={isDataPassing} 
               lastCallTime={lastCallTime}
             />
@@ -1514,8 +1635,8 @@ export default function App() {
                     className="bg-[#1e1e1e] text-gray-300 text-sm font-medium uppercase tracking-wider cursor-pointer focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none"
                   >
                   <option value="auto" className="bg-black text-white">AUTO</option>
-                  <option value="strong_bull" className="bg-black text-white">STRONG BULL</option>
-                  <option value="weak_bull" className="bg-black text-white">WEAK BULL</option>
+                  <option value="strongbull" className="bg-black text-white">STRONG BULL</option>
+                  <option value="weakbull" className="bg-black text-white">WEAK BULL</option>
                   <option value="bear" className="bg-black text-white">BEAR</option>
                   <option value="sideways" className="bg-black text-white">SIDEWAYS</option>
                   <option value="uncertain" className="bg-black text-white">UNCERTAIN</option>
@@ -1536,8 +1657,8 @@ export default function App() {
                   (() => {
                     const r = signalStatus?.regime || status.currentRegime;
                     switch (r) {
-                      case 'strong_bull': return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-                      case 'weak_bull': return 'bg-lime-500/20 text-lime-400 border border-lime-500/30';
+                      case 'strongbull': return 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+                      case 'weakbull': return 'bg-lime-500/20 text-lime-400 border border-lime-500/30';
                       case 'sideways': return 'bg-amber-500/20 text-amber-400 border border-amber-500/30';
                       case 'bear': return 'bg-red-500/20 text-red-400 border border-red-500/30';
                       default: return 'bg-gray-500/20 text-gray-400 border border-gray-500/30';
@@ -1634,11 +1755,23 @@ export default function App() {
                 <span className="text-[9px] text-gray-400 uppercase tracking-wider">Chart Markers</span>
                 <div className="flex gap-2">
                   <label className="flex items-center gap-1 cursor-pointer">
-                    <input type="checkbox" checked={showSignalMarkers} onChange={() => setShowSignalMarkers(!showSignalMarkers)} className="w-2.5 h-2.5 accent-indigo-500" />
+                    <input
+                      type="checkbox"
+                      checked={showSignalMarkers}
+                      onChange={() => setShowSignalMarkers(!showSignalMarkers)}
+                      aria-label="Show signal markers on chart"
+                      className="w-2.5 h-2.5 accent-indigo-500"
+                    />
                     <span className="text-[8px] text-gray-400">Signals</span>
                   </label>
                   <label className="flex items-center gap-1 cursor-pointer">
-                    <input type="checkbox" checked={showTradeMarkers} onChange={() => setShowTradeMarkers(!showTradeMarkers)} className="w-2.5 h-2.5 accent-indigo-500" />
+                    <input
+                      type="checkbox"
+                      checked={showTradeMarkers}
+                      onChange={() => setShowTradeMarkers(!showTradeMarkers)}
+                      aria-label="Show trade markers on chart"
+                      className="w-2.5 h-2.5 accent-indigo-500"
+                    />
                     <span className="text-[8px] text-gray-400">Trades</span>
                   </label>
                 </div>
@@ -1694,6 +1827,13 @@ export default function App() {
                 Enter Low
               </button>
             </div>
+            <button
+              onClick={() => setShowFreqtrade(true)}
+              className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none"
+              aria-label="Open Freqtrade sidecar"
+            >
+              <DatabaseIcon className="w-5 h-5 text-indigo-400" />
+            </button>
             <button
               onClick={() => setShowSettings(true)}
               className="p-2 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none"
@@ -1777,10 +1917,11 @@ export default function App() {
                     <History className="w-3.5 h-3.5" />
                     Backtest
                   </button>
-                  <button 
+                  <button
                     onClick={() => chartRef.current?.timeScale().fitContent()}
                     className="px-2 py-1 text-xs rounded bg-white/5 hover:bg-white/10 text-gray-400 border border-transparent mr-2 flex items-center gap-1 transition-colors"
                     title="Reset Zoom/Pan"
+                    aria-label="Reset chart zoom and pan"
                   >
                     <Maximize2 className="w-3 h-3" />
                   </button>
@@ -1833,19 +1974,25 @@ export default function App() {
                     <span className="text-xs font-medium text-gray-300">Backtest Period:</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <input 
-                      type="date" 
+                    <label htmlFor="backtest-start" className="sr-only">Backtest start date</label>
+                    <input
+                      id="backtest-start"
+                      type="date"
                       value={backtestDates.start}
                       max={new Date().toISOString().split('T')[0]}
                       onChange={(e) => setBacktestDates({...backtestDates, start: e.target.value})}
+                      aria-label="Backtest start date"
                       className="bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:border-amber-500 focus-visible:outline-none caret-white"
                     />
                     <span className="text-gray-600">to</span>
-                    <input 
-                      type="date" 
+                    <label htmlFor="backtest-end" className="sr-only">Backtest end date</label>
+                    <input
+                      id="backtest-end"
+                      type="date"
                       value={backtestDates.end}
                       max={new Date().toISOString().split('T')[0]}
                       onChange={(e) => setBacktestDates({...backtestDates, end: e.target.value})}
+                      aria-label="Backtest end date"
                       className="bg-[#1e1e1e] border border-white/10 rounded px-2 py-1 text-xs text-white focus-visible:ring-2 focus-visible:ring-amber-500/50 focus-visible:border-amber-500 focus-visible:outline-none caret-white"
                     />
                   </div>
@@ -1946,7 +2093,7 @@ export default function App() {
                             <div className="bg-[#1e1e1e] border border-white/10 p-2 rounded shadow-xl text-[10px] font-mono">
                               <p className="text-gray-400">{new Date(payload[0].payload.time).toLocaleString()}</p>
                               <p className={showBacktestUI ? "text-amber-400" : "text-indigo-400"}>
-                                Balance: ${payload[0].value.toFixed(2)}
+                                Balance: ${(payload[0].value as number).toFixed(2)}
                               </p>
                             </div>
                           );
@@ -2560,6 +2707,7 @@ export default function App() {
                     placeholder="Filter by mode, side..."
                     value={tradeFilter}
                     onChange={(e) => setTradeFilter(e.target.value)}
+                    aria-label="Filter closed trades by mode or side"
                     className="w-full bg-white/5 border border-white/10 rounded px-2 py-1.5 text-xs text-white placeholder-gray-500 focus:outline-none focus:border-indigo-500/50"
                   />
                 </div>
@@ -3092,6 +3240,32 @@ export default function App() {
         </div>
       )}
       {/* Strategy Config Modal - REMOVED and moved to dropdown */}
+
+      {/* Freqtrade Panel Modal */}
+      {showFreqtrade && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={() => setShowFreqtrade(false)}
+        >
+          <div
+            className="bg-[#1e1e1e] border border-white/10 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center p-4 border-b border-white/10">
+              <h2 className="text-xl font-bold flex items-center gap-2">
+                <DatabaseIcon className="w-5 h-5 text-indigo-400" />
+                Freqtrade Integration
+              </h2>
+              <button onClick={() => setShowFreqtrade(false)} className="text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none" aria-label="Close Freqtrade panel">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4">
+              <FreqtradePanel />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

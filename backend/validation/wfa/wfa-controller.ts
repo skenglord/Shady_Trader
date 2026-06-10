@@ -3,6 +3,7 @@
 // import WebSocket from 'ws';
 import { RollingOptimizer, OptimizationResult } from './rolling-optimizer';
 import { OverfittingDetector, OverfittingDiagnostic } from './overfitting-detector';
+import { logger } from '../../logging/logger.js';
 import { StatisticalValidator, ValidationReport } from './statistical-validator';
 import { DataPartitioner, DataPartition } from './data-partitioner';
 import { WFACheckpointManager, WFACheckpoint } from './wfa-checkpoint';
@@ -175,7 +176,7 @@ export class WFAController {
             ws.jobId = data.jobId;
           }
         } catch (error) {
-          console.error('WebSocket message parse error:', error);
+          logger.error('WebSocket message parse error', { error: String(error), service: 'wfa-controller' });
         }
       });
 
@@ -184,7 +185,7 @@ export class WFAController {
       });
 
       ws.on('error', (error) => {
-        console.error('WebSocket error:', error);
+        logger.error('WebSocket error', { error: String(error), service: 'wfa-controller' });
         this.wssClients.delete(ws);
       });
 
@@ -211,7 +212,7 @@ export class WFAController {
       // Check for existing checkpoint
       checkpoint = await this.checkpointManager.loadCheckpoint(jobId);
       if (checkpoint && this.checkpointManager.validateCheckpoint(checkpoint)) {
-        console.log(`Resuming WFA analysis from checkpoint for job ${jobId}`);
+        logger.info(`Resuming WFA analysis from checkpoint for job ${jobId}`, { service: 'wfa-controller' });
         partitions = checkpoint.partitions;
         optimizationResults = checkpoint.optimizationResults;
         startPartition = checkpoint.completedPartitions;
@@ -244,7 +245,7 @@ export class WFAController {
           );
           optimizationResults.push(result);
         } catch (error) {
-          console.error(`Optimization failed for partition ${i}:`, error);
+          logger.error("Optimization failed for partition", { partition: i, error: String(error), service: "wfa-controller" });
         }
 
         const progress = 20 + (i + 1) / totalPartitions * 60;
@@ -319,7 +320,7 @@ export class WFAController {
       });
 
     } catch (error) {
-      console.error(`WFA analysis failed for job ${jobId}:`, error);
+      logger.error("WFA analysis failed", { jobId, error: String(error), service: "wfa-controller" });
 
       job.status = 'failed';
       job.error = error instanceof Error ? error.message : 'Unknown error';
@@ -359,7 +360,7 @@ export class WFAController {
           try {
             client.send(message);
           } catch (error) {
-            console.error('WebSocket send error:', error);
+            logger.error('WebSocket send error', { error: String(error), service: 'wfa-controller' });
             this.wssClients.delete(client);
           }
         }

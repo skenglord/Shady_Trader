@@ -67,7 +67,7 @@ describe.skip('End-to-End Trading Bot Tests [LEGACY-QUARANTINED]', () => {
 
     // Process a signal
     const signal = { symbol: 'BTC/USDT', side: 'buy', entryPrice: 50000, stopLoss: 49000, takeProfit: 52000, confidence: 90 };
-    await engine.shadowTrader.processSignal(signal, 50000, 'moderate', engine.balanceManager, engine.exchange, 'strong_bull');
+    await engine.shadowTrader.processSignal(signal, 50000, 'moderate', engine.balanceManager, engine.exchange, 'strongbull');
 
     assert.strictEqual(engine.shadowTrader.portfolios['moderate'].openTrades.length, 1);
 
@@ -160,7 +160,8 @@ describe.skip('End-to-End Trading Bot Tests [LEGACY-QUARANTINED]', () => {
     await engine.init();
 
     // Test WebSocket connection establishment
-    const ws = new WebSocket(`ws://localhost:${wss.address().port}`);
+    const address = wss.address() as import('net').AddressInfo;
+    const ws = new WebSocket(`ws://localhost:${address.port}`);
     await new Promise((resolve) => {
       ws.onopen = resolve;
     });
@@ -346,7 +347,7 @@ describe.skip('End-to-End Trading Bot Tests [LEGACY-QUARANTINED]', () => {
     // Test handling of invalid signals
     const invalidSignal = { symbol: 'INVALID', side: 'invalid', entryPrice: -100 };
     try {
-      await engine.shadowTrader.processSignal(invalidSignal as any, 50000, 'moderate', engine.balanceManager, engine.exchange, 'strong_bull');
+      await engine.shadowTrader.processSignal(invalidSignal as any, 50000, 'moderate', engine.balanceManager, engine.exchange, 'strongbull');
       assert.fail('Should have thrown an error for invalid signal');
     } catch (error) {
       assert.ok(error); // Expected error
@@ -354,7 +355,7 @@ describe.skip('End-to-End Trading Bot Tests [LEGACY-QUARANTINED]', () => {
 
     // Test handling of network failures (mock by disabling exchange)
     const signal = { symbol: 'BTC/USDT', side: 'buy', entryPrice: 50000, stopLoss: 49000, takeProfit: 52000, confidence: 90 };
-    await engine.shadowTrader.processSignal(signal, 50000, 'moderate', engine.balanceManager, null as any, 'strong_bull');
+    await engine.shadowTrader.processSignal(signal, 50000, 'moderate', engine.balanceManager, null as any, 'strongbull');
     // Should handle gracefully without exchange
 
     wss.close();
@@ -399,7 +400,7 @@ describe.skip('End-to-End Trading Bot Tests [LEGACY-QUARANTINED]', () => {
 
     // Change setting
     engine.symbol = 'ETH/USDT';
-    await engine.saveSettings();
+    await (engine as any).saveSettings();
 
     // Simulate restart
     const newEngine = new TradingEngine(wss);
@@ -412,7 +413,7 @@ describe.skip('End-to-End Trading Bot Tests [LEGACY-QUARANTINED]', () => {
 
     // Restore original
     engine.symbol = originalSymbol;
-    await engine.saveSettings();
+    await (engine as any).saveSettings();
 
     wss.close();
   });
@@ -457,7 +458,7 @@ describe.skip('End-to-End Trading Bot Tests [LEGACY-QUARANTINED]', () => {
 
     // Process signals concurrently
     const promises = signals.map(signal =>
-      engine.shadowTrader.processSignal(signal, signal.entryPrice, 'moderate', engine.balanceManager, engine.exchange, 'strong_bull')
+      engine.shadowTrader.processSignal(signal, signal.entryPrice, 'moderate', engine.balanceManager, engine.exchange, 'strongbull')
     );
 
     await Promise.all(promises);

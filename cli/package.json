@@ -1,0 +1,8 @@
+{
+  "name": "shady-trading-cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Strategy Testing & Optimization CLI for Shady Bot",
+  "bin": { "trading-cli": "src/index.ts" }
+}

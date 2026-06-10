@@ -1,0 +1,12 @@
+# Freqtrade sidecar dependencies
+# Pin freqtrade to the latest stable release as of integration start (2026.5.1).
+# Upgrades: run `npm run freqtrade:upgrade` after diffing the API_VERSION constant
+# in freqtrade/rpc/api_server/api_v1.py and updating the typed client.
+freqtrade[plotting]==2026.5.1
+pandas_ta==0.3.14b0
+joblib==1.4.2
+numpy>=1.26,<3
+# TA-Lib is optional — freqtrade emits a warning but works without it for most
+# indicators. If you need TA-Lib-specific indicators (e.g. ADX, ATR variants),
+# install the C library first (see install_freqtrade.sh) and then:
+#   pip install TA-Lib==0.5.5

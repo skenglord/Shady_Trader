@@ -1,9 +1,88 @@
+import type {
+  CompositeRegime, TrendDirection, TrendStrength, VolatilityRegime
+} from '../types/regime.js';
+import { logger } from '../logging/logger.js';
+
 export enum RegimeType {
-  STRONG_BULL = "strong_bull",
-  WEAK_BULL = "weak_bull",
+  STRONG_BULL = "strongbull",
+  WEAK_BULL = "weakbull",
   BEAR = "bear",
   SIDEWAYS = "sideways",
   UNCERTAIN = "uncertain"
+}
+
+// ── v6.0 Regime Detector v2: three-axis composite ──
+
+export function getTrendDirection(df: any): TrendDirection {
+  const ema9 = df.ema_9 ?? df.ema9 ?? df.close;
+  const ema21 = df.ema_21 ?? df.ema21 ?? df.close;
+  const ema50 = df.ema_50 ?? df.ema50 ?? df.close;
+  const slope = ema50 > 0 ? (df.close - ema50) / ema50 : 0;
+  if (df.close > ema9 && ema9 > ema21 && ema21 > ema50 && slope > 0.002) return 'up';
+  if (df.close < ema9 && ema9 < ema21 && ema21 < ema50 && slope < -0.002) return 'down';
+  return 'flat';
+}
+
+export function getTrendStrength(adx14: number): TrendStrength {
+  if (adx14 >= 28) return 'strong';
+  if (adx14 >= 18) return 'moderate';
+  return 'weak';
+}
+
+export interface AtrPercentileResult {
+  percentile: number;  // 0..1
+  usable:     boolean; // false until bootstrap window is filled
+}
+
+/**
+ * Compute ATR percentile rank within a rolling history.
+ * * Bug Fix 2: lookback default raised to 8064 candles (4 weeks at 5m);
+ * bootstrap minimum 288 (1 day) before percentile is trusted.
+ */
+export function computeAtrPercentile(
+  history: number[],
+  current: number,
+  bootstrapMin: number = parseInt(process.env.ATR_PERCENTILE_BOOTSTRAP_MIN ?? '288')
+): AtrPercentileResult {
+  const valid = history.filter(v => isFinite(v) && v > 0);
+  if (valid.length < 20) return { percentile: 0.5, usable: false };
+  const below = valid.filter(v => v <= current).length;
+  return { percentile: below / valid.length, usable: valid.length >= bootstrapMin };
+}
+
+export function getVolatilityRegime(r: AtrPercentileResult): VolatilityRegime {
+  if (!r.usable) return 'normal';
+  if (r.percentile < 0.30) return 'low';
+  if (r.percentile < 0.70) return 'normal';
+  return 'high';
+}
+
+/**
+ * Map three axes to a composite regime.
+ * * Bug Fix 3: ALL downtrends map to 'bear' unconditionally (no fall-through to sideways).
+ */
+export function getCompositeRegime(
+  dir: TrendDirection,
+  str: TrendStrength,
+  vol: VolatilityRegime
+): CompositeRegime {
+  if (dir === 'down') return 'bear';                // ALL downtrends = bear, no exceptions
+  if (dir === 'up' && str === 'strong') return 'strongbull';
+  if (dir === 'up' && str === 'moderate') return 'weakbull';
+  if (dir === 'up' && str === 'weak') return 'sideways';
+  if (vol === 'high') return 'uncertain';
+  return 'sideways';
+}
+
+/** Stability = fraction of recent N regime reads matching current. Monitoring-only by default. */
+export function computeRegimeStability(
+  history: CompositeRegime[],
+  current: CompositeRegime,
+  window: number = 12
+): number {
+  const tail = history.slice(-window);
+  if (!tail.length) return 1.0;
+  return tail.filter(r => r === current).length / tail.length;
 }
 
 export class RegimeDetector {
@@ -37,6 +116,15 @@ export class RegimeDetector {
     const metrics = this._calculateMetrics(df);
     let { regime, confidence, reasoning } = this._classifyRegime(metrics);
     ({ regime, confidence, reasoning } = this._applyNewsSentimentWeight(regime, confidence, reasoning, marketContext));
+
+    // ── v6.0 three-axis composite (additive; does not alter legacy `regime`) ──
+    const lastRow = df[df.length - 1] || {};
+    const trendDir = getTrendDirection(lastRow);
+    const trendStrength = getTrendStrength(lastRow.adx ?? lastRow.adx14 ?? 0);
+    const atrHistory = df.map((r: any) => r.atr ?? r.atr_14 ?? 0).filter((v: number) => v > 0);
+    const atrResult = computeAtrPercentile(atrHistory, lastRow.atr ?? lastRow.atr_14 ?? 0);
+    const volRegime = getVolatilityRegime(atrResult);
+    const composite = getCompositeRegime(trendDir, trendStrength, volRegime);
 
     let aiValidation = null;
 
@@ -83,7 +171,7 @@ Output JSON only:
           }
         }
       } catch (e: any) {
-        console.error("AI Narrative Generation failed:", e.message);
+        logger.error("AI Narrative Generation failed", { error: e.message, service: 'regime-detector' });
         if (e.message && e.message.includes("fetch failed")) {
            RegimeDetector.aiEnabled = false;
         }
@@ -96,6 +184,13 @@ Output JSON only:
       metrics,
       reasoning,
       aiValidation,
+      // ── v6.0 three-axis composite fields ──
+      composite,
+      trendDir,
+      trendStrength,
+      volRegime,
+      atrPercentile: atrResult.percentile,
+      atrUsable: atrResult.usable,
       timestamp: df[df.length - 1]?.time || null
     };
   }
@@ -142,7 +237,7 @@ Output JSON only:
   _classifyRegime(metrics: any) {
     const { adx, price_change_30d, price_change_7d, volume_ratio, rsi_avg_7d } = metrics;
 
-    // console.log(`[RegimeDetector] Classifying: adx=${adx}, price30d=${price_change_30d}, price7d=${price_change_7d}, vol=${volume_ratio}`);
+    // logger.info('Classifying: adx=${adx}, price30d=${price_change_30d}, price7d=${price_change_7d}, vol=${volume_ratio}', { service: 'regimedetector' });
 
     if (
       adx > this.STRONG_BULL_THRESHOLDS.adx_min &&

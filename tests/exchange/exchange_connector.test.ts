@@ -2,6 +2,7 @@ import { afterEach, describe, test } from 'node:test';
 import assert from 'node:assert';
 import axios from 'axios';
 import { ExchangeConnector } from '../../backend/exchange/connector.js';
+import { ExchangeAdapterFactory } from '../../backend/exchange/adapter.js';
 
 const originalGet = axios.get;
 const originalPost = axios.post;
@@ -26,7 +27,14 @@ afterEach(() => {
 
 describe('ExchangeConnector execution adapters', () => {
   test('rejects unsupported adapter providers at construction', async () => {
-    assert.throws(() => makeConnector('coinmarketcap'), /Unsupported exchange/);
+    // Data-only providers (coinmarketcap, coinapi, coingecko) don't need an
+    // execution adapter and are accepted by the connector. The factory is
+    // where unsupported exchanges are actually rejected, so we test it
+    // directly to cover the real code path.
+    assert.throws(
+      () => ExchangeAdapterFactory.createAdapter('nonexistent' as any, '', ''),
+      /Unsupported exchange/
+    );
   });
 
   test('enforces Binance credentials for authenticated execution', async () => {

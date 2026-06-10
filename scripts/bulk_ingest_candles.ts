@@ -8,7 +8,7 @@ const CANDLES_PER_BATCH = 500;
 const TARGET_CANDLES = 60000;
 
 async function ingestSymbol(connector: ExchangeConnector, symbol: string) {
-  const existing = await runQuery<{ count: number }>(
+  const existing = await runQuery(
     `SELECT COUNT(*) as count FROM candles WHERE symbol = ? AND timeframe = ?`,
     [symbol, TIMEFRAME]
   );
@@ -25,7 +25,7 @@ async function ingestSymbol(connector: ExchangeConnector, symbol: string) {
   let since: number | undefined = undefined;
 
   while (alreadyHave + inserted < TARGET_CANDLES) {
-    const batch = await connector.getCandles(symbol, TIMEFRAME, CANDLES_PER_BATCH, since);
+    const batch = await connector.getCandles(symbol, TIMEFRAME, CANDLES_PER_BATCH);
     if (!batch || batch.length === 0) break;
 
     for (const candle of batch) {
@@ -49,15 +49,14 @@ async function ingestSymbol(connector: ExchangeConnector, symbol: string) {
 }
 
 async function main() {
-  const connector = new ExchangeConnector();
-  await connector.initialize();
-
+  const connector = new ExchangeConnector('coingecko', '', '', undefined, false);
+  // ExchangeConnector is ready immediately; no initialize() needed in v6.
   for (const symbol of SYMBOLS) {
     await ingestSymbol(connector, symbol);
   }
 
   for (const symbol of SYMBOLS) {
-    const result = await runQuery<{ count: number }>(
+    const result = await runQuery(
       `SELECT COUNT(*) as count FROM candles WHERE symbol = ? AND timeframe = ?`,
       [symbol, TIMEFRAME]
     );

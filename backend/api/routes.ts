@@ -1,8 +1,11 @@
 import { Router } from 'express';
+import Redis from 'ioredis';
+import crypto from 'crypto';
 import { runQuery } from '../database.js';
 import { getTradingEngine, getStartupDiagnostics } from '../main.js';
 import { RiskMode, DEFAULT_RISK_CONFIGS } from '../risk/manager.js';
 import { RegimeType } from '../regime/detector.js';
+import { normalizeRegime, isCanonicalRegime, LEGACY_TO_CANONICAL } from '../types/regime.js';
 import multer from 'multer';
 import { parse } from 'csv-parse';
 import fs from 'fs';
@@ -14,6 +17,15 @@ import axios from 'axios';
 import paperTradingRouter from '../paper-trading/paper-trading.controller.js';
 import { recordApiRequest, getApiMetricsSnapshot, toPrometheusMetrics } from '../observability/requestMetrics.js';
 import { getMLHealth } from '../ml/index.js';
+import { 
+  getFreqtradeDataQueue, 
+  getFreqtradeBacktestQueue, 
+  getFreqtradeValidateQueue 
+} from '../job_queues.js';
+import { FreqtradeBridge } from '../freqtrade/bridge.js';
+import { spawn } from 'child_process';
+import path from 'path';
+import { freqtradeMetricsRegistry } from '../observability/freqtrade_metrics.js';
 
 // Fallback function to fetch historical data from CoinGecko
 async function fetchCoinGeckoHistoricalData(symbol: string, timeframe: string, days: number) {
@@ -76,11 +88,13 @@ function getRedis(): Redis {
       host: process.env.REDIS_HOST || 'localhost',
       port: parseInt(process.env.REDIS_PORT || '6379'),
       password: process.env.REDIS_PASSWORD || '',
-      lazyConnect: true,
-      maxRetriesPerRequest: 1,
-      enableOfflineQueue: false,
-      retryStrategy: () => null,
+      lazyConnect: false,
+      maxRetriesPerRequest: 3,
+      enableOfflineQueue: true,
+      retryStrategy: (times) => Math.min(times * 200, 2000),
     });
+    // Initiate connection eagerly so .ping() in /api/diagnostics/health resolves quickly
+    redis.connect().catch(() => { /* logged via 'error' handler above */ });
     redis.on('error', (error) => {
       logger.warn('Idempotency Redis unavailable', { error: error?.message || 'unknown' });
     });
@@ -209,10 +223,13 @@ function requireRole(requiredRole: Role) {
     const { adminToken, traderToken } = getAuthTokens();
     const isAuthConfigured = Boolean(adminToken || traderToken);
     if (!isAuthConfigured) {
-      if (process.env.NODE_ENV === 'production') {
-        return res.status(503).json({ error: 'API authentication is not configured' });
-      }
-      return next();
+      // SECURITY: Always require auth, even in development.
+      // Use API_ADMIN_TOKEN and API_TRADER_TOKEN env vars to configure.
+      // Generate with: openssl rand -hex 32
+      return res.status(503).json({
+        error: 'API authentication is not configured',
+        hint: 'Set API_ADMIN_TOKEN and API_TRADER_TOKEN environment variables'
+      });
     }
 
     const providedToken = getProvidedToken(req);
@@ -226,6 +243,81 @@ function requireRole(requiredRole: Role) {
     next();
   };
 }
+
+// Public routes that don't require authentication.
+// IMPORTANT: this list is documentation-only — the actual auth bypass works
+// by NOT including these prefixes in `adminRoutes` / `traderRoutes` below.
+// (PUBLIC_ROUTES is a near-duplicate of /health/live + /health/ready for
+// grep-ability; do not add a route here without also removing its prefix
+// from the protected lists.)
+const PUBLIC_ROUTES = [
+  '/health/live',
+  '/health/ready',
+  '/health/quick',  // Minimal public liveness probe (replaces /diagnostics/health as the public probe)
+  '/status',        // Public status endpoint (correlation ID probe)
+];
+
+// Admin-only routes (sensitive operations)
+const adminRoutes = [
+  '/start',
+  '/stop',
+  '/optimize',
+  '/settings',
+  '/risk-configs',
+  '/risk-configs/reset',
+  '/risk-configs/ai-recommend',
+  '/backtest',
+  '/kill',
+  '/import-csv',
+  // Note: /diagnostics is intentionally NOT admin-only here so the
+  // /diagnostics/health and /diagnostics/startup endpoints remain public
+  // for liveness probes (browser harness, scripts, CI). Admin-only diagnostics
+  // is enforced at the individual route level instead.
+  '/ml/status',
+  '/ml/accuracy',
+  '/ml/predictions',
+  // Freqtrade admin routes
+  '/freqtrade/download-data',
+  '/freqtrade/backtest',
+  '/freqtrade/validate',
+  '/freqtrade/ingest',
+];
+
+// Trader routes (view + moderate operations)
+const traderRoutes = [
+  '/timeframe',
+  '/market/refresh',
+  '/market/data',
+  '/positions',
+  '/positions/close',
+  '/positions/update',
+  '/balances',
+  '/balances/allocate',
+  '/balances/withdraw',
+  '/balances/half',
+  '/balances/double',
+  '/active-mode',
+  '/regime/manual',
+  '/regime',
+  '/manual-trade',
+  '/signals',
+  '/closed',
+  '/shadow-trades',
+  '/trades',
+  '/data',
+  '/news',
+  '/slippage',
+  '/health',
+  // Diagnostics: protected behind trader auth because the full health/startup
+  // response leaks exchange config, slowest routes with latencies, and other
+  // internal performance data. Liveness probes should use /api/health/quick or
+  // /api/health/live (both public, both return only a minimal status).
+  '/diagnostics',
+  // Freqtrade trader routes
+  '/freqtrade/pairs',
+  '/freqtrade/info',
+  '/freqtrade/jobs',
+];
 
 function validateBody(schema: z.ZodTypeAny) {
   return (req: any, res: any, next: any) => {
@@ -249,6 +341,19 @@ function validateBody(schema: z.ZodTypeAny) {
 // Health check endpoints
 apiRouter.get('/health/live', (req, res) => {
   res.status(200).json({ status: 'ok', timestamp: Date.now() });
+});
+
+// Minimal public liveness probe — returns only a status flag and uptime.
+// Use this for K8s liveness/readiness probes, browser harness health checks,
+// and external monitoring that doesn't need full internal metrics.
+// For detailed diagnostics (slowest routes, exchange config, market data, ML
+// status), use the trader-protected /api/diagnostics/health endpoint.
+apiRouter.get('/health/quick', (req, res) => {
+  res.status(200).json({
+    status: 'ok',
+    uptimeSec: Math.floor(process.uptime()),
+    timestamp: Date.now()
+  });
 });
 
 apiRouter.get('/health/ready', async (req, res) => {
@@ -314,43 +419,74 @@ apiRouter.use((req, res, next) => {
   next();
 });
 
-const adminRoutes = [
-  '/start',
-  '/stop',
-  '/optimize',
-  '/settings',
-  '/risk-configs',
-  '/risk-configs/reset',
-  '/risk-configs/ai-recommend',
-  '/backtest',
-  '/kill',
-  '/import-csv',
-  '/diagnostics',
-  '/ml/status',
-  '/ml/accuracy',
-  '/ml/predictions'
-];
+// adminRoutes and traderRoutes are defined above with expanded coverage.
+// Track which routes have been protected
+const protectedRoutes = new Set<string>();
 
-const traderRoutes = [
-  '/timeframe',
-  '/market/refresh',
-  '/positions/close',
-  '/positions/update',
-  '/balances/allocate',
-  '/balances/withdraw',
-  '/balances/half',
-  '/balances/double',
-  '/active-mode',
-  '/regime/manual',
-  '/manual-trade'
+// JSON 405 catch-all for POST-only routes — must run BEFORE the auth
+// middleware so that GET /api/active-mode (or other unsupported method)
+// returns 405 Method Not Allowed with an `allow: POST` header, instead of
+// the misleading 401 Unauthorized that the auth middleware would otherwise
+// emit. Without this, the browser harness and CLI smoketest would log 401s
+// for paths that are simply the wrong HTTP method.
+const POST_ONLY_ROUTES: Array<{ path: string; allow: string }> = [
+  { path: '/active-mode', allow: 'POST' },
+  { path: '/regime/manual', allow: 'POST' },
+  { path: '/market/refresh', allow: 'POST' },
 ];
+for (const { path, allow } of POST_ONLY_ROUTES) {
+  apiRouter.all(path, (req: any, res: any, next: any) => {
+    if (req.method === 'POST') return next();           // let the real handler run
+    if (req.method === 'OPTIONS') return res.setHeader('allow', allow).status(204).end();
+    return res.setHeader('allow', allow).status(405).json({
+      error: 'Method Not Allowed',
+      route: req.originalUrl || req.url,
+      method: req.method,
+      requestId: req.requestId,
+      allow,
+      hint: `This endpoint only accepts ${allow} requests. See backend/api/routes.ts.`
+    });
+  });
+}
 
 for (const route of adminRoutes) {
   apiRouter.use(route, requireRole('admin'));
+  protectedRoutes.add(route);
 }
 for (const route of traderRoutes) {
   apiRouter.use(route, requireRole('trader'));
+  protectedRoutes.add(route);
 }
+
+// CSRF protection middleware — applied to state-changing routes
+function csrfProtection(req: any, res: any, next: any) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+  const token = req.headers['x-csrf-token'];
+  const sessionToken = req.session?.csrfToken;
+  // For API token auth, CSRF is less critical (CORS + token auth mitigates it)
+  // But for session auth, require a matching CSRF token
+  if (req.headers.authorization?.startsWith('Bearer ') || req.headers['x-api-token']) {
+    return next(); // API token auth is not vulnerable to CSRF
+  }
+  if (!token || !sessionToken || token !== sessionToken) {
+    return res.status(403).json({ error: 'CSRF token mismatch' });
+  }
+  next();
+}
+
+// CSRF token endpoint — returns a token for session-based clients
+apiRouter.get('/csrf-token', (req: any, res: any) => {
+  const token = crypto.randomBytes(32).toString('hex');
+  if (req.session) {
+    req.session.csrfToken = token;
+  }
+  res.json({ csrfToken: token });
+});
+
+// Apply CSRF protection to state-changing operations
+apiRouter.use(csrfProtection);
 
 const timeframeSchema = z.object({
   timeframe: z.string().refine((v) => TIMEFRAME_ALLOWLIST.has(v), 'Invalid timeframe. Allowed: 1m, 5m, 15m, 1h, 1d')
@@ -400,7 +536,10 @@ const validateActiveModeBody = validateBody(z.object({
 }));
 
 const validateManualRegimeBody = validateBody(z.object({
-  regime: z.string().refine((v) => regimeModes.has(v as RegimeType), 'Invalid regime')
+  regime: z.string().refine(
+    (v) => Object.prototype.hasOwnProperty.call(LEGACY_TO_CANONICAL, v),
+    'Invalid regime'
+  )
 }));
 
 const validateManualTradeBody = validateBody(z.object({
@@ -409,6 +548,38 @@ const validateManualTradeBody = validateBody(z.object({
   price: z.number().positive('price must be a positive number'),
   stopLoss: z.number().positive('stopLoss must be a positive number'),
   takeProfit: z.number().positive('takeProfit must be a positive number')
+}));
+
+// ──────────────────────────────────────────────────────────────────────
+// Freqtrade API Zod Schemas (Phase 4)
+// ──────────────────────────────────────────────────────────────────────
+const validateFreqtradeDownloadBody = validateBody(z.object({
+  exchange: z.string().min(1),
+  pairs: z.array(z.string().min(1)).min(1),
+  timeframes: z.array(z.string().min(1)).min(1),
+  timerange: z.object({ start: z.string().optional(), end: z.string().optional() }).optional(),
+  tradingMode: z.enum(['spot', 'futures', 'margin']),
+  dataFormat: z.enum(['json', 'feather', 'parquet']),
+}));
+
+const validateFreqtradeBacktestBody = validateBody(z.object({
+  strategy: z.string().min(1),
+  timerange: z.object({ start: z.string().optional(), end: z.string().optional() }).optional(),
+  pairs: z.array(z.string().min(1)).min(1),
+  timeframe: z.string().min(1),
+  dryRunWallet: z.number().positive(),
+  fee: z.number().nonnegative().optional(),
+}));
+
+const validateFreqtradeValidateBody = validateBody(z.object({
+  symbol: z.string().min(1),
+  timerange: z.object({ start: z.string(), end: z.string() }),
+  strategy: z.string().min(1),
+  mode: z.string().min(1),
+  pairs: z.array(z.string().min(1)).min(1),
+  timeframe: z.string().min(1),
+  dryRunWallet: z.number().positive(),
+  tolerance: z.number().positive().default(0.05),
 }));
 
 apiRouter.get('/status', (req, res) => {
@@ -472,9 +643,18 @@ apiRouter.get('/diagnostics/metrics', async (req, res) => {
   }
 
   const marketMetrics = engine.marketDataService.getMetrics();
-  const payload = toPrometheusMetrics(marketMetrics);
-  res.setHeader('content-type', 'text/plain; version=0.0.4; charset=utf-8');
-  return res.send(payload);
+  const basePayload = toPrometheusMetrics(marketMetrics);
+  
+  try {
+    const freqtradePayload = await freqtradeMetricsRegistry.metrics();
+    const payload = basePayload + '\n' + freqtradePayload;
+    res.setHeader('content-type', 'text/plain; version=0.0.4; charset=utf-8');
+    return res.send(payload);
+  } catch (error) {
+    logger.warn('Failed to append Freqtrade metrics', { error: error instanceof Error ? error.message : String(error) });
+    res.setHeader('content-type', 'text/plain; version=0.0.4; charset=utf-8');
+    return res.send(basePayload);
+  }
 });
 
 // ML endpoints (admin-protected)
@@ -537,10 +717,10 @@ apiRouter.post('/start', (req, res) => {
   }
 });
 
-apiRouter.post('/stop', (req, res) => {
+apiRouter.post('/stop', async (req, res) => {
   const engine = getTradingEngine();
   if (engine && engine.isRunning) {
-    engine.stop();
+    await engine.stop();
     res.json({ success: true, message: 'Trading engine stopped' });
   } else {
     res.status(400).json({ success: false, message: 'Engine not running' });
@@ -561,7 +741,7 @@ apiRouter.post('/timeframe', validateTimeframeBody, async (req, res) => {
   `, ['timeframe', timeframe]);
 
   if (engine) {
-    engine.setTimeframe(timeframe);
+    await engine.setTimeframe(timeframe);
     res.json({ success: true, message: `Timeframe updated to ${timeframe}` });
   } else {
     res.status(500).json({ success: false, message: 'Engine not initialized' });
@@ -678,11 +858,16 @@ apiRouter.get('/market/news', async (req, res) => {
 apiRouter.post('/market/refresh', async (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
-    await engine.marketDataService.fetchMarketData();
-    await engine.marketDataService.fetchNews();
-    res.json({ success: true });
+    try {
+      await engine.marketDataService.fetchMarketData();
+      await engine.marketDataService.fetchNews();
+      res.json({ success: true });
+    } catch (err: any) {
+      logger.error('[market/refresh] Failed:', err);
+      res.status(500).json({ error: err.message || 'Market refresh failed' });
+    }
   } else {
-    res.status(500).json({ error: 'Engine not initialized' });
+    res.status(503).json({ error: 'Engine not initialized. Start the engine first.' });
   }
 });
 
@@ -800,7 +985,7 @@ apiRouter.post('/settings', validateSettingsBody, async (req, res) => {
   
   const engine = getTradingEngine();
   if (engine) {
-    engine.loadSettings();
+    await engine.loadSettings();
   }
   
   res.json({ success: true });
@@ -918,7 +1103,7 @@ apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
   if (!aiRecommendationsEnabled) {
     // Fallback immediately
     for (const mode of Object.values(RiskMode)) {
-      if (currentRegime === 'strong_bull' || currentRegime === 'bear') {
+      if (currentRegime === 'strongbull' || currentRegime === 'bear') {
         currentConfigs[mode].tpMultiplier = Math.max(1.5, currentConfigs[mode].tpMultiplier * 1.2);
         currentConfigs[mode].slMultiplier = Math.max(0.5, currentConfigs[mode].slMultiplier * 0.8);
       } else if (currentRegime === 'sideways') {
@@ -970,7 +1155,7 @@ apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
     }
     // Fallback to simple logic — always produce non-zero values
     for (const mode of Object.values(RiskMode)) {
-      if (currentRegime === 'strong_bull' || currentRegime === 'bear') {
+      if (currentRegime === 'strongbull' || currentRegime === 'bear') {
         currentConfigs[mode].takeProfit = Math.max(1.5, (currentConfigs[mode].takeProfit || 1.8) * 1.2);
         currentConfigs[mode].stopLoss = Math.min(5.0, (currentConfigs[mode].stopLoss || 2.5) * 0.8);
         currentConfigs[mode].positionSize = Math.min(0.15, (currentConfigs[mode].positionSize || 0.05) * 1.2);
@@ -1150,8 +1335,8 @@ apiRouter.post('/regime/manual', validateManualRegimeBody, (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     const { regime } = req.body;
-    engine.manualRegime = regime;
-    res.json({ success: true, regime });
+    engine.manualRegime = normalizeRegime(regime) as any;
+    res.json({ success: true, regime: normalizeRegime(regime) });
   } else {
     res.status(500).json({ error: 'Engine not initialized' });
   }
@@ -1405,5 +1590,357 @@ apiRouter.get('/slippage/history', async (req, res) => {
   }
 });
 
+// ──────────────────────────────────────────────────────────────────────
+// Freqtrade API Routes (Phase 4)
+// ──────────────────────────────────────────────────────────────────────
+
+apiRouter.post('/freqtrade/download-data', validateFreqtradeDownloadBody, async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+
+  try {
+    const queue = getFreqtradeDataQueue();
+    if (!queue) {
+      return res.status(503).json({ error: 'Freqtrade data queue not available. Ensure Redis is running and FREQTRADE_ENABLED=true.' });
+    }
+
+    const jobId = crypto.randomUUID();
+    const payload = { ...req.body, jobId };
+
+    await runQuery(
+      `INSERT INTO freqtrade_jobs (id, type, status, exchange, timerange_start, timerange_end, params_json, created_at, updated_at)
+       VALUES (?, 'download', 'queued', ?, ?, ?, ?, ?, ?)`,
+      [jobId, payload.exchange, payload.timerange?.start || null, payload.timerange?.end || null, JSON.stringify(payload), Date.now(), Date.now()],
+      'run'
+    );
+
+    await queue.add('download-data', payload, { jobId });
+
+    recordApiRequest('/freqtrade/download-data', 'POST', 202, Date.now() - startTime);
+    res.status(202).json({ requestId, jobId, message: 'Download job queued' });
+  } catch (error: any) {
+    recordApiRequest('/freqtrade/download-data', 'POST', 500, Date.now() - startTime);
+    logger.error('Failed to queue Freqtrade download', { requestId, error: error.message });
+    res.status(500).json({ error: 'Failed to queue download job', requestId });
+  }
+});
+
+apiRouter.post('/freqtrade/backtest', validateFreqtradeBacktestBody, async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+
+  try {
+    const queue = getFreqtradeBacktestQueue();
+    if (!queue) {
+      return res.status(503).json({ error: 'Freqtrade backtest queue not available. Ensure Redis is running and FREQTRADE_ENABLED=true.' });
+    }
+
+    const jobId = crypto.randomUUID();
+    const payload = { ...req.body, jobId };
+
+    await runQuery(
+      `INSERT INTO freqtrade_jobs (id, type, status, strategy, timerange_start, timerange_end, params_json, created_at, updated_at)
+       VALUES (?, 'backtest', 'queued', ?, ?, ?, ?, ?, ?)`,
+      [jobId, payload.strategy, payload.timerange?.start || null, payload.timerange?.end || null, JSON.stringify(payload), Date.now(), Date.now()],
+      'run'
+    );
+
+    await queue.add('backtest', payload, { jobId });
+
+    recordApiRequest('/freqtrade/backtest', 'POST', 202, Date.now() - startTime);
+    res.status(202).json({ requestId, jobId, message: 'Backtest job queued' });
+  } catch (error: any) {
+    recordApiRequest('/freqtrade/backtest', 'POST', 500, Date.now() - startTime);
+    logger.error('Failed to queue Freqtrade backtest', { requestId, error: error.message });
+    res.status(500).json({ error: 'Failed to queue backtest job', requestId });
+  }
+});
+
+apiRouter.post('/freqtrade/validate', validateFreqtradeValidateBody, async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+
+  try {
+    const queue = getFreqtradeValidateQueue();
+    if (!queue) {
+      return res.status(503).json({ error: 'Freqtrade validate queue not available. Ensure Redis is running and FREQTRADE_ENABLED=true.' });
+    }
+
+    const jobId = crypto.randomUUID();
+    const payload = { ...req.body, jobId };
+
+    await runQuery(
+      `INSERT INTO freqtrade_jobs (id, type, status, strategy, timerange_start, timerange_end, params_json, created_at, updated_at)
+       VALUES (?, 'validate', 'queued', ?, ?, ?, ?, ?, ?)`,
+      [jobId, payload.strategy, payload.timerange.start, payload.timerange.end, JSON.stringify(payload), Date.now(), Date.now()],
+      'run'
+    );
+
+    await queue.add('validate', payload, { jobId });
+
+    recordApiRequest('/freqtrade/validate', 'POST', 202, Date.now() - startTime);
+    res.status(202).json({ requestId, jobId, message: 'Validation job queued' });
+  } catch (error: any) {
+    recordApiRequest('/freqtrade/validate', 'POST', 500, Date.now() - startTime);
+    logger.error('Failed to queue Freqtrade validate', { requestId, error: error.message });
+    res.status(500).json({ error: 'Failed to queue validation job', requestId });
+  }
+});
+
+apiRouter.get('/freqtrade/info', async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+
+  try {
+    const bridge = new FreqtradeBridge();
+    const [pingOk, strategies] = await Promise.all([
+      bridge.ping(),
+      bridge.listStrategies().catch(() => [])
+    ]);
+
+    recordApiRequest('/freqtrade/info', 'GET', 200, Date.now() - startTime);
+    res.json({
+      requestId,
+      installed: pingOk,
+      strategies
+    });
+  } catch (error: any) {
+    recordApiRequest('/freqtrade/info', 'GET', 500, Date.now() - startTime);
+    logger.error('Failed to get Freqtrade info', { requestId, error: error.message });
+    res.status(500).json({ error: 'Failed to get Freqtrade info', requestId });
+  }
+});
+
+apiRouter.get('/freqtrade/pairs', async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+
+  try {
+    // For now, return a static list or read from config. 
+    // In a full implementation, this would call `freqtrade list-data` or query the DB.
+    // We'll query the candles table for available pairs/timeframes as a proxy.
+    const pairs = await runQuery(
+      `SELECT DISTINCT symbol, timeframe FROM candles ORDER BY symbol, timeframe`,
+      [],
+      'all'
+    );
+
+    recordApiRequest('/freqtrade/pairs', 'GET', 200, Date.now() - startTime);
+    res.json({ requestId, pairs });
+  } catch (error: any) {
+    recordApiRequest('/freqtrade/pairs', 'GET', 500, Date.now() - startTime);
+    logger.error('Failed to get Freqtrade pairs', { requestId, error: error.message });
+    res.status(500).json({ error: 'Failed to get Freqtrade pairs', requestId });
+  }
+});
+
+apiRouter.get('/freqtrade/jobs', async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+
+  try {
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+    const jobs = await runQuery(
+      `SELECT id, type, status, exchange, strategy, timerange_start, timerange_end, created_at, completed_at, error 
+       FROM freqtrade_jobs 
+       ORDER BY created_at DESC 
+       LIMIT ?`,
+      [limit],
+      'all'
+    );
+
+    recordApiRequest('/freqtrade/jobs', 'GET', 200, Date.now() - startTime);
+    res.json({ requestId, jobs });
+  } catch (error: any) {
+    recordApiRequest('/freqtrade/jobs', 'GET', 500, Date.now() - startTime);
+    logger.error('Failed to get Freqtrade jobs', { requestId, error: error.message });
+    res.status(500).json({ error: 'Failed to get Freqtrade jobs', requestId });
+  }
+});
+
+apiRouter.get('/freqtrade/jobs/:id', async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+  const { id } = req.params;
+
+  try {
+    const job = await runQuery(
+      `SELECT * FROM freqtrade_jobs WHERE id = ?`,
+      [id],
+      'all'
+    );
+
+    if (job.length === 0) {
+      return res.status(404).json({ error: 'Job not found', requestId });
+    }
+
+    recordApiRequest('/freqtrade/jobs/:id', 'GET', 200, Date.now() - startTime);
+    res.json({ requestId, job: job[0] });
+  } catch (error: any) {
+    recordApiRequest('/freqtrade/jobs/:id', 'GET', 500, Date.now() - startTime);
+    logger.error('Failed to get Freqtrade job', { requestId, error: error.message });
+    res.status(500).json({ error: 'Failed to get Freqtrade job', requestId });
+  }
+});
+
+// ── Cancel job ─────────────────────────────────────────────────────
+apiRouter.post('/freqtrade/jobs/:id/cancel', async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+  const { id } = req.params;
+
+  try {
+    // Look up the job in the DB
+    const jobs = await runQuery(
+      `SELECT id, type, status, params_json FROM freqtrade_jobs WHERE id = ?`,
+      [id],
+      'all',
+    ) as any[];
+
+    if (!jobs || jobs.length === 0) {
+      recordApiRequest('/freqtrade/jobs/:id/cancel', 'POST', 404, Date.now() - startTime);
+      return res.status(404).json({ error: 'Job not found', requestId });
+    }
+
+    const job = jobs[0];
+
+    // Only cancelleable if still queued or running
+    if (!['queued', 'running'].includes(job.status)) {
+      recordApiRequest('/freqtrade/jobs/:id/cancel', 'POST', 400, Date.now() - startTime);
+      return res.status(400).json({
+        error: `Job is ${job.status} and cannot be cancelled`,
+        requestId,
+        status: job.status,
+      });
+    }
+
+    // Determine which queue holds this job
+    const queueMap: Record<string, () => import('bullmq').Queue | null> = {
+      download: () => getFreqtradeDataQueue(),
+      backtest: () => getFreqtradeBacktestQueue(),
+      validate: () => getFreqtradeValidateQueue(),
+    };
+    const queueFn = queueMap[job.type];
+    let queueRemoved = false;
+
+    if (queueFn) {
+      const queue = queueFn();
+      if (queue) {
+        try {
+          const bullJob = await queue.getJob(id);
+          if (bullJob) {
+            await bullJob.remove();
+            queueRemoved = true;
+          }
+        } catch (qe: any) {
+          logger.warn('BullMQ job remove failed (non-fatal)', {
+            jobId: id,
+            error: qe?.message ?? String(qe),
+          });
+        }
+      }
+    }
+
+    // For running jobs, also try to kill the bridge child process
+    if (job.status === 'running') {
+      try {
+        const { FreqtradeBridge } = await import('../freqtrade/bridge.js');
+        const bridge = new FreqtradeBridge();
+        await bridge.cancel(id);
+      } catch (be: any) {
+        logger.warn('Bridge cancel failed (non-fatal)', {
+          jobId: id,
+          error: be?.message ?? String(be),
+        });
+      }
+    }
+
+    // Update DB
+    await runQuery(
+      `UPDATE freqtrade_jobs SET status='cancelled', completed_at=?, updated_at=? WHERE id=?`,
+      [Date.now(), Date.now(), id],
+      'run',
+    );
+
+    recordApiRequest('/freqtrade/jobs/:id/cancel', 'POST', 200, Date.now() - startTime);
+    res.json({
+      requestId,
+      jobId: id,
+      message: `Job cancelled (queue removed: ${queueRemoved})`,
+    });
+  } catch (error: any) {
+    recordApiRequest('/freqtrade/jobs/:id/cancel', 'POST', 500, Date.now() - startTime);
+    logger.error('Failed to cancel Freqtrade job', { requestId, error: error.message });
+    res.status(500).json({ error: 'Failed to cancel job', requestId });
+  }
+});
+
+apiRouter.post('/freqtrade/ingest', async (req, res) => {
+  const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
+  const startTime = Date.now();
+
+  try {
+    const bridge = new FreqtradeBridge();
+    const userDataDir = bridge.getUserDataDir();
+    const dataDir = path.join(userDataDir, 'data');
+    
+    // We'll spawn the python script directly for now. 
+    // In a more robust setup, this would be a BullMQ job.
+    const scriptPath = path.join(process.cwd(), 'backend/freqtrade/scripts/bulk_ingest_candles.py');
+    const dbPath = path.join(process.cwd(), 'trading.db');
+    
+    const child = spawn('python3', [scriptPath, '--db', dbPath, '--data-dir', dataDir], {
+      stdio: 'pipe',
+      cwd: process.cwd()
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    child.stdout.on('data', (data) => { stdout += data.toString(); });
+    child.stderr.on('data', (data) => { stderr += data.toString(); });
+
+    child.on('close', (code) => {
+      if (code === 0) {
+        recordApiRequest('/freqtrade/ingest', 'POST', 200, Date.now() - startTime);
+        res.json({ requestId, message: 'Ingest completed successfully', output: stdout.trim() });
+      } else {
+        recordApiRequest('/freqtrade/ingest', 'POST', 500, Date.now() - startTime);
+        logger.error('Freqtrade ingest failed', { requestId, code, stderr });
+        res.status(500).json({ error: 'Ingest failed', requestId, stderr: stderr.trim() });
+      }
+    });
+
+    child.on('error', (err) => {
+      recordApiRequest('/freqtrade/ingest', 'POST', 500, Date.now() - startTime);
+      logger.error('Freqtrade ingest spawn error', { requestId, error: err.message });
+      res.status(500).json({ error: 'Failed to spawn ingest script', requestId });
+    });
+  } catch (error: any) {
+    recordApiRequest('/freqtrade/ingest', 'POST', 500, Date.now() - startTime);
+    logger.error('Failed to start Freqtrade ingest', { requestId, error: error.message });
+    res.status(500).json({ error: 'Failed to start ingest', requestId });
+  }
+});
+
 // Paper Trading Routes
 apiRouter.use('/paper', paperTradingRouter);
+
+// JSON 404 catch-all for unmatched /api/* routes.
+// Without this, requests to unknown paths (or GET requests to POST-only routes
+// like /active-mode, /regime/manual, /market/refresh) fall through to the
+// Vite/static catch-all and return the HTML index page (1719 bytes) instead
+// of a meaningful JSON error. This is critical for the CLI and any client
+// that expects JSON.
+apiRouter.use((req: any, res: any, next: any) => {
+if (res.headersSent) return next();
+// If no route matched above, return a clean JSON 404 instead of letting
+// the request reach the static-file middleware.
+return res.status(404).json({
+  error: 'Not Found',
+  route: req.originalUrl || req.url,
+  method: req.method,
+  requestId: req.requestId,
+  hint: 'Check the API path and HTTP method. See backend/api/routes.ts for the full list of registered routes.'
+});
+});

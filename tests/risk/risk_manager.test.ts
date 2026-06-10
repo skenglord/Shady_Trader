@@ -17,10 +17,10 @@ describe('RiskManager branch coverage', () => {
     const manager = new RiskManager();
     const validSignal = { confidence: 95 };
 
-    assert.strictEqual(manager.validateTrade({ confidence: 50 }, RiskMode.CONSERVATIVE, 0, 'strong_bull'), false);
-    assert.strictEqual(manager.validateTrade(validSignal, RiskMode.ULTRA_CONSERVATIVE, 1, 'strong_bull'), false);
+    assert.strictEqual(manager.validateTrade({ confidence: 50 }, RiskMode.CONSERVATIVE, 0, 'strongbull'), false);
+    assert.strictEqual(manager.validateTrade(validSignal, RiskMode.ULTRA_CONSERVATIVE, 1, 'strongbull'), false);
     assert.strictEqual(manager.validateTrade(validSignal, RiskMode.ULTRA_CONSERVATIVE, 0, 'bear'), false);
-    assert.strictEqual(manager.validateTrade(validSignal, RiskMode.ULTRA_CONSERVATIVE, 0, 'strong_bull'), true);
+    assert.strictEqual(manager.validateTrade(validSignal, RiskMode.ULTRA_CONSERVATIVE, 0, 'strongbull'), true);
   });
 
   test('checkCircuitBreakers reports drawdown, daily loss, volatility, and consecutive-loss extremes', () => {

@@ -62,6 +62,23 @@ jobs:
     - name: Run complexity check
       run: npm run quality:complexity
 
+    - name: Run Freqtrade validation gate
+      run: |
+        echo "Checking Freqtrade integration state..."
+        # Verify the backtest service compiles
+        npx tsx -e "
+          import('./backend/backtest/service.js').then(m => {
+            console.log('backtest/service.ts: OK');
+          }).catch(e => { console.error('FAIL:', e.message); process.exit(1); });
+        "
+        # Verify the validate worker compiles
+        npx tsx -e "
+          import('./backend/freqtrade/workers/validateWorker.js').then(m => {
+            console.log('validateWorker.ts: OK');
+          }).catch(e => { console.error('FAIL:', e.message); process.exit(1); });
+        "
+        echo "Freqtrade validation gate passed."
+
   build:
     needs: test
     runs-on: ubuntu-latest

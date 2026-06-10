@@ -1,5 +1,6 @@
 import { runQuery } from '../database.js';
 import { randomUUID } from 'crypto';
+import { logger } from '../logging/logger.js';
 
 export interface Balances {
   mainBalance: number;
@@ -38,8 +39,8 @@ export class BalanceManager {
         afterBalances.mainBalance, afterBalances.botBalance, afterBalances.activeTradeBalance,
         changeAmount, reason, metadataJson
       ]);
-    } catch (error) {
-      console.error('Failed to log audit balance:', error);
+    } catch (error: any) {
+      logger.error('Failed to log audit balance', { error: String(error), service: 'balance-manager' });
       // Don't throw - audit logging shouldn't break balance operations
     }
   }

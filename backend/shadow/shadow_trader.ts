@@ -2,6 +2,7 @@ import { RiskMode, RiskManager } from '../risk/manager.js';
 import { runQuery } from '../database.js';
 import { randomUUID } from 'crypto';
 import { CostEstimator, OrderRequest, SlippageCircuitBreaker } from '../slippage/index.js';
+import { computeFill } from '../slippage/fillCalculator.js';
 import { Decimal } from 'decimal.js';
 
 export class ShadowTrader {
@@ -133,6 +134,7 @@ export class ShadowTrader {
       if (positionSize <= 0) continue;
 
       // Cost estimation and circuit breaker check for active mode
+      let estSlippageFrac = parseFloat(process.env.SLIPPAGE_BASE_FRAC ?? '0.0005');
       if (mode === activeMode && this.costEstimator && this.slippageCircuitBreaker) {
         const orderRequest: OrderRequest = {
           symbol: signal.symbol,
@@ -143,6 +145,7 @@ export class ShadowTrader {
         };
 
         const costEstimate = await this.costEstimator.estimateTotalCost(orderRequest);
+        estSlippageFrac = costEstimate.breakdown.slippage.totalSlippage.toNumber();
         const marketState = {
           timestamp: Date.now(),
           midPrice: new Decimal(signal.entryPrice),
@@ -194,13 +197,20 @@ export class ShadowTrader {
         ? signal.entryPrice * (1 + tpPct)
         : signal.entryPrice * (1 - tpPct);
 
+      // Block 7: realistic slippage-adjusted fill (fractions only)
+      const fill = computeFill(signal.side as 'buy' | 'sell', currentPrice, tpPct, estSlippageFrac);
+      if (fill.skipped) {
+        console.log(`Shadow Trader [${mode}]: Trade skipped - ${fill.skipReason}`);
+        continue;
+      }
+
       // Execute shadow trade
       const trade = {
         id: `shadow-${mode}-${Date.now()}`,
         symbol: signal.symbol,
         side: signal.side,
         amount: positionSize,
-        price: currentPrice,
+        price: fill.fillPrice,
         status: 'open',
         timestamp: Date.now(),
         risk_mode: mode,
@@ -210,6 +220,8 @@ export class ShadowTrader {
         leverage: config.leverage || 1,
         candlesHeld: 0,
         isRunner: false,
+        entrySlippageFrac: fill.slippageFrac,
+        totalFeeFrac: fill.feeFrac,
         exchangeOrderId: null as string | null
       };
 
@@ -240,9 +252,9 @@ export class ShadowTrader {
 
        // Save to DB
        await runQuery(`
-         INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage, stop_loss, take_profit)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit]);
+         INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage, stop_loss, take_profit, entry_slippage_frac, total_fee_frac)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit, trade.entrySlippageFrac, trade.totalFeeFrac]);
 
        // Audit log: trade open
        await this.logAuditTrade(
@@ -547,20 +559,25 @@ export class ShadowTrader {
     const performance: any = {};
     for (const mode of Object.values(RiskMode)) {
       const portfolio = this.portfolios[mode];
-      
-      const stats = await runQuery(`
-        SELECT COUNT(*) as count, SUM(pnl) as totalPnl
+
+      const stats = await runQuery(
+        `SELECT COUNT(*) as count, COALESCE(SUM(pnl), 0) as totalPnl
         FROM shadow_trades
         WHERE risk_mode = ? AND status = 'closed'
-      `, [mode], 'all');
-      const stat = stats[0];
+      `,
+        [mode],
+        'all'
+      );
+      const stat = stats[0] || { count: 0, totalPnl: 0 };
 
-      const wins = await runQuery(`
-        SELECT COUNT(*) as count
+      const wins = await runQuery(
+        `SELECT COUNT(*) as count
         FROM shadow_trades
         WHERE risk_mode = ? AND status = 'closed' AND pnl > 0
-      `, [mode], 'all');
-      const winCount = wins[0].count;
+      `,
+        [mode],
+        'all'
+      );
 
       // Get history
       const closedTrades = await runQuery(`
@@ -581,6 +598,11 @@ export class ShadowTrader {
       // Add current point
       history.push({ time: Date.now(), balance: portfolio.balance });
 
+      // The `wins` query above (line ~573) computes the count of closed
+      // shadow trades with pnl > 0 for this risk mode. Bind its result here
+      // so the winRate calculation below can use it. Defensive defaults: if
+      // `wins` somehow came back empty (e.g. partial DB failure), default to 0.
+      const winCount = wins[0]?.count ?? 0;
       const winRate = stat.count > 0 ? winCount / stat.count : 0;
       const totalPnl = stat.totalPnl || 0;
       const roi = ((portfolio.balance - portfolio.initialBalance) / portfolio.initialBalance) * 100;

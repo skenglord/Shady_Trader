@@ -1,4 +1,30 @@
 import { RegimeType } from '../regime/detector.js';
+import { logger } from '../logging/logger.js';
+
+// ── v6.0 Block 5: confidence thresholds (recalibrated after StochRSI removal) ──
+export const CONF_THRESHOLD = 72;       // was 75
+export const CONF_THRESHOLD_HIGH = 82;  // was 85
+
+// ── v6.0 Block 5: universal divergence hard-block ──
+// Called at the top of every strategy scoring path before any other logic.
+export function checkDivergenceBlock(
+  data: any,
+  side: 'buy' | 'sell'
+): { blocked: boolean; reason: string } {
+  if (side === 'buy') {
+    if (data.wt_bear_div)  return { blocked: true,
+      reason: 'WT bearish divergence — price new high, momentum not confirming' };
+    if (data.mfi_bear_div) return { blocked: true,
+      reason: 'MFI bearish divergence — distribution detected at highs' };
+  }
+  if (side === 'sell') {
+    if (data.wt_bull_div)  return { blocked: true,
+      reason: 'WT bullish divergence — price new low, momentum recovering' };
+    if (data.mfi_bull_div) return { blocked: true,
+      reason: 'MFI bullish divergence — accumulation at lows' };
+  }
+  return { blocked: false, reason: '' };
+}
 
 export interface Signal {
   symbol: string;
@@ -138,6 +164,19 @@ export class SignalGenerator {
   async generateSignal(df: any[], regime: RegimeType, symbol: string, useAI: boolean = false, strategy: string = 'regime', riskMode: string = 'moderate'): Promise<Signal | null> {
     if (df.length < 20) return null;
 
+    // ── v6.0 Block 5: compute regime-relative RSI once per cycle, attach flags to last row ──
+    try {
+      const { computeRRRsi } = await import('../indicators/rrRsi.js');
+      const { normalizeRegime } = await import('../types/regime.js');
+      const rsiHist = df.map((r: any) => r.rsi_14).filter((v: any) => typeof v === 'number');
+      const rr = computeRRRsi(rsiHist, normalizeRegime(String(regime)));
+      const last = df[df.length - 1];
+      last.rr_oversold = rr.flags.oversold;
+      last.rr_overbought = rr.flags.overbought;
+      last.rr_bullish_momentum = rr.flags.bullishMomentum;
+      last.rr_bearish_momentum = rr.flags.bearishMomentum;
+    } catch { /* fail open — strategies fall back to legacy RSI checks */ }
+
     let signal: Signal | null = null;
     
     if (strategy === 'shotgun') {
@@ -166,6 +205,18 @@ export class SignalGenerator {
       }
     }
 
+    // ── v6.0 Block 5: universal divergence hard-block ──
+    if (signal) {
+      const divBlock = checkDivergenceBlock(df[df.length - 1], signal.side);
+      if (divBlock.blocked) {
+        logger.info('signal_blocked', {
+          service: 'SignalGenerator',
+          symbol, regime, side: signal.side, reason: divBlock.reason, ts: Date.now()
+        });
+        return null;
+      }
+    }
+
     if (signal && useAI && SignalGenerator.aiEnabled && !SignalGenerator.aiHealth.circuitBreakerTripped) {
       try {
         const mlPrediction = await (async () => {
@@ -173,8 +224,8 @@ export class SignalGenerator {
           const { getCachedAdjustment } = await import('../ml/gemma_adjuster.js');
           const { scoreEnsemble } = await import('../ml/ensemble_scorer.js');
 
-          const regimeName = regime === RegimeType.STRONG_BULL ? 'strong_bull'
-            : regime === RegimeType.WEAK_BULL ? 'weak_bull'
+          const regimeName = regime === RegimeType.STRONG_BULL ? 'strongbull'
+            : regime === RegimeType.WEAK_BULL ? 'weakbull'
             : regime === RegimeType.BEAR ? 'bear'
             : regime === RegimeType.SIDEWAYS ? 'sideways'
             : 'uncertain';
@@ -274,13 +325,13 @@ export class SignalGenerator {
             if (rsiDist > 0.5) indicators.push('RSI Oversold');
           }
 
-          // StochRSI oversold proximity: 0-20 pts
-          if (data.stoch_rsi_k < 50) {
-            const stochDist = Math.max(0, Math.min(1, (50 - data.stoch_rsi_k) / 50));
-            const stochScore = Math.round(stochDist * 20);
-            totalScore += stochScore;
-            distances.stoch_oversold = stochDist;
-            if (stochDist > 0.5) indicators.push('Stoch Oversold');
+          // WaveTrend oversold proximity: 0-20 pts (replaces StochRSI)
+          if (data.wave_trend_1 != null && data.wave_trend_1 < 0) {
+            const wtDist = Math.max(0, Math.min(1, (-data.wave_trend_1) / 60));
+            const wtScore = Math.round(wtDist * 20);
+            totalScore += wtScore;
+            distances.wt_oversold = wtDist;
+            if (wtDist > 0.5 || data.wt_oversold) indicators.push('WaveTrend Oversold');
           }
         }
         else if (proximityToUpper > 0.3 || data.close >= data.bb_upper * 0.995) {
@@ -300,13 +351,13 @@ export class SignalGenerator {
             if (rsiDist > 0.5) indicators.push('RSI Overbought');
           }
 
-          // StochRSI overbought proximity
-          if (data.stoch_rsi_k > 50) {
-            const stochDist = Math.max(0, Math.min(1, (data.stoch_rsi_k - 50) / 50));
-            const stochScore = Math.round(stochDist * 20);
-            totalScore += stochScore;
-            distances.stoch_overbought = stochDist;
-            if (stochDist > 0.5) indicators.push('Stoch Overbought');
+          // WaveTrend overbought proximity (replaces StochRSI)
+          if (data.wave_trend_1 != null && data.wave_trend_1 > 0) {
+            const wtDist = Math.max(0, Math.min(1, data.wave_trend_1 / 60));
+            const wtScore = Math.round(wtDist * 20);
+            totalScore += wtScore;
+            distances.wt_overbought = wtDist;
+            if (wtDist > 0.5 || data.wt_overbought) indicators.push('WaveTrend Overbought');
           }
         } else {
           // Near midpoint — score based on RSI/stoch direction sentiment
@@ -318,10 +369,10 @@ export class SignalGenerator {
         }
       }
 
-      // Volume penalty (like the real strategy)
-      if (data.volume_ratio > 1.5) {
+      // Volume pressure veto — VPI strongly opposed to the buy side (Block 5)
+      if (side === 'buy' && data.vpi <= -0.60) {
         totalScore = Math.round(totalScore * 0.5);
-        indicators.push('High Volume');
+        indicators.push('VPI Selling Pressure');
       }
     }
 
@@ -344,28 +395,30 @@ export class SignalGenerator {
       return null; // Trend must be intact
     }
 
-    // RSI Momentum (20%)
-    if (data.rsi_14 > 50 && data.rsi_14 < 75) {
+    // RSI Momentum (20%) — RR-RSI flags (Block 5), legacy fallback
+    const rsiBull = data.rr_bullish_momentum ?? (data.rsi_14 > 50 && data.rsi_14 < 75);
+    const rsiOB = data.rr_overbought ?? (data.rsi_14 >= 75);
+    if (rsiBull) {
       score += 20;
       indicators.push('RSI Momentum');
-    } else if (data.rsi_14 >= 75) {
+    } else if (rsiOB) {
       score += 5;
       indicators.push('RSI Overbought');
     }
 
-    // Volume Confirmation (20%)
-    if (data.volume_ratio > 1.2) {
+    // Volume Confirmation (20%) — VPI replaces raw volume ratio (Block 5)
+    if (data.vpi >= 0.60) {
       score += 20;
-      indicators.push('Volume Surge');
+      indicators.push('VPI Strong Buying');
     }
 
-    // Timing: Stoch RSI (15%)
-    if (data.stoch_rsi_k < 30) {
+    // Timing: WaveTrend (15%) — replaces StochRSI
+    if (data.wt_oversold || data.wt_cross_up) {
       score += 15;
-      indicators.push('StochRSI Oversold');
-    } else if (data.stoch_rsi_k < 50) {
+      indicators.push('WaveTrend Oversold/CrossUp');
+    } else if (data.wave_trend_1 != null && data.wave_trend_1 < 0) {
       score += 5;
-      indicators.push('StochRSI Moderate');
+      indicators.push('WaveTrend Below Zero');
     }
 
     if (score >= 60) {
@@ -392,26 +445,26 @@ export class SignalGenerator {
     // Strategy A: Mean reversion (60% weight)
     if (data.close <= data.bb_lower * 1.01) {
       if (data.close > data.vwap * 0.995) {
-        if (data.rsi_14 < 40) {
+        if (data.rr_oversold ?? (data.rsi_14 < 40)) {
           score += 60;
-          indicators.push('Mean Reversion (BB/VWAP/RSI)');
+          indicators.push('Mean Reversion (BB/VWAP/RR-RSI)');
         }
       }
     }
     // Strategy B: Momentum continuation (40% weight)
     else if (data.close > data.ema_9 && data.ema_9 > data.ema_21) {
-      if (data.rsi_14 > 50 && data.rsi_14 < 70) {
-        if (data.volume_ratio > 1.3) {
+      if (data.rr_bullish_momentum ?? (data.rsi_14 > 50 && data.rsi_14 < 70)) {
+        if (data.vpi >= 0.60) {
           score += 40;
           indicators.push('Momentum Breakout');
         }
       }
     }
 
-    // Volume confirmation boost
-    if (data.close > data.open && data.volume_ratio > 1.1) {
+    // Volume confirmation boost — VPI (Block 5)
+    if (data.close > data.open && data.vpi >= 0.25) {
       score += 15;
-      indicators.push('Bullish Volume');
+      indicators.push('Bullish VPI');
     }
 
     // Penalty: Wrong side of VWAP
@@ -451,12 +504,12 @@ export class SignalGenerator {
     // Resistance rejection
     if (data.high >= data.bb_upper * 0.995) {
       if (data.close < data.open) {
-        if (data.rsi_14 > 60) {
+        if (data.rr_overbought ?? (data.rsi_14 > 60)) {
           score += 50;
           indicators.push('Resistance Rejection');
         }
       }
-    } else if (data.rsi_14 > 65 && data.rsi_14 < 75) {
+    } else if (data.rr_overbought ?? (data.rsi_14 > 65 && data.rsi_14 < 75)) {
       score += 35;
       indicators.push('Failed Rally');
     }
@@ -517,12 +570,12 @@ export class SignalGenerator {
           if (rsiDist > 0.5) indicators.push('RSI Oversold');
         }
 
-        // StochRSI oversold: 0-20 pts (proportional)
-        if (data.stoch_rsi_k < 50) {
-          const stochDist = Math.max(0, Math.min(1, (50 - data.stoch_rsi_k) / 50));
-          const stochScore = Math.round(stochDist * 20);
-          score += stochScore;
-          if (stochDist > 0.5) indicators.push('Stoch Oversold');
+        // WaveTrend oversold: 0-20 pts (proportional) — replaces StochRSI
+        if (data.wave_trend_1 != null && data.wave_trend_1 < 0) {
+          const wtDist = Math.max(0, Math.min(1, (-data.wave_trend_1) / 60));
+          const wtScore = Math.round(wtDist * 20);
+          score += wtScore;
+          if (wtDist > 0.5 || data.wt_oversold) indicators.push('WaveTrend Oversold');
         }
       }
       else if (proximityToUpper > 0.3) {
@@ -542,12 +595,12 @@ export class SignalGenerator {
           if (rsiDist > 0.5) indicators.push('RSI Overbought');
         }
 
-        // StochRSI overbought: 0-20 pts (proportional)
-        if (data.stoch_rsi_k > 50) {
-          const stochDist = Math.max(0, Math.min(1, (data.stoch_rsi_k - 50) / 50));
-          const stochScore = Math.round(stochDist * 20);
-          score += stochScore;
-          if (stochDist > 0.5) indicators.push('Stoch Overbought');
+        // WaveTrend overbought: 0-20 pts (proportional) — replaces StochRSI
+        if (data.wave_trend_1 != null && data.wave_trend_1 > 0) {
+          const wtDist = Math.max(0, Math.min(1, data.wave_trend_1 / 60));
+          const wtScore = Math.round(wtDist * 20);
+          score += wtScore;
+          if (wtDist > 0.5 || data.wt_overbought) indicators.push('WaveTrend Overbought');
         }
       } else {
         // Near midpoint — score based on RSI direction
@@ -558,10 +611,10 @@ export class SignalGenerator {
       }
     }
 
-    // Volume filter: penalize if volume spiking
-    if (data.volume_ratio > 1.5) {
+    // Volume pressure veto — VPI strongly opposed to trade side (Block 5)
+    if ((side === 'buy' && data.vpi <= -0.60) || (side === 'sell' && data.vpi >= 0.60)) {
       score = Math.round(score * 0.5);
-      indicators.push('High Volume');
+      indicators.push('VPI Opposing Pressure');
     }
 
     // De-risk when direction is uncertain

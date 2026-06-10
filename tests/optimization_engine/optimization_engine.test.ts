@@ -1,6 +1,6 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert';
-import { OptimizationEngine } from '../../backend/strategy/optimization_engine.js';
+import { OptimizationEngine, type AiClientFactory } from '../../backend/strategy/optimization_engine.js';
 import { RiskMode, DEFAULT_RISK_CONFIGS } from '../../backend/risk/manager.js';
 
 function cloneConfigs() {
@@ -48,7 +48,7 @@ describe.skip('OptimizationEngine', () => {
       }
     };
 
-    const aiClientFactory = () => ({
+    const aiClientFactory = (() => ({
       models: {
         generateContent: async () => ({
           text: JSON.stringify({
@@ -56,14 +56,14 @@ describe.skip('OptimizationEngine', () => {
           })
         })
       }
-    });
+    })) as unknown as AiClientFactory;
 
     const engine = new OptimizationEngine(riskManager, {
       queryFn: async () => [],
       aiClientFactory
     });
 
-    await engine.optimize('strong_bull');
+    await engine.optimize('strongbull');
     assert.ok(savedConfigs);
     assert.ok(savedConfigs[RiskMode.MODERATE].stopLoss > riskManager.RISK_CONFIGS[RiskMode.MODERATE].stopLoss);
     assert.strictEqual((engine as any).isOptimizing, false);
@@ -84,14 +84,14 @@ describe.skip('OptimizationEngine', () => {
 
     const engine = new OptimizationEngine(riskManager, {
       queryFn: async () => [],
-      aiClientFactory: () => ({
+      aiClientFactory: (() => ({
         models: {
           generateContent: async () => ({ text: '{bad_json' })
         }
-      })
+      })) as unknown as AiClientFactory
     });
 
-    await engine.optimize('weak_bull');
+    await engine.optimize('weakbull');
     assert.strictEqual(saveCalls, 0);
     assert.strictEqual((engine as any).isOptimizing, false);
     process.env.GEMINI_API_KEY = originalKey;

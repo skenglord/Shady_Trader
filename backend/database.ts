@@ -277,6 +277,19 @@ export function setMockRunQuery(fn: typeof mockRunQuery) {
   mockRunQuery = fn;
 }
 
+/**
+ * Reset the mocked runQuery to the real implementation.
+ *
+ * Tests that use `setMockRunQuery()` MUST call `clearMockRunQuery()` in their
+ * `afterEach` (or use the `serialTest()` helper from tests/test-helpers.ts)
+ * to prevent the global mock from leaking into parallel-running test files.
+ * Without this cleanup, any other test file that runs concurrently will see
+ * the mock and fail intermittently with "no such table" or unexpected rows.
+ */
+export function clearMockRunQuery(): void {
+  mockRunQuery = null;
+}
+
 export async function runQuery(sql: string, params: any[] = [], type: 'run' | 'all' = 'run'): Promise<any> {
   if (mockRunQuery) return mockRunQuery(sql, params, type);
 

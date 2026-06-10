@@ -1,7 +1,7 @@
 # AI Shadow Trading System Documentation
 
 ## Overview
-This system is an AI-augmented algorithmic trading platform that supports multiple risk modes running in parallel (Shadow Trading). It uses Gemini AI for regime detection, sentiment analysis, and signal confirmation.
+This system is an AI-augmented algorithmic trading platform that supports multiple risk modes running in parallel (Shadow Trading). It uses a local Ollama Gemma adapter for non-blocking signal confirmation, with rule-based fallback when the AI path is disabled or unavailable.
 
 ## API Integrations
 
@@ -82,20 +82,21 @@ To configure these APIs and strategies:
 
 ### API Security (Backend)
 - Privileged `/api` endpoints now support **role-based token protection**:
-  - `API_ADMIN_TOKEN` for admin routes (bot lifecycle, settings/risk-config mutation, backtest, optimize, kill, CSV import)
-  - `API_TRADER_TOKEN` for trader routes (timeframe, manual trade, position controls, allocation/withdrawal, active mode, manual regime)
+  - `API_ADMIN_TOKEN` for admin routes (bot lifecycle, settings/risk-config mutation, backtest, optimize, kill, CSV import, ML status/accuracy/predictions, Freqtrade download/backtest/validate/ingest)
+  - `API_TRADER_TOKEN` for trader routes (timeframe, market refresh/data, manual trade, position controls, allocation/withdrawal, active mode, manual regime, signals, trades, slippage, diagnostics, Freqtrade info/pairs/jobs)
+- Public probes: `/api/health/live`, `/api/health/ready`, `/api/health/quick`, and `/api/status`.
 - Backward compatibility: `API_AUTH_TOKEN` is still accepted as an admin token fallback.
 - Send either:
-  - `Authorization: Bearer <TOKEN>`, or
+  - `Authorization: Bearer <TOKEN>` or
   - `x-api-token: <TOKEN>`
 - In `production`, privileged routes fail closed (`503`) when no auth token is configured.
 - Mutating endpoints now enforce request validation (type/shape/range checks) before execution.
 - Validation schemas are implemented with **Zod** for consistent runtime type enforcement.
 
 ### Diagnostics
-- `GET /api/diagnostics/startup` (admin): startup configuration status (non-secret), exchange readiness, mode/timeframe context.
-- `GET /api/diagnostics/health` (admin): runtime heartbeat including uptime, request-level API telemetry (request count/error rate/latency + slow routes), market-data cache status, and fetch/circuit metrics.
-- `GET /api/diagnostics/metrics` (admin): Prometheus-style plaintext metrics for API and market-data counters/latency gauges.
+- `GET /api/diagnostics/startup`: public startup configuration status (non-secret), exchange readiness, mode/timeframe context.
+- `GET /api/diagnostics/health`: public runtime heartbeat including uptime, request-level API telemetry, market-data cache status, Redis status, and ML health.
+- `GET /api/diagnostics/metrics`: public Prometheus-style plaintext metrics for API, market-data, and Freqtrade counters/latencies.
 - Startup diagnostics now also include `exchangeCapabilities` (provider support flags for live trading/account/public data).
 
 ### Structured Logging & Correlation IDs
@@ -105,13 +106,13 @@ To configure these APIs and strategies:
 
 ### Exchange & Secrets Configuration
 - Configure exchange provider through settings and/or environment:
-  - `EXCHANGE_NAME` (default: `coinmarketcap`)
+  - `EXCHANGE_NAME` (default: `coingecko`)
   - `EXCHANGE_API_KEY`
   - `EXCHANGE_API_SECRET`
   - `EXCHANGE_API_PASSWORD`
   - `EXCHANGE_USE_TESTNET` (`true`/`false`)
-- Public market-data polling can run without authenticated credentials for Binance/Kraken.
-- Authenticated trade/account actions require `EXCHANGE_API_KEY` and `EXCHANGE_API_SECRET` for Binance/Kraken adapters.
+- Public market-data polling can run without authenticated credentials for CoinGecko/Binance/Kraken-style public data.
+- Authenticated trade/account actions require provider-specific API credentials for Binance/Kraken/OKX/Coinbase adapters.
 
 
 ## Cross-Platform Quick Launcher
@@ -137,15 +138,17 @@ Notes:
 - Mobile targets automatically bind dev host as `0.0.0.0` for LAN access.
 
 ## Testing
-Run `npm run test` to execute the full backend test suite (`tests/*.test.ts`), including system, engine, e2e, smoke, and trade-flow checks.
+Run `npm test` to execute the full backend test suite (`tests/**/*.test.ts`). Current audit status: full suite passes in serial spec mode; targeted lifecycle suite also passes 33/33.
 
 ## Quality Gates
 - `npm run quality:coverage` — executes coverage and enforces baseline thresholds.
 - `npm run quality:complexity` — enforces cyclomatic complexity ceiling.
 - `npm run security:audit` — runs dependency vulnerability audit (`npm audit --omit=dev --audit-level=high`).
 - `npm run quality:ci` — runs lint + tests + coverage + complexity + audit (end-to-end local CI parity).
-- Current baseline coverage thresholds are intentionally incremental: **50% lines** and **65% branches** (ratcheted upward over time).
-- Current observed coverage in this environment after latest test expansion: approximately **61% lines** and **70% branches**.
+- `npm run lint` currently passes.
+- `npm run build` currently passes.
+- `npm run quality:ci` is not green until coverage, complexity, and audit gates are verified.
+- Current observed coverage in this environment: not verified during this audit.
 
 ## API Gateway & Load Balancing (Phase 1.4)
 

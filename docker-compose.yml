@@ -76,9 +76,35 @@ services:
       - /app/node_modules
     command: npm run dev
 
+  freqtrade:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NODE_ENV: development
+      FREQTRADE_ENABLED: 'true'
+      FREQTRADE_QUEUE_CONCURRENCY: '1'
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      BINANCE_API_KEY: ${BINANCE_API_KEY}
+      BINANCE_SECRET_KEY: ${BINANCE_SECRET_KEY}
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    networks:
+      - shady-trader
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - freqtrade_data:/app/backend/freqtrade/user_data/data
+    command: npm run dev
+
 volumes:
   postgres_data:
   redis_data:
+  freqtrade_data:
 
 networks:
   shady-trader:
