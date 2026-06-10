@@ -480,7 +480,7 @@ The repository contains a large Adaptive Trading System codebase with comprehens
 - **Build**: ✅ `npm run build` passes; Vite emits only a large-chunk warning.
 - **Targeted Test Suite**: `tests/deep-deterministic/deep_deterministic_main.test.ts` — 33/33 pass, 0 fail, 0 skipped.
 - **Full Test Suite**: `npm test -- --test-reporter=spec --test-concurrency=1 --test-timeout=120000` — 397 tests, 396 pass, 1 skipped.
-- **Test Coverage**: ❌ `npm run quality:coverage` currently fails the gate: lines=44.14% (min 50%), branches=73.24% (min 65%).
+- **Test Coverage**: ❌ `npm run quality:coverage` currently fails the gate: lines=44.14% (min 50%), branches=73.24% (min 65%). See `documentation/production_readiness_todo.md` for the production-readiness remediation plan.
 - **Playwright Tests**: Historical reports exist, but no current Playwright pass count was verified in this audit.
 
 **Last Known Working Configuration:**

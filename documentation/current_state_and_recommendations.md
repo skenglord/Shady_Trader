@@ -37,7 +37,7 @@
 
 ## Recommended Next Steps
 
-1. **Fix remaining local CI parity work.** Prioritize coverage, complexity, and audit gates after the build/lint/test gates now pass.
+1. **Fix remaining local CI parity work.** Prioritize coverage, complexity, and audit gates after the build/lint/test gates now pass. See `documentation/production_readiness_todo.md` for the ordered remediation checklist.
 2. **Archive stale reports.** Keep historical reports, but label them as historical and remove claims that they represent current state.
 3. **Refresh active docs.** `AGENTS.md`, `CLAUDE.md`, `README.md`, and this file should remain the current-state source of truth; planning docs should be marked archived or superseded.
 4. **Add production smoke test.** Start server on `PORT=3000`, hit public probes (`/api/health/live`, `/api/health/quick`, `/api/status`), and verify no background timers leak on stop.
