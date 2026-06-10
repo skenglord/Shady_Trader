@@ -62,7 +62,7 @@ The system calculates indicators using a 50-candle warmup period:
 
 ### Entry
 1. **Weighted Signal Scoring**: Sums indicators based on regime weights. Minimum score required for entry.
-2. **AI Validation Layer**: (Optional/Toggleable) Gemini validates regime classification and signal context using news and shadow performance.
+2. **AI Validation Layer**: (Optional/Toggleable) Local Ollama Gemma validates regime classification and signal context using news and shadow performance, with rule-based fallback when disabled or unavailable.
 3. **Regime Enforcement**: Modes like Ultra-Conservative stay in cash during Bear/Sideways markets.
 4. **Dynamic Sizing**: Position size = `baseSize * confidenceMultiplier (0.7 to 1.2)`.
 

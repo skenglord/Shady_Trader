@@ -1,8 +1,8 @@
 # Freqtrade Upgrade Runbook
 
-**Scope**: Bumping the pinned Freqtrade version (`freqtrade[plotting]==2026.5.1` in `backend/freqtrade/requirements.txt`) to a newer release, and reconciling the TypeScript bridge, Zod schemas, and tests.
-
-**References**: `documentation/upgrades/freqtrade_integration_plan.md` §6 Phase 7 step 7.6.
+**Scope:** Bumping the pinned Freqtrade version (`freqtrade[plotting]==2026.5.1` in `backend/freqtrade/requirements.txt`) to a newer release, and reconciling the TypeScript bridge, Zod schemas, workers, REST API, CLI, and tests.
+**Current status:** Implementation is present. Build, lint, and tests now pass; coverage/complexity/audit gates are not verified.
+**References:** `documentation/upgrades/freqtrade_integration_plan.md`, `documentation/upgrades/freqtrade_gap_analysis.md`.
 
 ## 1. Pre-upgrade checklist
 
@@ -24,7 +24,7 @@ npm run freqtrade:upgrade
 # This runs: pip install --upgrade -r backend/freqtrade/requirements.txt
 
 # 3. Diff the API_VERSION constant
-diff <(grep -E "INTERFACE_VERSION|api_version" backend/freqtrade/venv/lib/python3.11/site-packages/freqtrade/strategy/interface.py) <(grep -E "INTERFACE_VERSION" backend/freqtrade/user_data/strategies/*.py)
+diff <(grep -E "INTERFACE_VERSION|api_version" backend/freqtrade/venv/lib/python3.13/site-packages/freqtrade/strategy/interface.py) <(grep -E "INTERFACE_VERSION" backend/freqtrade/user_data/strategies/*.py)
 # Any drift means we need to bump our strategy's INTERFACE_VERSION (currently 3).
 
 # 4. Diff our Zod schemas against the new BacktestResult JSON shape

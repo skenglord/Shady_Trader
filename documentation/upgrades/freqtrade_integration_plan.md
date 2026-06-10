@@ -2,7 +2,7 @@
 
 > **Project:** Shady_Trader (Adaptive Trading System)
 > **Scope:** Backtesting engine + historical market data acquisition
-> **Status:** Scaffolding present (`backend/freqtrade/`); integration not yet wired into `TradingEngine` / API / CLI
+> **Status:** Core Freqtrade implementation is present. Build, lint, and tests now pass; coverage/complexity/audit gates are not verified.
 > **Author analysis date:** 4 June 2026
 
 ---

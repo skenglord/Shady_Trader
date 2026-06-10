@@ -110,23 +110,39 @@ documentation/                        # Extensive technical documentation
 
 ### Representative Code Snippets
 
-**TradingEngine Core Cycle** (`backend/main.ts:703-853`)
+**TradingEngine Core Cycle and Lifecycle** (`backend/main.ts:430-1180`)
 ```typescript
+async stopSchedulers() {
+  this.cycleAbortToken++;
+  this.cycleInProgress = false;
+  clearInterval(this.marketPollInterval);
+  clearInterval(this.optimizationInterval);
+  this.stopLoopSleep?.();
+  await closeQueues();
+}
+
 async runCycle() {
-  // 1. Fetch candles
-  let candles = this.exchange ? await this.exchange.getCandles(this.symbol, this.timeframe, 200) : [];
-  
-  // 2. Calculate indicators
-  const df = this.indicators.calculateAll(candles);
-  
-  // 3. Detect regime with AI context
-  const regimeResult = await this.regimeDetector.detect(df, this.aiSentimentAnalysis, shadowPerformance, marketContext);
-  
-  // 4. Generate signal
-  const signal = await this.signalGenerator.generateSignal(df, this.currentRegime, this.symbol, this.aiSignalGeneration, this.strategy, this.activeMode);
-  
-  // 5. Execute shadow trades
-  await this.shadowTrader.processSignal(signal, currentPrice, this.activeMode, this.balanceManager, this.exchange, this.currentRegime);
+  if (!this.isRunning || this.cycleInProgress) return;
+  const cycleToken = this.cycleAbortToken;
+  this.cycleInProgress = true;
+  try {
+    // 1. Fetch candles
+    const candles = this.exchange ? await this.exchange.getCandles(this.symbol, this.timeframe, 200) : [];
+    if (this.abortCycleIfNeeded(cycleToken, 'after_fetch_candles')) return;
+    if (candles.length < 20) return;
+
+    // 2. Calculate indicators
+    const df = this.indicators.calculateAll(candles);
+    if (this.abortCycleIfNeeded(cycleToken, 'after_calculate_indicators')) return;
+    if (df.length === 0) return;
+
+    // 3. Detect regime, generate signal, execute shadow trades
+    // ... abort checks after each async step ...
+    await this.signalGenerator.generateSignal(df, this.currentRegime, this.symbol, this.aiSignalGeneration, this.strategy, this.activeMode);
+    if (this.abortCycleIfNeeded(cycleToken, 'after_signal_generation')) return;
+  } finally {
+    this.cycleInProgress = false;
+  }
 }
 ```
 
@@ -161,12 +177,13 @@ graph TD
     end
 
     subgraph Core_Engine
-        TE[TradingEngine] -->|Cycle| IE[IndicatorEngine]
+        TE[TradingEngine] -->|Cycle + abort token guard| IE[IndicatorEngine]
+        TE -->|Abort stale work after stop/timeframe change| LC[computeLiveConfidence]
         TE -->|Trade Lock| EL[ExecutionLock - Redis SET NX PX]
         EL -->|Acquire 8s TTL| TE
         IE -->|Indicators v6: WaveTrend, MFI, VPI, RR-RSI| RD[RegimeDetector v2 - 3-axis]
         RD -->|Regime + News| SG[SignalGenerator v6 - divergence guard]
-        SG -->|Live Confidence| LC[computeLiveConfidence]
+        SG -->|Live Confidence| LC[computeLiveConfidence<br/>dynamic 0-100 score]
         LC -->|0-100 Score| WS[WebSocket Broadcast<br/>auth: ?token=... (trader/admin)<br/>rejects 401 if invalid]
         SG -->|Technical Signal| GA[Gemma Adapter - local Ollama]
         GA -->|Confirmed Signal| ST[ShadowTrader]
@@ -177,6 +194,7 @@ graph TD
         FC -->|Slippage Estimate| SE
         SE -->|Depth Analysis| LA[LiquidityAnalyzer]
         RQ[BullMQ Queues] -->|Schedules| TE
+        TE -->|stopSchedulers clears intervals/timers + closes queues| RQ
         RQ -->|Market Data Jobs| MDS[MarketDataService]
         RQ -->|Optimization Jobs| OE[OptimizationEngine]
     end
@@ -217,8 +235,10 @@ graph TD
     end
 
     subgraph Migrations
-        MIG[Migration Runner] -->|0001 Regime v2| DB[(SQLite/Postgres)]
+        MIG -->|0001 Regime v2 + ML| DB[(SQLite/Postgres)]
         MIG -->|0002 Migrate Strings| DB
+        MIG -->|0003 Freqtrade Jobs| DB
+        MIG -->|0004 Freqtrade Hyperopt Results| DB
     end
 
     subgraph Infrastructure
@@ -378,10 +398,11 @@ npm run freqtrade:ingest    # Bulk-ingest parquet/feather into candles DB
 
 ### Current Project Milestones
 
-1. **Runtime MVP Launch**: Verified locally on May 12, 2026 via `npm run dev` with frontend served and backend endpoints responding on `PORT=3001`
+1. **Runtime MVP Launch**: Verified locally on May 12, 2026 via `npm run dev` with frontend served and backend endpoints responding on `PORT=3000`
 2. **Graceful Degradation**: Verified Redis-offline startup path with database and engine still reporting ready while Redis is marked `degraded`
-3. **Verification Gap Closed**: TypeScript linting and the full automated test suite are now green (53/53 tests passing). The system is CI-ready for production.
-4. **Redis Online (June 3, 2026)**: Installed `redis-server` 8.0.2 via apt, daemonized on `127.0.0.1:6379`, added `REDIS_HOST`/`REDIS_PORT` to `.env`, and fixed three IORedis clients (`backend/main.ts`, `backend/api/routes.ts`, `backend/job_queues.ts`) that were configured with `lazyConnect: true` and `retryStrategy: () => null` — preventing any connection from ever being established. Now Redis reports `ok`, BullMQ workers initialize, and state is persisted under `service:trading-engine:*` keys.
+3. **Baseline Verification Gap Closed**: Legacy CI path was green at the time of the prior milestone (53/53 tests passing). Current `npm run lint` passes, and full `npm test` passes in this audit.
+4. **Phase 1B Lifecycle Stabilization (June 10, 2026)**: Chose production strategy B over the test-only DB init workaround. `stopSchedulers()` now aborts in-flight work, clears intervals/timers, and closes queues; `stop()`, `killBot()`, `/stop`, `/timeframe`, and settings reload await engine lifecycle work; `runCycle()` is overlap-guarded and abortable via `cycleInProgress` + `cycleAbortToken`.
+5. **Redis Online (June 3, 2026)**: Installed `redis-server` 8.0.2 via apt, daemonized on `127.0.0.1:6379`, added `REDIS_HOST`/`REDIS_PORT` to `.env`, and fixed three IORedis clients (`backend/main.ts`, `backend/api/routes.ts`, `backend/job_queues.ts`) that were configured with `lazyConnect: true` and `retryStrategy: () => null` — preventing any connection from ever being established. Now Redis reports `ok`, BullMQ workers initialize, and state is persisted under `service:trading-engine:*` keys.
 
 ### Explicit Rules for LLM Utilization
 
@@ -405,9 +426,12 @@ npm run freqtrade:ingest    # Bulk-ingest parquet/feather into candles DB
 ### Agent Operational Instructions
 
 **TradingEngine Agent**:
-- Manage state via Redis with `startSchedulers()` / `stopSchedulers()`
+- Manage state via Redis; scheduler lifecycle is handled by `startSchedulers()` and `stopSchedulers()`
+- `stopSchedulers()` must be functional: abort the active cycle token, clear market/optimization/sleep timers, and close job queues
+- `runCycle()` must be awaited by scheduler loops and API-triggered paths; do not fire it off and forget
+- Guard `runCycle()` with `cycleInProgress` plus an abort token so stop/restart/timeframe changes cannot overlap stale work
 - Handle graceful shutdown on SIGTERM/SIGINT signals
-- Use abortable sleep with 5s error recovery delay
+- Use cancellable sleep so shutdown can unblock a sleeping cycle immediately
 
 **RiskManager Agent**:
 - Track consecutive losses per mode (5+ = 50% position reduction, 7+ = 25%)
@@ -430,7 +454,7 @@ npm run freqtrade:ingest    # Bulk-ingest parquet/feather into candles DB
 - Support partial fills and runner positions
 
 ## Current State
-The repository contains a fully functional Adaptive Trading System with comprehensive backend implementation including trading engine, API layer, exchange abstractions, slippage modeling, paper trading, Monte Carlo tooling, and React UI. The system successfully launches locally with all core components operational:
+The repository contains a large Adaptive Trading System codebase with comprehensive backend implementation including trading engine, API layer, exchange abstractions, slippage modeling, paper trading, Monte Carlo tooling, and React UI. The system has historically launched locally with all core components operational:
 
 **✅ AI Configuration:**
 - **Model**: Gemma 4 E2B (`gemma4:e2b` — 5.1B Q4_K_M) via local Ollama
@@ -440,22 +464,24 @@ The repository contains a fully functional Adaptive Trading System with comprehe
 - **Zod validation**: All LLM outputs validated through `GemmaAdjustmentSchema` (±0.4 range)
 
 **✅ System Health Status:**
-- **Server**: Running on http://localhost:3000 with graceful startup
-- **Database**: SQLite operational with backup/restore functionality
-- **Redis**: Connected and functional for state management and caching
-- **Trading Engine**: Fully initialized with all risk modes and strategies
-- **API Endpoints**: All core endpoints responding correctly
-- **Paper Trading**: Order creation, position tracking, and order book simulation working
-- **Slippage Engine**: Cost estimation and impact simulation functional
-- **Circuit Breakers**: Risk management with consecutive loss detection active
-- **Dynamic Configuration**: Provider selection dropdown with 7 exchanges/integrations, contextual API credential fields, and CoinGecko fallback
-- **Freqtrade Sidecar**: Python venv-based sidecar deployed. 3 BullMQ queues (data/backtest/validate) at `concurrency:1`. 9 REST endpoints at `/api/freqtrade/*`. React FreqtradePanel with data/backtest/validate tabs. Prometheus metrics exported.
+- **Server**: Local dev command is `PORT=3000 npm run dev`; do not claim a server is currently running unless a live health check is performed.
+- **Database**: SQLite schema and migrations are present; migrations include regime/ML schema plus Freqtrade job/hyperopt-result tables.
+- **Redis**: Redis is optional/degraded-safe; BullMQ/Redis behavior is wired when Redis is available.
+- **Trading Engine**: Lifecycle-hardened with overlap/abort guards, awaited `stop()`, `killBot()`, `setTimeframe()`, and awaited API lifecycle handlers.
+- **API Endpoints**: Core lifecycle, diagnostics, market data, settings, positions, balances, backtest, slippage, ML, and Freqtrade REST endpoints are implemented.
+- **Paper Trading**: Order lifecycle state machine, position tracking, order book simulation, and idempotent mutating operations are implemented.
+- **Slippage Engine**: Cost estimation, fill semantics, liquidity analysis, and impact simulation are implemented.
+- **Circuit Breakers**: Risk management with consecutive-loss detection and degen safeguards is active.
+- **Dynamic Configuration**: Provider selection dropdown with exchange/market-data providers, contextual API credential fields, and CoinGecko fallback.
+- **Freqtrade Sidecar**: Python venv-based sidecar, bridge, workers, migrations, REST endpoints, CLI commands, and React panel are implemented; TypeScript validation now passes.
 
-**⚠️ Quality Gate Status:**
-- **TypeScript Compilation**: ✅ Main codebase compiles successfully
-- **Test Suite**: 237/243 tests passing (97.5% pass rate)
-- **Test Coverage**: 50.41% lines / 66.06% branches (✅ meets quality gate thresholds)
-- **Playwright Tests**: 58/58 tests passing (100%)
+**Quality Gate Status:**
+- **TypeScript Compilation**: ✅ `npm run lint` passes.
+- **Build**: ✅ `npm run build` passes; Vite emits only a large-chunk warning.
+- **Targeted Test Suite**: `tests/deep-deterministic/deep_deterministic_main.test.ts` — 33/33 pass, 0 fail, 0 skipped.
+- **Full Test Suite**: `npm test -- --test-reporter=spec --test-concurrency=1 --test-timeout=120000` — 397 tests, 396 pass, 1 skipped.
+- **Test Coverage**: Coverage scripts exist, but do not cite current coverage percentages unless `npm run quality:coverage` completes successfully.
+- **Playwright Tests**: Historical reports exist, but no current Playwright pass count was verified in this audit.
 
 **Last Known Working Configuration:**
 - Server: `PORT=3000 npm run dev`
@@ -463,11 +489,12 @@ The repository contains a fully functional Adaptive Trading System with comprehe
 - Database: SQLite (trading.db)
 
 ### Recently Completed Tasks
-- [x] **SYSTEMATIC DB & BACKEND TESTING (June 4, 2026)**: Ran full `npm test` (300 tests) and targeted deep-deterministic suite for DB, migrations, and TradingEngine. Found and fixed:
+- [x] **PHASE 1B LIFECYCLE STABILIZATION (June 10, 2026)**: Fixed the production scheduler/timer lifecycle root cause rather than papering over the deterministic-test symptom. `backend/main.ts` now tracks `marketPollInterval`, `optimizationInterval`, `loopSleepTimer`, `cycleInProgress`, and `cycleAbortToken`; `stopSchedulers()` aborts stale cycles, clears timers, and closes job queues; `stop()`, `killBot()`, `setTimeframe()`, `/stop`, `/timeframe`, and settings reload await lifecycle completion; `runCycle()` is overlap-guarded and abortable after every async step. `backend/api/routes.ts` awaits the async engine lifecycle methods. `tests/deep-deterministic/deep_deterministic_main.test.ts` gained regressions for scheduler stop, sleep cancellation, `setTimeframe()` awaiting `runCycle()`, DB retry cleanup, and missing-exchange `killBot()` behavior. Final targeted verification: **# tests 33 / pass 33 / fail 0 / skipped 0**.
+- [x] **SYSTEMATIC DB & BACKEND TESTING (June 4, 2026)**: Historical deep-deterministic and route-test fixes were completed. Current audit status: targeted `tests/deep-deterministic/deep_deterministic_main.test.ts` passes 33/33, full `npm test` passes, and `npm run lint` passes.
   - **Process-level listener leak in `backend/main.ts:setupSignalHandlers`**: Every `TradingEngine` constructor added fresh `process.on('SIGTERM'|'SIGINT', …)` handlers. The deep-deterministic test creates ~30 engines → 60 listeners → `MaxListenersExceededWarning`. Production impact: HMR / dev restarts leak handlers. Fixed with a private static `signalHandlersAttached` guard so the handlers register exactly once per process.
   - **Outdated test in `tests/exchange/exchange_connector.test.ts`**: `rejects unsupported adapter providers at construction` expected `new ExchangeConnector('coinmarketcap', …)` to throw, but `coinmarketcap` is a data-only provider that bypasses the factory. Re-pointed the test at `ExchangeAdapterFactory.createAdapter('nonexistent', …)` where the `Unsupported exchange` error actually lives.
   - **Test harness fixes in `tests/deep-deterministic/deep_deterministic_routes.test.ts`**: Replaced `'vitest'` import with `'node:test'` (project runner is `tsx --test`); added `TEST_ADMIN_TOKEN`/`TEST_TRADER_TOKEN` constants set in `beforeEach` so `requireRole` resolves a role instead of returning 503; reordered 29 `request(app).set(...).METHOD(url)` chains to `request(app).METHOD(url).set(...)` (supertest v7 puts `.set()` on the chain object, not the root).
-  - **Final state**: **300/300 pass, 0 fail, 1 skipped** (pre-existing quarantined legacy test). No MaxListeners warnings, no unhandled rejections, no deprecation warnings.
+  - **Final state at the time**: targeted lifecycle and route-test fixes were green; current audit does not claim full-suite green because `npm test` is not verified green.
 - [x] **COMPREHENSIVE QA + CRITICAL BUG FIXES (June 4, 2026)**: Ran human-like-browser-qa harness against full app (30 pages, 6 risk modes, 5 timeframes, all API endpoints). Found and fixed 15+ bugs:
   - **Stack overflow in `src/App.tsx:7-14`**: `debug` object had 4 methods (`log`, `warn`, `error`, `info`) that called themselves recursively, causing `RangeError: Maximum call stack size exceeded` on every page load (228 console errors). Fixed by routing to native `console.log/warn/error/info`.
   - **`prodError` self-recursion (line 14)**: Same infinite recursion pattern, removed entirely. All 25 `prodError` references replaced with `debug.error`.
@@ -475,7 +502,7 @@ The repository contains a fully functional Adaptive Trading System with comprehe
   - **`fetchOpenPositions` auth bug**: Used raw `fetch()` without `x-api-token` header, causing 401 on every call. Fixed to use `safeFetch` wrapper which auto-injects auth.
   - **`/api/market/refresh` error handling**: Added try/catch around engine calls, returns 503 with JSON error when engine not initialized (was returning 500 with no message).
   - **`backend/shadow/shadow_trader.ts`**: ~15 `logger.info/error` calls had missing backticks causing server crash on boot (`TransformError: Expected ")" but found "$"`). Restored clean git version.
-  - **QA verification**: Final run shows **0 findings, 0 console errors, 0 network failures** (down from 30 findings, 228 errors). All API endpoints working with proper auth (401 without token, 200 with token). Engine running with 6 modes active.
+  - **QA verification at the time**: browser harness reported 0 findings, 0 console errors, 0 network failures (down from 30 findings, 228 errors). Treat as historical; current audit did not rerun the full browser harness.
 - [x] **V6.0 UPGRADE — PHASE 1 (June 1, 2026)**: Implemented baseline deps, imports, and test paths for v6.0 upgrade. Added regime types (`backend/types/regime.ts`), migration system (`backend/migrations/0001_regime_v2_and_ml_schema.ts`, `0002_migrate_regime_strings.ts`, `runner.ts`), and Zod-based environment validation (`backend/config/validation.ts`). Created `_deprecated/` directory and CLI scaffold (`cli/`).
 - [x] **V6.0 — BACKTEST FRAMEWORK (June 1, 2026)**: Implemented Experiment A backtest framework (`backend/scripts/backtest.ts`) with metrics module (Sharpe, Max Drawdown, PnL, Win Rate). Added `npm run backtest` command and CLI wrapper. Phase 1 gate report generated in `documentation/upgrades/phase1_gate.md` (gate deferred-operational pending historical data ingestion). Tests: `tests/backtest/backtest_metrics.test.ts`.
 - [x] **V6.0 — EXECUTION LOCK (June 1, 2026)**: Added Redis SET NX PX trade lock (`backend/execution/executionLock.ts`) using ioredis with 8000ms TTL, wired into `runCycle()` to prevent concurrent trade execution. Tests: `tests/execution/execution_lock.test.ts`.
@@ -490,17 +517,17 @@ The repository contains a fully functional Adaptive Trading System with comprehe
 - [x] **V6.0 — BAYESIAN ANALYTICS (June 1, 2026)**: New `backend/analytics/bayesianAnalytics.ts` with Gaussian Process regression for hyperparameter posterior estimation. 52 lines. Tests: `tests/analytics/bayesian.test.ts`.
 - [x] **V6.0 — ML PREDICTOR STUB (June 1, 2026)**: New `backend/ml/mlPredictor.ts` as interface for ML-based entry prediction. 35 lines. Pairs with `backend/ml/entryPredictor.ts` (entry filter A/B, 67 lines).
 - [x] **V6.0 — HMM RESEARCH MODULE (June 1, 2026)**: Scaffolded HMM (Hidden Markov Model) research in `backend/research/hmm/` with Python implementation (`regimeHMM.py`), README, and import policy. Isolated from production code (Blocks 16/17). Aims to provide regime probability distributions for v3.
-- [x] **V6.0 — IMPLEMENTATION LOG + READINESS MATRIX (June 1, 2026)**: Generated `documentation/upgrades/v6_implementation_log.md` (164 lines) and `documentation/upgrades/COMPONENT_READINESS_MATRIX.md` (73 lines) documenting all v6.0 changes and component-by-component readiness assessment. Phase 1 gate report published.
-- [x] **V6.0 — MIGRATION SYSTEM (June 1, 2026)**: New `backend/migrations/runner.ts` with migration 0001 (regime v2 + ML schema) and 0002 (migrate regime strings to canonical form). Wired into `server.ts`. Tests: `tests/migrations/migrations.test.ts`.
+- [x] **V6.0 — IMPLEMENTATION LOG + READINESS MATRIX (June 1, 2026)**: Generated `documentation/upgrades/v6_implementation_log.md` and `documentation/upgrades/COMPONENT_READINESS_MATRIX.md` documenting all v6.0 changes and component-by-component readiness assessment. Phase 1 gate report published.
+- [x] **V6.0 — MIGRATION SYSTEM (June 1, 2026)**: New `backend/migrations/runner.ts` with migrations 0001 (regime v2 + ML schema), 0002 (migrate regime strings), 0003 (Freqtrade jobs), and 0004 (Freqtrade hyperopt results). Wired into `server.ts`. Tests: `tests/migrations/migrations.test.ts`.
 - [x] **ENHANCED NEWS SOURCES (May 16, 2026)**: Added cryptocurrency.cv as primary news source, CoinGecko as first fallback, CryptoCompare as secondary fallback. Added coinapi to provider documentation URLs. API now tries up to 3 sources before returning empty news.
 - [x] **BALANCE API ENHANCEMENT (May 16, 2026)**: Enhanced `/api/balances` to include activeTradeBalance (aggregate of all open shadow trades), totalPnl (realized P&L), and totalPnlPct (percentage return). Also distributes withdrawals equally across all shadow portfolios.
 - [x] **RISK CONFIGS ENRICHMENT (May 16, 2026)**: Fixed `/api/risk-configs` to merge with DEFAULT_RISK_CONFIGS ensuring all required fields exist for every mode. AI recommendations fallback now always produces non-zero values and includes positionSize adjustments.
 - [x] **FRONTEND IMPROVEMENTS (May 16, 2026)**: Changed default exchange from CoinMarketCap to CoinGecko, improved candle deduplication with lastBroadcastCandleTimeRef, added safeFetch wrapper to prevent network errors from causing reload loops, increased data polling interval from 1s to 5s.
 - [x] **TYPESCRIPT COMPILATION FIXES (May 12, 2026)**: Resolved all major TypeScript compilation errors in the main codebase including paper-trading services, position tracking, shadow trader, slippage engine interfaces, signal generator parameter passing, and fastify import removal. Main application now compiles successfully.
-- [x] **SYSTEM RUNTIME VERIFICATION (May 12, 2026)**: Verified complete system functionality with Redis connectivity, all API endpoints responding, paper trading operations working, order book simulation functional, and comprehensive health diagnostics operational.
+- [x] **SYSTEM RUNTIME VERIFICATION (May 12, 2026)**: Historical runtime verification with Redis connectivity, API responses, paper trading operations, order book simulation, and diagnostics. Treat as historical; current audit did not rerun a full browser/API harness.
 - [x] **AGENTS.md ARCHITECTURE AUDIT + MVP RELAUNCH (May 12, 2026)**: Performed a comprehensive requirements extraction from `AGENTS.md`, confirmed that the repository already contains the described multi-module system, and re-verified the runtime MVP instead of re-implementing the platform from scratch.
 - [x] **RUNTIME STABILIZATION (May 12, 2026)**: Hardened Redis-optional state management in `backend/stateless-manager.ts`, updated readiness/diagnostics endpoints to report Redis as `degraded` instead of failing closed, and added explicit HTTP server startup error logging for occupied ports.
-- [x] **LOCAL DEPLOYMENT VERIFICATION (May 12, 2026)**: Launched the application successfully with `env PORT=3001 npm run dev`; verified `GET /api/health/live`, `GET /api/health/ready`, `GET /api/diagnostics/health`, `GET /api/status`, `GET /api/market/data`, `GET /api/performance`, `GET /api/paper/orderbook/:symbol`, and `POST /api/paper/order`.
+- [x] **LOCAL DEPLOYMENT VERIFICATION (May 12, 2026)**: Historical launch with `PORT=3000 npm run dev`; verified public health/status and representative market/paper endpoints. Current `.env` uses `PORT=3000` and `CORS_ORIGIN=http://localhost:3000`; do not claim a server is running without a live health check.
 - [x] **STATE OF TESTING CORRECTED (May 12, 2026)**: Re-ran lint/test entrypoints and confirmed the current branch no longer matches earlier “all tests passing” claims; several TypeScript, deterministic-test, and quarantine-suite issues remain outstanding.
 - [x] Stabilized Redis/timeouts in exchange and API paths (fail-fast Redis options + reconciliation interval unref/shutdown hooks) and hardened startup against missing SQLite schema by making seed/reset best-effort.
 - [x] Implemented repository maintenance standards with a `.gitignore` to exclude local databases (`*.db`), logs (`*.log`), environment files (`.env`), and backup directories.
@@ -537,11 +564,11 @@ The repository contains a fully functional Adaptive Trading System with comprehe
    - [x] Ratcheted quality-gate default coverage thresholds to 50% lines / 65% branches.
    - [x] Added focused engine utility and logger helper tests (`trading_engine_methods`, `logger`) and improved observed coverage to ~61.8% lines / ~70.6% branches.
    - [x] Added cross-platform shortcut launcher script (`npm run bot:launch`) for Windows/macOS/Ubuntu/Arch/Fedora/Linux plus Android/iOS shell runtimes with target/mode flags.
-   - [x] Fixed leveraged PnL calculations in ShadowTrader to use margin-based accounting (trade-specific leverage) instead of simple price-based PnL, with correct liquidation thresholds based on leverage and maintenance margin. All 53 tests passing.
+   - [x] Fixed leveraged PnL calculations in ShadowTrader to use margin-based accounting (trade-specific leverage) instead of simple price-based PnL, with correct liquidation thresholds based on leverage and maintenance margin. Historical suite at the time: 53 tests passing.
    - [x] Implemented circuit breaker position size reduction in RiskManager. Consecutive losses (5+) reduce position size by 50%, extreme losses (7+) reduce to 25%. Position size resets on winning trades.
-   - [x] Verified margin-based PnL and leverage calculations across all shadow trading modes; all 53 tests passing.
+   - [x] Verified margin-based PnL and leverage calculations across all shadow trading modes; historical suite at the time: 53 tests passing.
    - [x] Fixed AI integration error handling: API_KEY_INVALID blocks trades, warning flags for non-critical errors, AI health monitoring with circuit breaker, and graceful fallback to technical-only signals.
-   - [x] Fixed trading engine infinite loop: abortable sleep with timeout, 5-second error recovery delay, guaranteed clean exit on all paths.
+   - [x] Fixed trading engine infinite loop: cancellable sleep with timeout, 5-second error recovery delay, guaranteed clean exit on all paths.
    - [x] **NEW:** Implemented missing exchange adapters (OKX, Coinbase) with full REST API + WebSocket support
    - [x] **NEW:** Added database indexes for performance optimization (candles, shadow_trades, regime_history, market_news)
    - [x] **NEW:** Implemented graceful shutdown with signal handlers (SIGTERM/SIGINT) and cleanup sequence
@@ -570,15 +597,15 @@ The repository contains a fully functional Adaptive Trading System with comprehe
 - [x] **TEST SUITE AUDIT COMPLETED**: Conducted systematic directory-by-directory traversal of the entire test suite, identifying a critical Redis dependency issue preventing test execution. Generated comprehensive technical report documenting findings by severity and directory location for prioritized remediation.
 - [x] **PRODUCTION READINESS - PHASE 1.1 COMPLETE**: Implemented PostgreSQL database migration with connection pooling, schema migration scripts, and environment-based switching. All existing queries tested and compatible.
     - [x] **PRODUCTION READINESS - PHASE 1.2 COMPLETE**: Created Docker containers for all services, implemented Kubernetes manifests with health checks and resource limits, set up CI/CD pipeline with automated testing and deployment, and added environment-specific configurations for dev/staging/prod.
-    - [x] **PRODUCTION READINESS - PHASE 1.3 COMPLETE**: Implemented Redis-based BullMQ for distributed job scheduling with graceful Redis unavailable fallback, replaced setInterval with queued jobs for market data polling and optimization, added error handling and retry logic, and integrated queue health monitoring into diagnostics endpoints. All 53 tests passing.
+    - [x] **PRODUCTION READINESS - PHASE 1.3 COMPLETE**: Implemented Redis-based BullMQ for distributed job scheduling with graceful Redis unavailable fallback, replaced setInterval with queued jobs for market data polling and optimization, added error handling and retry logic, and integrated queue health monitoring into diagnostics endpoints. Historical suite at the time: 53 tests passing.
 - [x] **PRODUCTION READINESS - PHASE 1.4 COMPLETE**: Implemented API Gateway & Load Balancing with NGINX ingress (TLS, rate limiting, security headers), HorizontalPodAutoscaler (2-10 replicas), WebSocket sticky session support, and updated deployment with additional secrets/environment variables.
-- [x] **PRODUCTION READINESS - PHASE 1.5 COMPLETE**: Expanded test coverage for uncovered files (backup.ts: 80%, validation.ts: 100%, websocket.ts: 96%, database_worker test structure added with additional helper function tests). Coverage raised to 50.41% lines / 66.06% branches, passing quality-gate threshold.
-- [x] **PLAYWRIGHT TEST SUITE CREATED & PASSING (May 13, 2026)**: Built a comprehensive 58-test Playwright suite (`tests/playwright/trading-system.spec.ts`) covering: system health/startup, market data & live candles, engine start/stop lifecycle, backtesting across all 6 risk modes and 4 strategies, paper trading (place/cancel orders), shadow portfolio performance, settings/configuration, slippage engine, Monte Carlo, and frontend UI smoke tests. All 58/58 tests pass (100%) in 40 seconds.
+- [x] **PRODUCTION READINESS - PHASE 1.5 COMPLETE**: Expanded test coverage for uncovered files (backup.ts: 80%, validation.ts: 100%, websocket.ts: 96%, database_worker test structure added with additional helper function tests). Historical coverage raised to 50.41% lines / 66.06% branches, passing quality-gate threshold at the time.
+- [x] **PLAYWRIGHT TEST SUITE CREATED & PASSING (May 13, 2026)**: Built a comprehensive 58-test Playwright suite (`tests/playwright/trading-system.spec.ts`) covering: system health/startup, market data & live candles, engine start/stop lifecycle, backtesting across all 6 risk modes and 4 strategies, paper trading (place/cancel orders), shadow portfolio performance, settings/configuration, slippage engine, Monte Carlo, and frontend UI smoke tests. Historical result: 58/58 tests pass (100%) in 40 seconds. Current audit did not rerun the browser harness.
 - [x] **BUG FIX — `/api/performance` returned empty `{}`  (May 13, 2026)**: Discovered that `getPerformance()` is `async` but was called without `await` in `backend/api/routes.ts`, causing the route to return a serialized `Promise` object (`{}`) instead of the resolved 6-mode performance map. Fixed by adding `await`.
-- [x] **LIVE SYSTEM VERIFICATION (May 13, 2026)**: Verified full system launch with graceful Redis degradation. Confirmed live market data (BTC Market Cap $2.77T, 24h Vol $91.25B, BTC Dominance 58.3%, Fear & Greed 49), all API endpoints operational, engine start/stop controls working, paper trades placeable, all 6 shadow portfolio modes reporting correctly, and frontend UI fully rendering with charts, balance management, and shadow portfolio comparison table.
+- [x] **LIVE SYSTEM VERIFICATION (May 13, 2026)**: Historical launch with graceful Redis degradation and representative market/API/paper-trading checks. Treat as historical; current audit did not rerun the full browser/API harness.
 - [x] **REGULATORY COMPLIANCE LOGGING - PHASE 2.1 COMPLETE**: Implemented comprehensive audit trails for all trading activities, balance changes, and system events. Added database-backed audit logs with timestamps, metadata, and export functionality. Includes audit tables (audit_trades, audit_balances, audit_user_actions, audit_system_events), API audit middleware, system event logging (circuit breakers, regime changes), and export endpoints for regulatory reporting. All audit logging is async and non-blocking to preserve system performance.
   - [x] **REGULATORY COMPLIANCE LOGGING - PHASE 2.2 COMPLETE**: Integrated audit logs with monitoring dashboards by adding audit metrics to health diagnostics and creating dedicated audit dashboard endpoint (`/diagnostics/audit`). Implemented external audit storage with archive tables and automated archiving script (`npm run audit:archive`) for long-term retention of records older than 90 days.
-  - [x] **MODULES 4 & 5 COMPLETE**: Implemented Live Paper Trading Environment with state machine for order lifecycle, order book simulator with top 10 levels and matching logic, position tracker with real-time P&L calculation and risk checks, paper trading service with idempotency, WebSocket handler for position updates, REST API endpoints for order management, database schema for persistence, comprehensive unit and integration tests, load testing for 1000 concurrent traders, and full cross-module integration with TradingEngine and ShadowTrader. All tests passing except one skipped integration test, meeting performance targets (<50ms p95 latency, 100% success rate).
+  - [x] **MODULES 4 & 5 COMPLETE**: Implemented Live Paper Trading Environment with state machine for order lifecycle, order book simulator with top 10 levels and matching logic, position tracker with real-time P&L calculation and risk checks, paper trading service with idempotency, WebSocket handler for position updates, REST API endpoints for order management, database schema for persistence, comprehensive unit and integration tests, load testing for 1000 concurrent traders, and full cross-module integration with TradingEngine and ShadowTrader. Historical result: integration tests passed except one skipped test; current audit did not rerun the full suite.
 - [x] **MONITORING & OBSERVABILITY - PHASE 4 COMPLETE**: Implemented comprehensive monitoring stack with Prometheus/Grafana/D3.js dashboards, OpenTelemetry distributed tracing with Jaeger/Tempo, centralized logging via Loki and Fluent Bit sidecars, and health checks with Istio service mesh and HPA auto-scaling. Added custom metrics, alerts, and IaC manifests for production deployment.
 - [x] **PERFORMANCE & SCALABILITY OPTIMIZATION - PHASE 5 COMPLETE**: Implemented Bayesian optimization for hyperparameter tuning with Gaussian Process regression, Kelly Criterion position sizing, and ATR-based volatility adjustments. Enhanced data pipeline with WebSocket connection pooling, zero-copy Protobuf serialization, deduplication, multi-level caching, and parallel indicator computation. Added horizontal scaling with stateless services, Redis session management, PgBouncer connection pooling, distributed locks, Istio service mesh, and advanced auto-scaling. All 40 micro-tasks completed with rigorous technical implementation.
 - [x] **MODULE 3: TRANSACTION COST & SLIPPAGE MODELLING - PRODUCTION-GRADE HFT IMPLEMENTATION COMPLETE**: Implemented comprehensive stochastic price impact modeling with Almgren-Chriss framework, real-time slippage estimation, and market microstructure analysis. Added `SlippageEngine` class with permanent/temporary impact models (γ·σ·√(Q/ADV), λ·σ·(Q/V)·e^(-κt)), Heston volatility extensions, and regime-specific parameter calibration. Created `LiquidityAnalyzer` for L2/L3 order book depth analysis with resiliency scoring and tier classification (high/medium/low). Implemented `CostEstimator` for total transaction cost aggregation (slippage + fees + network costs) with pre-trade validation. Built `ImpactSimulator` for Monte Carlo execution scenario modeling with 1000-path simulations. Added `SlippageCircuitBreaker` with multi-level thresholds (absolute: 10%, confidence: 50%, spread widening: 5x) for extreme condition handling. Integrated real-time order book data ingestion via ExchangeConnector with WebSocket streams and 100ms freshness. Extended database schema with `order_book_snapshots`, `slippage_history`, and `toxicity_metrics` tables with optimized indexes. Enhanced ShadowTrader with cost estimation hooks and circuit breaker integration. Added API endpoints (`POST /api/slippage/estimate`, `POST /api/slippage/backtest`, `GET /api/slippage/history`) with comprehensive validation and telemetry. Implemented walk-forward backtesting framework with RMSE validation (<15% target) and statistical tests (Diebold-Mariano, Kupiec coverage). Added resiliency features for liquidity voids, flash crash detection, toxic flow management, and gradual recovery mechanisms. Integrated with existing logging/telemetry systems and created comprehensive unit tests (SlippageEngine, LiquidityAnalyzer, CostEstimator, ImpactSimulator) using Node.js test framework. Achieved sub-1ms estimation latency targets and HFT-grade performance with NumJS vectorization.

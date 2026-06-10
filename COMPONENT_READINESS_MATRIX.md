@@ -1,5 +1,7 @@
 # Component Readiness Matrix
 
+**Current audit status:** Core implementation is broad. Build, lint, and full tests pass; coverage/complexity/audit gates are not verified. Treat component readiness below as implementation readiness, not full CI readiness.
+
 ## ExchangeAdapter (BinanceAdapter)
 **Health Status**: Stable  
 **Quantitative/Qualitative Summary**: 

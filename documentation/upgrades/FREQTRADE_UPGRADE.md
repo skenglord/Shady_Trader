@@ -3,6 +3,8 @@
 This document describes the process for upgrading the Freqtrade sidecar
 integration, from dependency changes through smoke test and verification.
 
+**Current status:** Implementation is present. Build, lint, and tests now pass; coverage/complexity/audit gates are not verified.
+
 ## Upgrade Checklist
 
 ### 1. Update Python dependencies
@@ -47,7 +49,7 @@ This checks:
 npm test
 ```
 
-All freqtrade-specific tests must pass:
+Full-suite status now passes in serial spec mode: `# tests 397`, `# suites 148`, `# pass 396`, `# fail 0`, `# skipped 1`. Freqtrade-specific tests should still be run directly and pass before release.
 - `tests/freqtrade/bridge.test.ts`
 - `tests/freqtrade/list_strategies.test.ts`
 - `tests/freqtrade/bulk_ingest.test.ts`

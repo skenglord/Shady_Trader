@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Shady Trader** is an AI-augmented algorithmic trading platform supporting multiple risk modes running in parallel (Shadow Trading). It uses Gemini AI for regime detection, sentiment analysis, and signal confirmation.
+**Shady Trader** is an AI-augmented algorithmic trading platform supporting multiple risk modes running in parallel (Shadow Trading). It uses a local Ollama Gemma adapter for non-blocking signal confirmation, with rule-based fallback when the AI path is disabled or unavailable.
 
 ## Common Commands
 
@@ -15,8 +15,10 @@ npm run build        # Build frontend (vite build)
 npm start            # Production server
 
 # Testing
-npm run test          # Run all tests (tsx --test tests/**/*.test.ts)
+npm run test          # Run all tests (tsx --test tests/**/*.test.ts); full suite passes in serial spec mode
 npm run test:coverage # Coverage report
+npm run lint          # TypeScript check; currently passes
+npm run build         # Frontend build; currently passes
 
 # Quality Gates
 npm run quality:ci           # Full CI: lint + test + coverage + complexity + audit
@@ -38,17 +40,19 @@ kubectl apply -f k8s/         # Kubernetes deployment
 
 ### Backend (`backend/`)
 
-```
+backend/
 main.ts                    # TradingEngine class - core cycle orchestration
   └── runCycle(): fetch candles → indicators → regime → signal → execute
+  └── stopSchedulers(): abort active cycle, clear timers, close queues
+  └── sleepWithTimeout(): cancellable sleep for shutdown/timeframe changes
 
 api/
-  ├── routes.ts            # Express REST API endpoints
+  ├── routes.ts            # Express REST API endpoints with role-based auth and Freqtrade endpoints
   ├── marketDataService.ts # Market data fetching with circuit breaker fallback
   └── websocket.ts         # Real-time data broadcasting
 
 exchange/
-  ├── connector.ts         # Multi-exchange support (CMC/Binance/Kraken/OKX/Coinbase)
+  ├── connector.ts         # Multi-exchange support; public market data via CoinGecko/CMC-style providers, authenticated adapters for Binance/Kraken/OKX/Coinbase
   └── adapter.ts           # Typed adapter factory pattern
 
 indicators/engine.ts       # Technical indicators (RSI, MACD, Bollinger Bands, EMA)
@@ -72,10 +76,11 @@ React dashboard with Zustand state management, TradingView-style charts via ligh
 
 ### Infrastructure
 
-- **Database**: SQLite (dev) / PostgreSQL (prod) via better-sqlite3/pg
-- **Caching**: Redis (optional, degrades gracefully when unavailable)
-- **Job Queues**: BullMQ for distributed scheduling
+- **Database**: SQLite (dev) / PostgreSQL migration path available
+- **Caching**: Redis optional, degrades gracefully when unavailable
+- **Job Queues**: BullMQ for Freqtrade/data/backtest/validate work and scheduler jobs
 - **Observability**: Prometheus metrics, OpenTelemetry tracing, structured JSON logging
+- **Sidecar**: Freqtrade Python venv integration with bridge, workers, REST API, CLI, and React panel
 
 ## Trading Strategies
 
@@ -94,9 +99,9 @@ Six modes run in parallel (shadow portfolios):
 
 ## Market Data Providers
 
-Configured via `PRIMARY_EXCHANGE` / settings UI:
-- **CoinMarketCap** (primary) - requires API key
-- **CoinGecko** (free fallback)
+Configured via `EXCHANGE_NAME` / settings UI:
+- **CoinGecko** (default public fallback)
+- **CoinMarketCap** (requires API key for authenticated/historical data)
 - **CryptoCompare**, **Binance**, **Kraken**, **OKX**, **Coinbase**
 
 ## LLM Usage Guidelines
@@ -115,20 +120,24 @@ All LLM outputs must pass Zod validation with graceful fallback to neutral value
 
 - `API_ADMIN_TOKEN` - admin routes (bot lifecycle, settings, backtest, optimize)
 - `API_TRADER_TOKEN` - trader routes (trades, positions, allocation)
-- Header: `Authorization: Bearer <TOKEN>` or `x-api-token: <TOKEN>`
+- Header: `Authorization: Bearer ***` or `x-api-token: <TOKEN>`
 - Production: privileged routes fail 503 when no token configured
+- Public probes: `/api/health/live`, `/api/health/ready`, `/api/health/quick`, and `/api/status`
+- Diagnostics: `/api/diagnostics/*` is intentionally public for probes; ML endpoints are admin-protected
 
 ## Environment Variables
 
 Key variables (see `backend/config/validation.ts` for full Zod schema):
-- `PRIMARY_EXCHANGE`, `EXCHANGE_API_KEY`, `EXCHANGE_API_SECRET`
-- `MARKET_DATA_API_KEY`, `REDIS_HOST`, `REDIS_PASSWORD`
-- `GEMINI_API_KEY`, `SESSION_SECRET`
-- `PORT`, `NODE_ENV`, `LOG_LEVEL`
+- `EXCHANGE_NAME`, `EXCHANGE_API_KEY`, `EXCHANGE_API_SECRET`, `EXCHANGE_API_PASSWORD`, `EXCHANGE_USE_TESTNET`
+- `COINGECKO_API_KEY`, `CRYPTOCOMPARE_API_KEY`, `COINAPI_API_KEY`
+- `API_ADMIN_TOKEN`, `API_TRADER_TOKEN`
+- `GEMMA_ENABLED`, `OLLAMA_URL`, `OLLAMA_MODEL`, `GEMMA_TIMEOUT_MS`, `GEMMA_MIN_CONF_SCORE`
+- `PORT`, `NODE_ENV`, `LOG_LEVEL`, `DB_PATH`, `CORS_ORIGIN`
+- `ML_ENABLED`, `ML_MODELS_DIR`, `ML_CONFIDENCE_THRESHOLD`
 
 ## Key Patterns
 
 - **Circuit breakers**: 5+ consecutive losses → 50% position reduction; 7+ → 25%
 - **Graceful degradation**: Redis optional, exchange failures fallback to cached/simulated
 - **Structured logging**: JSON with correlation IDs (`x-request-id`)
-- **Abortable cycles**: Trading engine uses timeout-based abort to prevent infinite loops
+- **Abortable cycles**: Trading engine uses `cycleInProgress` + `cycleAbortToken`, awaited scheduler loops, and cancellable sleep so stop/restart/timeframe changes cannot overlap stale work.

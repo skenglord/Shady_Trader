@@ -1,5 +1,7 @@
 # Component Readiness Matrix — v6.0
 
+**Current audit status:** Core implementation is broad. Build, lint, and full tests pass; coverage/complexity/audit gates are not verified. Treat component readiness below as implementation readiness, not full CI readiness.
+
 | Block | Component | Path | Phase | Wired | Tested | Status |
 |-------|-----------|------|-------|-------|--------|--------|
 | 1 | CLI Scaffold | `cli/` | 1 | ✅ | ✅ | Ready |
@@ -13,6 +15,7 @@
 | 6 | Risk Safety | `backend/risk/manager.ts` | 1 | ✅ | ✅ | Ready |
 | 7 | Fill Calculator | `backend/slippage/fillCalculator.ts` | 1 | ✅ | ✅ | Ready |
 | 8 | Execution Lock | `backend/execution/executionLock.ts` | 1 | ✅ | ✅ | Ready |
+| 1-B | Scheduler Lifecycle | `backend/main.ts`, `backend/api/routes.ts` | 1 | ✅ | ✅ | Ready |
 | 9 | Seed Data | `backend/seed.ts` | 1 | ✅ | ✅ | Ready |
 | 10 | Backtest Framework | `backend/scripts/backtest.ts` | 1 | ✅ | ✅ | Ready |
 | 11 | ATR Ratchet | `backend/exits/atrRatchet.ts` | 2 | ⏸ | ✅ | Code Ready |
@@ -38,6 +41,7 @@ All Phase 1 blocks are wired into the main trading cycle and verified by tests:
 - Risk manager validates modes and caps positions
 - Paper fills use slippage-adjusted prices
 - Execution lock prevents duplicate trades
+- Scheduler lifecycle hardening stops stale cycles on shutdown/timeframe changes
 
 ## Phase 2 Components (Code Ready, Awaiting Calibration)
 
