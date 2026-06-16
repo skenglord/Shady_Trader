@@ -8,6 +8,9 @@ import { recordApiRequest } from '../../observability/requestMetrics.js';
 import rateLimit from 'express-rate-limit';
 
 const router = Router();
+const MAX_MC_POSITIONS = 50;
+const MAX_STRESS_SCENARIOS = 100;
+const MAX_VALIDATE_POINTS = 5000;
 
 // Rate limiter for Monte Carlo simulations
 const mcRateLimiter = rateLimit({
@@ -28,15 +31,15 @@ const MonteCarloRequestSchema = z.object({
       symbol: z.string(),
       quantity: z.number().positive(),
       currentPrice: z.number().positive()
-    })).min(1)
+    })).min(1).max(MAX_MC_POSITIONS)
   }),
   parameters: z.object({
     timeHorizon: z.number().int().min(1).max(365),
-    confidenceLevels: z.array(z.number().min(0.5).max(0.999)).min(1),
-    numPaths: z.number().int().min(1000).max(1000000),
+    confidenceLevels: z.array(z.number().min(0.5).max(0.999)).min(1).max(10),
+    numPaths: z.number().int().min(1000).max(100000),
     model: z.enum(['gbm', 'jump-diffusion', 'heston'])
   }),
-  correlationMatrix: z.array(z.array(z.number())).optional()
+  correlationMatrix: z.array(z.array(z.number()).max(10)).max(10).optional()
 });
 
 const StressTestSchema = z.object({
@@ -45,13 +48,13 @@ const StressTestSchema = z.object({
       symbol: z.string(),
       quantity: z.number().positive(),
       currentPrice: z.number().positive()
-    })).min(1)
+    })).min(1).max(MAX_MC_POSITIONS)
   }),
   scenarios: z.array(z.object({
     type: z.enum(['black-swan', 'flash-crash', 'liquidity-crisis', 'regime-shift']),
     intensity: z.number().min(0.1).max(2.0).optional()
-  })).min(1),
-  numPaths: z.number().int().min(10000).max(500000).optional()
+  })).min(1).max(MAX_STRESS_SCENARIOS),
+  numPaths: z.number().int().min(10000).max(100000).optional()
 });
 
 // Initialize Monte Carlo engine
@@ -63,36 +66,36 @@ const mcEngine = new MonteCarloEngine();
  */
 router.post('/simulate', mcRateLimiter, async (req, res) => {
   const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
-  
-const startTime = Date.now();
-    const routeKey = '/api/mc/simulate';
 
-    try {
-      // Validate request
-      const validationResult = MonteCarloRequestSchema.safeParse(req.body);
+  const startTime = Date.now();
+  const routeKey = '/api/mc/simulate';
 
-      if (!validationResult.success) {
-        recordApiRequest(routeKey, 'POST', 400, Date.now() - startTime);
+  try {
+    // Validate request
+    const validationResult = MonteCarloRequestSchema.safeParse(req.body);
+
+    if (!validationResult.success) {
+      recordApiRequest(routeKey, 'POST', 400, Date.now() - startTime);
       return res.status(400).json({
         error: 'Invalid request parameters',
         details: validationResult.error.errors
       });
     }
-    
+
     const request = validationResult.data as MonteCarloRequest;
-    
+
     logger.info('Starting Monte Carlo simulation', {
       requestId,
       numPaths: request.parameters.numPaths,
       model: request.parameters.model,
       positions: request.portfolio.positions.length
     });
-    
+
     // Start simulation
     const result = await mcEngine.simulate(request);
 
     recordApiRequest('/api/mc/simulate', 'POST', 200, Date.now() - startTime);
-    
+
     res.status(202).json(result);
   } catch (error) {
     logger.error('Monte Carlo simulation error', {
@@ -210,7 +213,7 @@ router.post('/stress', mcRateLimiter, async (req, res) => {
  * POST /api/mc/validate
  * Validate VaR model with backtesting
  */
-router.post('/validate', async (req, res) => {
+router.post('/validate', mcRateLimiter, async (req, res) => {
   const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
   const startTime = Date.now();
   const routeKey = '/api/mc/validate';
@@ -223,24 +226,37 @@ router.post('/validate', async (req, res) => {
         error: 'historicalReturns and varEstimates must be arrays'
       });
     }
+
+    if (historicalReturns.length > MAX_VALIDATE_POINTS || varEstimates.length > MAX_VALIDATE_POINTS) {
+      return res.status(400).json({
+        error: `Validation input cannot exceed ${MAX_VALIDATE_POINTS} points`
+      });
+    }
     
     if (historicalReturns.length !== varEstimates.length) {
       return res.status(400).json({
         error: 'Arrays must have the same length'
       });
     }
-    
+
+    const confidence = Number(confidenceLevel);
+    if (!Number.isFinite(confidence) || confidence < 0.5 || confidence > 0.999) {
+      return res.status(400).json({
+        error: 'confidenceLevel must be between 0.5 and 0.999'
+      });
+    }
+
     logger.info('Validating VaR model', {
       requestId,
       dataPoints: historicalReturns.length,
-      confidenceLevel
+      confidenceLevel: confidence
     });
-    
+
     // Run validation
     const validation = await mcEngine.validateVaR(
       historicalReturns,
       varEstimates,
-      confidenceLevel
+      confidence
     );
 
     recordApiRequest(routeKey, 'POST', 200, Date.now() - startTime);
