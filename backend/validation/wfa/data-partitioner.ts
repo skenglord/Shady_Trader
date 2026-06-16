@@ -72,7 +72,7 @@ export class DataPartitioner {
       
       while (start + windowSize + this.config.minOutOfSampleSize <= n) {
         const inSample = data.slice(start, start + windowSize);
-        const outOfSampleEnd = Math.min(start + windowSize + this.config.stepSize, n);
+        const outOfSampleEnd = Math.min(start + windowSize + this.config.minOutOfSampleSize, n);
         const outOfSample = data.slice(start + windowSize, outOfSampleEnd);
         
         if (inSample.length >= this.config.minInSampleSize && outOfSample.length >= this.config.minOutOfSampleSize) {
