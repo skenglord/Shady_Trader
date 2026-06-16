@@ -79,4 +79,32 @@ describe('v6.0 Migrations', () => {
       assert.ok(names.includes(c), `column ${c} should exist`);
     }
   });
+
+  test('shadow_trades has one definition, close_reason, and required indexes', async () => {
+    const tableRows = await runQuery(
+      `SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='shadow_trades'`,
+      [],
+      'all'
+    );
+    assert.equal((tableRows as any[])[0].count, 1, 'shadow_trades should have exactly one table definition');
+
+    const cols = await runQuery(`PRAGMA table_info(shadow_trades)`, [], 'all');
+    const names = (cols as any[]).map(c => c.name);
+    assert.ok(names.includes('close_reason'), 'close_reason should exist on shadow_trades');
+
+    const indexes = await runQuery(`PRAGMA index_list(shadow_trades)`, [], 'all');
+    const indexNames = (indexes as any[]).map(i => i.name);
+    for (const indexName of ['idx_shadow_trades_status']) {
+      assert.ok(indexNames.includes(indexName), `index ${indexName} should exist`);
+    }
+  });
+
+  test('required status and symbol indexes exist', async () => {
+    for (const table of ['trades', 'signals']) {
+      const indexes = await runQuery(`PRAGMA index_list(${table})`, [], 'all');
+      const indexNames = (indexes as any[]).map(i => i.name);
+      const expected = table === 'trades' ? 'idx_trades_status' : 'idx_signals_symbol';
+      assert.ok(indexNames.includes(expected), `index ${expected} should exist on ${table}`);
+    }
+  });
 });

@@ -18,9 +18,10 @@ export async function initDatabase() {
       const db = new Database.default(dbPath);
       // Apply pragmas for better performance and concurrency
       db.pragma('journal_mode = WAL');
+      db.pragma('wal_autocheckpoint = 1000');
       db.pragma('synchronous = NORMAL');
       db.pragma('cache_size = -64000');
-      db.pragma('busy_timeout = 5000');
+      db.pragma(`busy_timeout = ${QUERY_TIMEOUT_MS}`);
 
       // Create tables if they don't exist
       db.exec(`
@@ -50,6 +51,8 @@ export async function initDatabase() {
           exit_price REAL,
           exit_timestamp INTEGER
         );
+        CREATE INDEX IF NOT EXISTS idx_trades_status
+          ON trades(status);
 
         CREATE TABLE IF NOT EXISTS shadow_trades (
           id TEXT PRIMARY KEY,
@@ -65,8 +68,11 @@ export async function initDatabase() {
           exit_timestamp INTEGER,
           leverage REAL DEFAULT 1,
           stop_loss REAL,
-          take_profit REAL
+          take_profit REAL,
+          close_reason TEXT DEFAULT NULL
         );
+        CREATE INDEX IF NOT EXISTS idx_shadow_trades_status
+          ON shadow_trades(status);
 
         CREATE TABLE IF NOT EXISTS daily_performance (
           date TEXT PRIMARY KEY,
@@ -203,24 +209,6 @@ export async function initDatabase() {
         CREATE INDEX IF NOT EXISTS idx_ml_models_regime_active
           ON ml_models(regime, is_active);
 
-        CREATE TABLE IF NOT EXISTS shadow_trades (
-          id TEXT PRIMARY KEY,
-          symbol TEXT NOT NULL,
-          side TEXT NOT NULL,
-          amount REAL NOT NULL,
-          price REAL NOT NULL,
-          status TEXT NOT NULL,
-          timestamp INTEGER NOT NULL,
-          risk_mode TEXT NOT NULL,
-          pnl REAL,
-          exit_price REAL,
-          exit_timestamp INTEGER,
-          leverage REAL DEFAULT 1,
-          stop_loss REAL,
-          take_profit REAL,
-          close_reason TEXT DEFAULT NULL
-        );
-
         CREATE TABLE IF NOT EXISTS audit_system_events (
           id TEXT PRIMARY KEY,
           event_type TEXT NOT NULL,
@@ -250,6 +238,7 @@ export async function initDatabase() {
           ml_score REAL
         );
         CREATE INDEX IF NOT EXISTS idx_signals_timestamp ON signals(timestamp DESC);
+        CREATE INDEX IF NOT EXISTS idx_signals_symbol ON signals(symbol);
       `);
 
       mockRunQuery = async (sql: string, params: any[] = [], type: 'run' | 'all' = 'run'): Promise<any> => {

@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 // Load environment variables
 dotenv.config();
 
+const QUERY_TIMEOUT_MS = 30000; // 30 second timeout per query
+
 const pool = new Pool({
   host: process.env.POSTGRES_HOST || 'localhost',
   port: parseInt(process.env.POSTGRES_PORT || '5432'),
@@ -17,10 +19,12 @@ const pool = new Pool({
 
 // Initialize database schema
 export async function initPostgresDatabase() {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
     // Enable WAL mode equivalent (PostgreSQL has WAL by default)
     await client.query('SET synchronous_commit = on');
+    await client.query(`SET statement_timeout = ${QUERY_TIMEOUT_MS}`);
 
     // Create tables
     await client.query(`
@@ -57,6 +61,9 @@ export async function initPostgresDatabase() {
         exit_price REAL,
         exit_timestamp BIGINT
       );
+
+      CREATE INDEX IF NOT EXISTS idx_trades_status
+      ON trades(status);
     `);
 
     await client.query(`
@@ -74,9 +81,12 @@ export async function initPostgresDatabase() {
         exit_timestamp BIGINT,
         leverage REAL DEFAULT 1,
         stop_loss REAL,
-        take_profit REAL
+        take_profit REAL,
+        close_reason TEXT DEFAULT NULL
       );
 
+      CREATE INDEX IF NOT EXISTS idx_shadow_trades_status
+      ON shadow_trades(status);
       CREATE INDEX IF NOT EXISTS idx_shadow_trades_risk_mode_status
       ON shadow_trades(risk_mode, status);
       CREATE INDEX IF NOT EXISTS idx_shadow_trades_timestamp
@@ -539,8 +549,10 @@ export async function initPostgresDatabase() {
 
 // Query execution function compatible with existing runQuery interface
 export async function runPostgresQuery(sql: string, params: any[] = [], type: 'run' | 'all' = 'run'): Promise<any> {
-  const client = await pool.connect();
+  let client;
   try {
+    client = await pool.connect();
+    await client.query(`SET statement_timeout = ${QUERY_TIMEOUT_MS}`);
     if (type === 'all') {
       const result = await client.query(sql, params);
       return result.rows;
@@ -552,7 +564,9 @@ export async function runPostgresQuery(sql: string, params: any[] = [], type: 'r
       };
     }
   } finally {
-    client.release();
+    if (client) {
+      client.release();
+    }
   }
 }
 
