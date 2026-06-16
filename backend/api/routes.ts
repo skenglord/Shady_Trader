@@ -23,9 +23,12 @@ import {
   getFreqtradeValidateQueue 
 } from '../job_queues.js';
 import { FreqtradeBridge } from '../freqtrade/bridge.js';
+import { normalizeFreqtradeTimerange, normalizeValidateTolerance } from '../freqtrade/validation.js';
 import { spawn } from 'child_process';
 import path from 'path';
 import { freqtradeMetricsRegistry } from '../observability/freqtrade_metrics.js';
+import monteCarloRouter from '../monte-carlo/api/monte-carlo.controller.js';
+import wfaDeprecatedRouter from '../validation/wfa/wfa-deprecated-controller.js';
 
 // Fallback function to fetch historical data from CoinGecko
 async function fetchCoinGeckoHistoricalData(symbol: string, timeframe: string, days: number) {
@@ -276,6 +279,10 @@ const adminRoutes = [
   '/ml/status',
   '/ml/accuracy',
   '/ml/predictions',
+  // Monte Carlo mutation routes
+  '/mc/simulate',
+  '/mc/stress',
+  '/mc/validate',
   // Freqtrade admin routes
   '/freqtrade/download-data',
   '/freqtrade/backtest',
@@ -313,6 +320,9 @@ const traderRoutes = [
   // internal performance data. Liveness probes should use /api/health/quick or
   // /api/health/live (both public, both return only a minimal status).
   '/diagnostics',
+  // Monte Carlo read routes
+  '/mc',
+  '/mc/status/:jobId',
   // Freqtrade trader routes
   '/freqtrade/pairs',
   '/freqtrade/info',
@@ -321,7 +331,20 @@ const traderRoutes = [
 
 function validateBody(schema: z.ZodTypeAny) {
   return (req: any, res: any, next: any) => {
-    const parsed = schema.safeParse(req.body);
+    let parsed;
+    try {
+      parsed = schema.safeParse(req.body);
+    } catch (error) {
+      logger.warn('Payload validation failed', {
+        requestId: req.requestId,
+        route: req.originalUrl || req.url,
+        method: req.method,
+        issue: error instanceof Error ? error.message : String(error)
+      });
+      return res.status(400).json({
+        error: error instanceof Error ? error.message : 'Invalid request payload'
+      });
+    }
     if (!parsed.success) {
       logger.warn('Payload validation failed', {
         requestId: req.requestId,
@@ -458,6 +481,9 @@ for (const route of traderRoutes) {
   protectedRoutes.add(route);
 }
 
+// WFA route ownership: retired public deprecation notice.
+apiRouter.use('/wfa', wfaDeprecatedRouter);
+
 // CSRF protection middleware — applied to state-changing routes
 function csrfProtection(req: any, res: any, next: any) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
@@ -557,30 +583,40 @@ const validateFreqtradeDownloadBody = validateBody(z.object({
   exchange: z.string().min(1),
   pairs: z.array(z.string().min(1)).min(1),
   timeframes: z.array(z.string().min(1)).min(1),
-  timerange: z.object({ start: z.string().optional(), end: z.string().optional() }).optional(),
+  timerange: z.object({ start: z.string().min(1), end: z.string().min(1) }),
   tradingMode: z.enum(['spot', 'futures', 'margin']),
   dataFormat: z.enum(['json', 'feather', 'parquet']),
-}));
+}).transform((body) => ({
+  ...body,
+  timerange: normalizeFreqtradeTimerange(body.timerange, 'download-data timerange'),
+})));
 
 const validateFreqtradeBacktestBody = validateBody(z.object({
   strategy: z.string().min(1),
-  timerange: z.object({ start: z.string().optional(), end: z.string().optional() }).optional(),
+  timerange: z.object({ start: z.string().min(1), end: z.string().min(1) }),
   pairs: z.array(z.string().min(1)).min(1),
   timeframe: z.string().min(1),
   dryRunWallet: z.number().positive(),
   fee: z.number().nonnegative().optional(),
-}));
+}).transform((body) => ({
+  ...body,
+  timerange: normalizeFreqtradeTimerange(body.timerange, 'backtest timerange'),
+})));
 
 const validateFreqtradeValidateBody = validateBody(z.object({
   symbol: z.string().min(1),
-  timerange: z.object({ start: z.string(), end: z.string() }),
+  timerange: z.object({ start: z.string().min(1), end: z.string().min(1) }),
   strategy: z.string().min(1),
   mode: z.string().min(1),
   pairs: z.array(z.string().min(1)).min(1),
   timeframe: z.string().min(1),
   dryRunWallet: z.number().positive(),
-  tolerance: z.number().positive().default(0.05),
-}));
+  tolerance: z.union([z.number(), z.string()]).default(0.05),
+}).transform((body) => ({
+  ...body,
+  timerange: normalizeFreqtradeTimerange(body.timerange, 'validate timerange'),
+  tolerance: normalizeValidateTolerance(body.tolerance),
+})));
 
 apiRouter.get('/status', (req, res) => {
   const engine = getTradingEngine();
@@ -1604,8 +1640,16 @@ apiRouter.post('/freqtrade/download-data', validateFreqtradeDownloadBody, async 
       return res.status(503).json({ error: 'Freqtrade data queue not available. Ensure Redis is running and FREQTRADE_ENABLED=true.' });
     }
 
+    let timerange: { start: string; end: string };
+    try {
+      timerange = normalizeFreqtradeTimerange(req.body.timerange, 'download-data timerange');
+    } catch (error: any) {
+      recordApiRequest('/freqtrade/download-data', 'POST', 400, Date.now() - startTime);
+      return res.status(400).json({ error: error.message, requestId });
+    }
+
     const jobId = crypto.randomUUID();
-    const payload = { ...req.body, jobId };
+    const payload = { ...req.body, jobId, timerange };
 
     await runQuery(
       `INSERT INTO freqtrade_jobs (id, type, status, exchange, timerange_start, timerange_end, params_json, created_at, updated_at)
@@ -1635,8 +1679,16 @@ apiRouter.post('/freqtrade/backtest', validateFreqtradeBacktestBody, async (req,
       return res.status(503).json({ error: 'Freqtrade backtest queue not available. Ensure Redis is running and FREQTRADE_ENABLED=true.' });
     }
 
+    let timerange: { start: string; end: string };
+    try {
+      timerange = normalizeFreqtradeTimerange(req.body.timerange, 'backtest timerange');
+    } catch (error: any) {
+      recordApiRequest('/freqtrade/backtest', 'POST', 400, Date.now() - startTime);
+      return res.status(400).json({ error: error.message, requestId });
+    }
+
     const jobId = crypto.randomUUID();
-    const payload = { ...req.body, jobId };
+    const payload = { ...req.body, jobId, timerange };
 
     await runQuery(
       `INSERT INTO freqtrade_jobs (id, type, status, strategy, timerange_start, timerange_end, params_json, created_at, updated_at)
@@ -1719,11 +1771,12 @@ apiRouter.get('/freqtrade/pairs', async (req, res) => {
     // For now, return a static list or read from config. 
     // In a full implementation, this would call `freqtrade list-data` or query the DB.
     // We'll query the candles table for available pairs/timeframes as a proxy.
-    const pairs = await runQuery(
+    const rows = await runQuery(
       `SELECT DISTINCT symbol, timeframe FROM candles ORDER BY symbol, timeframe`,
       [],
       'all'
     );
+    const pairs = rows.map((row: any) => ({ exchange: 'local', pair: row.symbol, timeframe: row.timeframe }));
 
     recordApiRequest('/freqtrade/pairs', 'GET', 200, Date.now() - startTime);
     res.json({ requestId, pairs });
@@ -1922,6 +1975,9 @@ apiRouter.post('/freqtrade/ingest', async (req, res) => {
     res.status(500).json({ error: 'Failed to start ingest', requestId });
   }
 });
+
+// Monte Carlo Routes
+apiRouter.use('/mc', monteCarloRouter);
 
 // Paper Trading Routes
 apiRouter.use('/paper', paperTradingRouter);
