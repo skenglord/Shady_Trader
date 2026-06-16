@@ -23,9 +23,10 @@ export class MultiLevelCache {
   }
 
   private startL1Cleanup() {
-    setInterval(() => {
+    const interval = setInterval(() => {
       this.cleanupExpiredL1Entries();
     }, this.l1CleanupInterval);
+    interval.unref();
   }
 
   private cleanupExpiredL1Entries() {

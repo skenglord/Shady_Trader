@@ -1,43 +1,83 @@
 # Revised Audit Fix Plan
 
-Created: 2026-06-16  
-Supersedes: `documentation/production_readiness_todo.md` audit-fix notes and the original “Shady_Trader Audit Fixes” implementation plan.
+Created: 2026-06-16
+Revised: 2026-06-17
+Status: implementation completed; revision remains the planning document and source of truth for scope boundaries.
+Supersedes: the original “Shady_Trader Audit Fixes” implementation plan and the 2026-06-16 version of this plan.
 
 ## Executive decision
 
-The original audit-fix plan should **not** be implemented as written. It mixes low-risk correctness fixes with stale items and high-risk structural refactors. This revised plan separates the work into:
+The original audit-fix plan should **not** be implemented as written. It mixes verified correctness defects, stale items, already-completed schema work, and high-risk structural refactors.
 
-1. **Correctness fixes that are safe to apply now.**
-2. **Low-risk performance/hygiene fixes that need targeted tests.**
-3. **Deferred engineering-debt work that should not be bundled into audit remediation.**
+This revised plan now reflects the current repository state:
 
-The primary goal is to remove verified correctness defects without introducing regression risk in trading, API, database, or frontend state paths.
+1. **DB schema/index migration work is already implemented** and should be treated as verification-only.
+2. **Remaining correctness defects are still actionable.**
+3. **Performance/hygiene work should stay narrow and test-backed.**
+4. **Structural refactors remain deferred and should not be bundled into audit remediation.**
+
+## Recent changes accounted for
+
+- `backend/migrations/0005_shadow_trades_close_reason_and_indexes.ts` now exists and is wired by `backend/migrations/runner.ts:5-16`.
+- `backend/database.ts` now includes:
+  - `close_reason TEXT DEFAULT NULL` on `shadow_trades`.
+  - `idx_trades_status`, `idx_shadow_trades_status`, and `idx_signals_symbol`.
+  - `PRAGMA wal_autocheckpoint = 1000`.
+  - `PRAGMA busy_timeout = ${QUERY_TIMEOUT_MS}`.
+- `backend/database_postgres.ts` now includes:
+  - `SET statement_timeout = ${QUERY_TIMEOUT_MS}` during initialization and query execution.
+  - `close_reason TEXT DEFAULT NULL` on `shadow_trades`.
+  - `idx_trades_status` and `idx_shadow_trades_status`.
+- `AGENTS.md` now records the existence of `documentation/revised_audit_fix_plan.md`.
+- No code implementation was performed as part of this plan revision.
 
 ## Current verified context
 
+### Implementation completed
+
+- Removed the duplicate signal-only persistence block from `backend/main.ts`; `runCycle()` now records signals once per cycle and keeps the existing every-cycle signal recording path.
+- Fixed `TRADER_TOKEN_PLACEHOLDER` initialization order in `src/App.tsx` so the frontend can evaluate without `VITE_TRADER_TOKEN`.
+- Replaced request middleware `console.log` calls in `server.ts` with structured `logger.debug` calls that include request ID, method, and URL.
+- Added artifact ignores for `*.webm`, `coverage/tmp/`, `playwright-results.json`, `test-results/`, and `*.pyc`.
+- Verified the `shadow_trades` schema, indexes, WAL autocheckpoint, and query-timeout policy without reopening schema edits.
+- Added `.unref()` to missing exchange/backpressure and cache cleanup intervals.
+- Optimized backtest exit lookup with a candle-time-to-index map while preserving skip-ahead behavior.
+- Reused the first `/api/balances` balance snapshot for historical PnL and response construction.
+- Pruned `SELECT *` from the stable high-volume endpoints listed in section 2.7 and added route/source tests for response-shape stability.
+
+### Still actionable
+
 - `backend/main.ts:1044-1083` already records signal/no-signal data every cycle.
-- `backend/main.ts:1085-1127` duplicates signal recording only when `signal` exists.
-- `backend/database.ts:54-69` creates `shadow_trades` once, then `backend/database.ts:206-222` recreates it later in the same schema block.
+- `backend/main.ts:1085-1127` still duplicates signal recording only when `signal` exists.
+- `src/App.tsx:22-24` still references `TRADER_TOKEN_PLACEHOLDER` before declaration.
+- `server.ts:269-272` and `server.ts:332-335` still use direct `console.log`.
+- `.gitignore` still lacks the planned artifact entries for `*.webm`, `coverage/tmp/`, `playwright-results.json`, `test-results/`, and `*.pyc`.
+- `backend/exchange/backpressure.ts:26` and `backend/exchange/cache.ts:26` still use intervals without `.unref()`.
+- `backend/main.ts:1338` still uses `df.findIndex(c => c.time === exitTime)` inside the backtest loop.
+- `backend/api/routes.ts:1211-1247` still calls `engine.balanceManager.getBalances()` twice in `/api/balances`.
+- `backend/api/routes.ts` still uses broad `SELECT *` on several API endpoints.
+- `src/App.tsx:429-447` still uses `balances` from the initial render inside a `setInterval` callback, creating stale closure risk.
+
+### Already resolved or stale
+
 - `backend/freqtrade/workers/validateWorker.ts:13` already imports `../validation.js`; the planned import fix is stale.
 - `tests/monte-carlo/monte-carlo-engine.test.ts:35-39` already uses `express()`, not `Router()`; the planned test type fix is stale.
-- `src/App.tsx:22-24` references `TRADER_TOKEN_PLACEHOLDER` before declaration.
-- `server.ts:269-272` and `server.ts:332-335` still use direct `console.log`.
-- `backend/backup.ts:9-19` already implements async backup; the original plan points at stale/unused `TradingEngine.backupDatabase()` in `backend/main.ts:515-534`.
+- `backend/backup.ts:9-19` already implements async backup; the original plan pointed at stale/unused `TradingEngine.backupDatabase()` in `backend/main.ts:515-534`.
 - `backend/exchange/connector.ts:128-140` already calls `.unref()` on its interval.
-- `src/App.tsx:429-447` uses `balances` from the initial render inside a `setInterval` callback, creating stale closure risk.
+- `backend/database.ts`, `backend/database_postgres.ts`, and `backend/migrations/0005_shadow_trades_close_reason_and_indexes.ts` now address the `shadow_trades` schema drift and missing indexes.
 
 ## Phase 0 — Pre-flight verification
 
-**Goal:** confirm the working tree and test environment before changes.
+**Goal:** confirm the working tree and test environment before code changes.
 
 1. Run `git status --short` and record uncommitted files.
 2. Run `git diff --check`.
-3. Run available quality gates:
+3. Run available quality gates in a Node-enabled shell:
    - `npm run lint`
    - `npm test -- --test-reporter=spec --test-concurrency=1 --test-timeout=120000`
    - `npm run build`
    - `npm run quality:coverage`, if Node/npm are available
-4. If any gate is red before work starts, do not treat that as caused by this plan unless the failing file/route is touched.
+4. If any gate is red before work starts, do not attribute it to this plan unless the failing file/route is touched.
 
 **Definition of done:** baseline command results are recorded in this document or the session summary.
 
@@ -59,23 +99,24 @@ The primary goal is to remove verified correctness defects without introducing r
 
 **Tests:** add or update a deterministic test around `runCycle()` signal persistence to assert exactly one `signals` row per cycle when a signal exists.
 
-### 1.2 Fix `shadow_trades` schema duplication and `close_reason`
+### 1.2 Verify `shadow_trades` schema migration
 
-**Files:** `backend/database.ts`, database migrations if present.
+**Files:** `backend/database.ts`, `backend/database_postgres.ts`, `backend/migrations/0005_shadow_trades_close_reason_and_indexes.ts`, `backend/migrations/runner.ts`
 
-**Change:**
+**Change:** no new schema edits unless verification fails.
 
-- Add `close_reason TEXT DEFAULT NULL` to the first `shadow_trades` table definition at `backend/database.ts:54-69`.
-- Delete the duplicate `CREATE TABLE IF NOT EXISTS shadow_trades` block at `backend/database.ts:206-222`.
-- Add an explicit migration/compatibility path for existing SQLite databases:
-  - `ALTER TABLE shadow_trades ADD COLUMN close_reason TEXT DEFAULT NULL` only if the column is missing.
-- Apply the same schema decision to the Postgres schema if live Postgres mode is intended to support `close_reason`.
+**Verification:**
 
-**Why:** removes schema drift and makes the intended table shape explicit.
+- Confirm `close_reason` exists on new SQLite and Postgres schemas.
+- Confirm migration 0005 adds `close_reason` to existing SQLite databases only when missing.
+- Confirm `idx_trades_status`, `idx_shadow_trades_status`, and `idx_signals_symbol` are created in SQLite and relevant Postgres schema paths.
+- Confirm migration 0005 is registered in `backend/migrations/runner.ts`.
 
-**Risk:** medium, because existing DBs may already have rows and the duplicate `IF NOT EXISTS` currently masks the issue.
+**Why:** this work is already implemented; the remaining task is verification.
 
-**Tests:** add schema initialization test asserting one `shadow_trades` table definition and one `close_reason` column.
+**Risk:** low for verification; medium only if schema edits are reopened.
+
+**Tests:** schema initialization/migration test.
 
 ### 1.3 Fix `TRADER_TOKEN_PLACEHOLDER` temporal dead zone
 
@@ -145,29 +186,23 @@ The primary goal is to remove verified correctness defects without introducing r
 
 **Tests:** process-exit or deterministic test that creates these managers and verifies no unexpected open handles remain.
 
-### 2.2 Add missing DB indexes
+### 2.2 Verify DB indexes
 
-**File:** `backend/database.ts`
+**Files:** `backend/database.ts`, `backend/database_postgres.ts`, `backend/migrations/0005_shadow_trades_close_reason_and_indexes.ts`
 
-**Change:** add the following indexes near the existing schema initialization indexes:
+**Change:** no new index edits unless verification fails.
 
-```sql
-CREATE INDEX IF NOT EXISTS idx_shadow_trades_status ON shadow_trades(status);
-CREATE INDEX IF NOT EXISTS idx_signals_symbol ON signals(symbol);
-CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
-```
+**Verification:**
 
-**Also consider:**
+- Confirm SQLite schema includes `idx_trades_status`, `idx_shadow_trades_status`, and `idx_signals_symbol`.
+- Confirm Postgres schema includes equivalent indexes where supported.
+- Confirm migration 0005 is idempotent.
 
-- `idx_signals_symbol_timestamp` for chart marker queries.
-- `idx_shadow_trades_timestamp_status` for trade history filtering.
-- Postgres equivalents if Postgres mode is supported.
+**Why:** this work is already implemented; the remaining task is verification.
 
-**Why:** improves common endpoint queries without changing API behavior.
+**Risk:** low for verification.
 
-**Risk:** low to medium.
-
-**Tests:** schema test asserting indexes exist; API route tests for `/api/trades`, `/api/shadow-trades/*`, and `/api/signals`.
+**Tests:** schema/migration test.
 
 ### 2.3 Optimize backtest exit lookup
 
@@ -200,40 +235,41 @@ CREATE INDEX IF NOT EXISTS idx_trades_status ON trades(status);
 
 **Tests:** existing `/api/balances` route test should assert identical response shape and values.
 
-### 2.5 Add SQLite WAL checkpoint management
+### 2.5 Verify SQLite WAL checkpoint management
 
 **File:** `backend/database.ts`
 
-**Change:**
+**Change:** no new SQLite pragma edits unless verification fails.
 
-- After `PRAGMA journal_mode = WAL`, add:
-  - `PRAGMA wal_autocheckpoint = 1000;`
-- Keep the existing `busy_timeout = 5000` unless Phase 2.6 changes it.
+**Verification:**
 
-**Why:** reduces unbounded WAL growth risk.
+- Confirm `PRAGMA wal_autocheckpoint = 1000` is applied after WAL setup.
+- Confirm `busy_timeout` remains intentionally configured.
+- Confirm the documented timeout policy matches operational expectations.
 
-**Risk:** low for SQLite.
+**Why:** this work is already implemented; the remaining task is verification.
+
+**Risk:** low for verification.
 
 **Tests:** database initialization test or manual SQLite pragma inspection.
 
-### 2.6 Enforce query timeout pragmatically
+### 2.6 Verify query timeout policy
 
 **Files:** `backend/database.ts`, `backend/database_postgres.ts`
 
-**Change:**
+**Change:** no new timeout edits unless verification fails.
 
-- SQLite:
-  - Replace or align `QUERY_TIMEOUT_MS` usage with `PRAGMA busy_timeout = 30000`.
-  - Do not attempt to cancel synchronous `better-sqlite3` queries with `AbortController`; it will not cancel an in-flight sync call.
-- Postgres:
-  - Add `statement_timeout` at connection/query level using `QUERY_TIMEOUT_MS` or a Postgres-specific timeout.
-  - Ensure the client is released in all paths.
+**Verification:**
 
-**Why:** the current `QUERY_TIMEOUT_MS` constant is defined but not enforced.
+- SQLite uses `PRAGMA busy_timeout = ${QUERY_TIMEOUT_MS}`.
+- Postgres uses `SET statement_timeout = ${QUERY_TIMEOUT_MS}` during initialization and query execution.
+- The current 30-second policy is intentional and documented. If the operational target remains 5 seconds, adjust both SQLite and Postgres together rather than only one path.
 
-**Risk:** medium.
+**Why:** this work is already implemented; the remaining task is policy verification.
 
-**Tests:** timeout behavior should be tested with mocked DB clients or controlled slow queries.
+**Risk:** low for verification; medium if timeout values are changed.
+
+**Tests:** mocked DB client tests or controlled timeout tests.
 
 ### 2.7 Prune `SELECT *` from high-volume API endpoints
 
@@ -332,30 +368,32 @@ These items are valid engineering improvements but should not be bundled into th
 ## Execution order
 
 1. Phase 0 baseline.
-2. Phase 1: 1.1, 1.2, 1.3, 1.4, 1.5.
-3. Phase 2: 2.1, 2.2, 2.3, 2.4, 2.5.
-4. Phase 2 only if tests are added: 2.6, 2.7.
-5. Phase 3 items only as separate tickets/milestones.
+2. Phase 1 correctness fixes: 1.1, 1.3, 1.4, 1.5.
+3. Phase 1 verification: 1.2.
+4. Phase 2 low-risk fixes: 2.1, 2.3, 2.4, 2.7.
+5. Phase 2 verification: 2.2, 2.5, 2.6.
+6. Phase 3 items only as separate tickets/milestones.
 
 ## Verification matrix
 
 | Area | Required verification |
 |---|---|
 | Signal recording | One signal row per cycle when signal exists; no duplicate `signal_record` broadcast. |
-| `shadow_trades` schema | Single table definition; `close_reason` present on new and existing DBs. |
+| `shadow_trades` schema | Single table definition; `close_reason` present on new and existing DBs; migration 0005 idempotent. |
 | Frontend token placeholder | App starts without `VITE_TRADER_TOKEN`; auth headers remain disabled for placeholder token. |
 | Request logging | Startup smoke test passes; no direct request middleware `console.log`. |
 | Intervals | Managers can be constructed without leaving preventable handles. |
-| DB indexes | Schema test confirms indexes. |
+| DB indexes | Schema/migration test confirms indexes exist. |
 | Backtest optimization | Same trades/metrics on deterministic input before and after change. |
 | Balances API | Response shape and values unchanged. |
 | SQLite WAL | `wal_autocheckpoint` pragma is applied. |
-| Query timeout | SQLite busy timeout and Postgres statement timeout are testable or explicitly documented. |
+| Query timeout | SQLite busy timeout and Postgres statement timeout are testable and intentionally aligned. |
 | Pruned selects | All affected API endpoint response shapes remain stable. |
 
 ## Rollback guidance
 
-- Keep the schema changes in one commit and the signal-recording change in another commit.
+- Keep the duplicate-signal fix separate from schema verification work.
+- Do not revert migration 0005 unless the team explicitly rejects `close_reason` and the new indexes.
 - For DB schema changes, keep a rollback SQL path that drops only newly added indexes and removes `close_reason` only on disposable/test DBs.
 - Do not rewrite git history unless all collaborators are available for coordinated force-push.
 - If `/api/balances`, `/api/signals`, or `/api/shadow-trades/*` response shape changes, revert the select-pruning change first.

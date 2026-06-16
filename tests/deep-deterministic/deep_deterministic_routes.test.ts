@@ -2,6 +2,8 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import express from 'express';
 import request from 'supertest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { apiRouter } from '../../backend/api/routes.js';
 import { setMockRunQuery, clearMockRunQuery } from '../../backend/database.js';
 
@@ -19,8 +21,11 @@ const originalEnv = { ...process.env };
 function setupRouteMocks() {
   setMockRunQuery(async (sql: string, params?: any[], method?: string) => {
     if (sql.includes('SELECT 1')) return [{ 1: 1 }];
-    if (sql.includes('SELECT * FROM shadow_trades ORDER BY timestamp DESC LIMIT')) return [];
-    if (sql.includes('SELECT * FROM regime_history ORDER BY timestamp DESC LIMIT')) return [];
+    if (sql.includes('FROM shadow_trades')) return [];
+    if (sql.includes('FROM signals')) return [];
+    if (sql.includes('FROM trades')) return [];
+    if (sql.includes('FROM regime_history')) return [];
+    if (sql.includes('FROM slippage_history')) return [];
     if (sql.includes('SELECT * FROM settings')) return [];
     if (sql.includes('INSERT')) return { changes: 1 };
     if (sql.includes('UPDATE') || sql.includes('DELETE')) return { changes: 1 };
@@ -358,6 +363,27 @@ describe('Deep Deterministic Tests - API Routes', { concurrency: false }, () => 
     test('GET /api/history/regime returns array', async () => {
       const response = await request(app).get('/api/history/regime');
       assert.ok([200, 500].includes(response.status));
+    });
+  });
+
+  describe('SELECT pruning', () => {
+    test('pruned high-volume endpoints use explicit column lists', () => {
+      const routesSource = readFileSync(resolve(process.cwd(), 'backend/api/routes.ts'), 'utf8');
+      const prunedBlocks = [
+        "apiRouter.get('/trades'",
+        "apiRouter.get('/shadow-trades/closed'",
+        "apiRouter.get('/shadow-trades/all'",
+        "apiRouter.get('/signals'",
+        "apiRouter.get('/trades/closed'",
+        "apiRouter.get('/history/regime'",
+        "apiRouter.get('/slippage/history'",
+      ];
+
+      for (const blockStart of prunedBlocks) {
+        const block = routesSource.slice(routesSource.indexOf(blockStart), routesSource.indexOf('});', routesSource.indexOf(blockStart)));
+        assert.ok(block.includes('SELECT '), `${blockStart} should contain an explicit SELECT`);
+        assert.ok(!block.includes('SELECT *'), `${blockStart} should not use SELECT *`);
+      }
     });
   });
 

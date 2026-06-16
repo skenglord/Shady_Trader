@@ -22,7 +22,12 @@ build/
 backups/
 
 # Test/coverage artifacts
+*.webm
 coverage/
+coverage/tmp/
+playwright-results.json
+test-results/
+*.pyc
 
 # OS files
 .DS_Store

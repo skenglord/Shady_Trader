@@ -1083,49 +1083,6 @@ export class TradingEngine {
     }
     
     if (signal) {
-      // Record signal in DB
-      try {
-        const signalId = `sig-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
-        await runQuery(`
-          INSERT INTO signals (id, timestamp, symbol, regime, strategy, side, confidence, entry_price, indicators, reason, live_confidence, ml_score)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `, [
-          signalId,
-          Date.now(),
-          this.symbol,
-          this.currentRegime,
-          this.strategy,
-          signal.side,
-          signal.confidence,
-          signal.entryPrice,
-          JSON.stringify(signal.indicators || []),
-          signal.reasoning || '',
-          liveConfidence?.score || null,
-          signal.mlScore || null
-        ]);
-        if (this.abortCycleIfNeeded(cycleToken, 'after_signal_persist')) return;
-        // Broadcast signal record for frontend markers
-        this.broadcast({
-          type: 'signal_record',
-          data: {
-            id: signalId,
-            timestamp: Date.now(),
-            symbol: this.symbol,
-            regime: this.currentRegime,
-            strategy: this.strategy,
-            side: signal.side,
-            confidence: signal.confidence,
-            entry_price: signal.entryPrice,
-            indicators: signal.indicators,
-            reason: signal.reasoning,
-            live_confidence: liveConfidence?.score || null,
-            ml_score: signal.mlScore || null
-          }
-        });
-      } catch (err: any) {
-        logger.error('Failed to save signal', { error: String(err), service: 'trading-engine' });
-      }
-
       // 5. Execute shadow trades — guarded by Redis execution lock (Block 8)
       const currentPrice = df[df.length - 1].close;
       const lockToken = await acquireTradeLock(this.symbol, this.redisClient);
@@ -1241,6 +1198,10 @@ export class TradingEngine {
     const sortedCandles = Array.from(uniqueCandlesMap.values()).sort((a: any, b: any) => a.time - b.time);
 
     const df = this.indicators.calculateAll(sortedCandles);
+    const candleTimeToIndex = new Map<number, number>();
+    for (let idx = 0; idx < df.length; idx++) {
+      candleTimeToIndex.set(df[idx].time, idx);
+    }
     const virtualTrades = [];
     const regimeChanges = [];
     let lastRegime = null;
@@ -1335,7 +1296,7 @@ export class TradingEngine {
         
         // Skip ahead to exit time to avoid overlapping trades in simulation
         if (exitTime) {
-          const exitIndex = df.findIndex(c => c.time === exitTime);
+          const exitIndex = candleTimeToIndex.get(exitTime);
           if (exitIndex > i) i = exitIndex;
         }
       }

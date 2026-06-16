@@ -383,6 +383,100 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', { concurrency: fa
       await engine.runCycle();
       assert.ok(true);
     });
+
+    test('runCycle persists exactly one signal row when a signal exists', async () => {
+      let signalInsertCount = 0;
+      let signalInsertParams: any[] = [];
+
+      setMockRunQuery(async (sql: string, params?: any[]) => {
+        if (sql.includes('INSERT INTO signals')) {
+          signalInsertCount++;
+          signalInsertParams = params || [];
+          return { changes: 1 };
+        }
+        if (sql.includes('SELECT 1')) return [{ 1: 1 }];
+        if (sql.includes('SELECT * FROM settings')) return [];
+        if (sql.includes('SELECT SUM(pnl)')) return [{ totalPnl: 0 }];
+        if (sql.includes('SELECT COUNT(*)')) return [{ count: 0 }, { count: 0 }];
+        if (sql.includes('SELECT exit_timestamp as time, pnl')) return [];
+        if (sql.includes('SELECT * FROM shadow_trades WHERE risk_mode')) return [];
+        if (sql.includes('SELECT * FROM balances WHERE id = ?')) return [{
+          id: 'default',
+          main_balance: 100000,
+          bot_balance: 50000,
+          active_trade_balance: 0,
+          total_pnl: 0,
+          total_pnl_pct: 0
+        }];
+        if (sql.includes('INSERT INTO')) return { changes: 1 };
+        if (sql.includes('UPDATE')) return { changes: 1 };
+        if (sql.includes('DELETE FROM')) return { changes: 1 };
+        return [];
+      });
+
+      engine = new TradingEngine(mockWss as any, mockRedis as any);
+      engine.isRunning = true;
+      engine.isExchangeEnabled = false;
+      engine.manualRegime = 'strongbull' as any;
+
+      const candles = [];
+      for (let i = 0; i < 150; i++) {
+        candles.push({
+          time: 1700000000000 + i * 60000,
+          open: 100,
+          high: 101,
+          low: 99,
+          close: 100 + (i % 5),
+          volume: 1000,
+          price_change_24h: 1.5
+        });
+      }
+
+      engine.exchange = {
+        getCandles: async () => candles
+      } as any;
+      engine.indicators.calculateAll = (input: any[]) => input.map(c => ({ ...c }));
+      engine.signalGenerator.generateSignal = async () => ({
+        side: 'buy',
+        confidence: 85,
+        entryPrice: 101,
+        stopLoss: 98,
+        takeProfit: 105,
+        reasoning: 'deterministic test signal',
+        indicators: { rsi: 30 },
+        mlScore: 0.72
+      } as any);
+      engine.signalGenerator.computeLiveConfidence = () => ({
+        score: 73,
+        side: 'buy',
+        indicators: { macd: 1 },
+        distances: {}
+      } as any);
+      engine.shadowTrader.getPerformance = async () => ({});
+      engine.marketDataService.getLatestMarketData = async () => ({
+        btc_dominance: 50,
+        fear_greed_index: 60
+      } as any);
+      engine.marketDataService.getLatestNews = async () => [];
+      engine.shadowTrader.processSignal = async () => undefined;
+      engine.shadowTrader.updatePositions = async () => undefined;
+      engine.balanceManager.getBalances = async () => ({
+        mainBalance: 100000,
+        botBalance: 50000,
+        activeTradeBalance: 0,
+        totalPnl: 0,
+        totalPnlPct: 0
+      });
+
+      await engine.runCycle();
+
+      assert.strictEqual(signalInsertCount, 1);
+      assert.strictEqual(signalInsertParams[5], 'buy');
+      assert.strictEqual(signalInsertParams[6], 85);
+      assert.strictEqual(signalInsertParams[7], 101);
+      assert.strictEqual(signalInsertParams[10], 73);
+      assert.strictEqual(signalInsertParams[11], 0.72);
+    });
   });
 
   describe('Run Backtest', () => {

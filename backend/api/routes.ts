@@ -932,7 +932,8 @@ apiRouter.get('/trades', async (req, res) => {
   const limit = Math.max(1, Math.min(requestedLimit, 200));
   
   const trades = await runQuery(`
-    SELECT * FROM shadow_trades
+    SELECT id, timestamp, symbol, strategy, side, entry_price, exit_price, amount, pnl, status, risk_mode, close_reason
+    FROM shadow_trades
     ORDER BY timestamp DESC
     LIMIT ?
   `, [limit], 'all');
@@ -945,7 +946,8 @@ apiRouter.get('/shadow-trades/closed', async (req, res) => {
   const limit = Math.max(1, Math.min(requestedLimit, 500));
   
   const trades = await runQuery(`
-    SELECT * FROM shadow_trades
+    SELECT id, timestamp, symbol, strategy, side, entry_price, exit_price, amount, pnl, status, risk_mode, close_reason
+    FROM shadow_trades
     WHERE status = 'closed'
     ORDER BY timestamp DESC
     LIMIT ?
@@ -959,7 +961,8 @@ apiRouter.get('/shadow-trades/all', async (req, res) => {
   const limit = Math.max(1, Math.min(requestedLimit, 1000));
   
   const trades = await runQuery(`
-    SELECT * FROM shadow_trades
+    SELECT id, timestamp, symbol, strategy, side, entry_price, exit_price, amount, pnl, status, risk_mode, close_reason
+    FROM shadow_trades
     ORDER BY timestamp DESC
     LIMIT ?
   `, [limit], 'all');
@@ -972,7 +975,8 @@ apiRouter.get('/signals', async (req, res) => {
   const limit = Math.max(1, Math.min(requestedLimit, 2000));
   
   const signals = await runQuery(`
-    SELECT * FROM signals
+    SELECT id, timestamp, symbol, regime, strategy, side, confidence, entry_price, indicators, reason, live_confidence, ml_score
+    FROM signals
     ORDER BY timestamp DESC
     LIMIT ?
   `, [limit], 'all');
@@ -985,7 +989,8 @@ apiRouter.get('/trades/closed', async (req, res) => {
   const limit = Math.max(1, Math.min(requestedLimit, 500));
   
   const trades = await runQuery(`
-    SELECT * FROM trades
+    SELECT id, timestamp, symbol, strategy, side, entry_price, exit_price, amount, pnl, status
+    FROM trades
     WHERE status = 'closed'
     ORDER BY timestamp DESC
     LIMIT ?
@@ -998,7 +1003,8 @@ apiRouter.get('/history/regime', async (req, res) => {
   const limit = Math.max(1, Math.min(requestedLimit, 200));
   
   const history = await runQuery(`
-    SELECT * FROM regime_history
+    SELECT id, timestamp, regime, confidence, reasoning, composite, stability
+    FROM regime_history
     ORDER BY timestamp DESC
     LIMIT ?
   `, [limit], 'all');
@@ -1242,8 +1248,7 @@ apiRouter.get('/balances', async (req, res) => {
     }
 
     // Historical PnL from DB (accumulated from closed trades)
-    const dbBalances = await engine.balanceManager.getBalances();
-    const historicalPnl = dbBalances.totalPnl || 0;
+    const historicalPnl = baseBalances.totalPnl || 0;
     const totalPnl = historicalPnl + unrealizedPnl;
 
     res.json({
@@ -1592,7 +1597,9 @@ apiRouter.get('/slippage/history', async (req, res) => {
     const params = symbol ? [symbol] : [];
 
     const history = await runQuery(
-      `SELECT * FROM slippage_history ${whereClause} ORDER BY timestamp DESC LIMIT ?`,
+      `SELECT id, symbol, timestamp, side, order_size, order_type, predicted_slippage, realized_slippage,
+              confidence, regime, volatility, market_impact, spread_cost, temporary_impact, exchange
+       FROM slippage_history ${whereClause} ORDER BY timestamp DESC LIMIT ?`,
       [...params, limit],
       'all'
     );

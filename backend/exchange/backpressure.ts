@@ -23,7 +23,7 @@ export class BackpressureManager extends EventEmitter {
   }
 
   private startCircuitBreakerReset() {
-    setInterval(() => {
+    const interval = setInterval(() => {
       const now = Date.now();
       for (const [queueName, breaker] of this.circuitBreakers) {
         if (breaker.tripped && now - breaker.trippedAt > this.circuitBreakerResetTime) {
@@ -33,6 +33,7 @@ export class BackpressureManager extends EventEmitter {
         }
       }
     }, 5000);
+    interval.unref();
   }
 
   async enqueue(queueName: string, item: Omit<QueueItem, 'timestamp' | 'retries'>): Promise<boolean> {

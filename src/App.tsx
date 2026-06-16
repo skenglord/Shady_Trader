@@ -20,8 +20,9 @@ const APP_URL = '';
 // @ts-ignore - Vite injects these at build time
 const ADMIN_TOKEN = (import.meta as any).env?.VITE_ADMIN_TOKEN || '';
 // @ts-ignore - Vite injects these at build time
-const TRADER_TOKEN = (import.meta as any).env?.VITE_TRADER_TOKEN || TRADER_TOKEN_PLACEHOLDER;
 const TRADER_TOKEN_PLACEHOLDER = '__set_VITE_TRADER_TOKEN__';
+// @ts-ignore - Vite injects these at build time
+const TRADER_TOKEN = (import.meta as any).env?.VITE_TRADER_TOKEN || TRADER_TOKEN_PLACEHOLDER;
 
 // Request deduplication cache — prevents duplicate identical requests in flight.
 // Two-layer strategy:

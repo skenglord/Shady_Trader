@@ -267,7 +267,11 @@ async function startServer() {
   });
 
   app.use((req, res, next) => {
-    console.log('Request:', req.method, req.url);
+    logger.debug('Request received', {
+      requestId: (req as any).requestId || req.get('x-request-id'),
+      method: req.method,
+      url: req.url
+    });
     next();
   });
 
@@ -330,7 +334,11 @@ async function startServer() {
 
   // API routes — mount with rate limiter
   app.use("/api", apiLimiter, (req, res, next) => {
-    console.log('API route hit:', req.url);
+    logger.debug('API route hit', {
+      requestId: (req as any).requestId || req.get('x-request-id'),
+      method: req.method,
+      url: req.originalUrl || req.url
+    });
     next();
   }, apiRouter);
 
