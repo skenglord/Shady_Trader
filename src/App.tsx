@@ -88,7 +88,7 @@ async function safeFetch(url: string, options?: RequestInit): Promise<{ ok: bool
   // Attach auth token for API requests
   if (url.includes('/api/')) {
     // Use admin token for admin endpoints, trader for others
-    const adminPaths = ['/settings', '/risk-configs', '/start', '/stop', '/kill', '/backtest', '/optimize', '/import-csv', '/ml/'];
+    const adminPaths = ['/settings', '/risk-configs', '/start', '/stop', '/kill', '/backtest', '/optimize', '/import-csv', '/ml/', '/freqtrade/', '/mc/'];
     const isAdminCall = adminPaths.some(p => url.includes(p));
     const token = isAdminCall ? ADMIN_TOKEN : TRADER_TOKEN;
     if (token && !token.includes('PLACEHOLDER')) {

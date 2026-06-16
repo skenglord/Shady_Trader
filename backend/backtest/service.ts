@@ -28,6 +28,7 @@ export interface BacktestMetrics {
 
 export interface BacktestTrade {
   time: number;
+  timestamp: number;
   symbol: string;
   side: 'buy' | 'sell';
   entryPrice: number;
@@ -188,6 +189,7 @@ export async function runBacktestStandalone(
 
     virtualTrades.push({
       time: df[i].time,
+      timestamp: df[i].time,
       symbol,
       side: signal.side,
       entryPrice: signal.entryPrice,

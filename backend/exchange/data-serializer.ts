@@ -80,10 +80,18 @@ export class ZeroCopyBuffer {
       return null; // Not enough data
     }
 
-    const data = this.buffer.subarray(0, length);
+    const data = Buffer.from(this.buffer.subarray(0, length));
     this.buffer.copyWithin(0, length, this.offset);
     this.offset -= length;
     return data;
+  }
+
+  readView(length: number): Buffer | null {
+    if (this.offset < length) {
+      return null;
+    }
+
+    return this.buffer.subarray(0, length);
   }
 
   getAvailableSpace(): number {
