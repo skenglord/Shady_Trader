@@ -2,13 +2,41 @@
  * Tests for backend/freqtrade/bridge.ts
  * Run with: tsx --test tests/freqtrade/bridge.test.ts
  */
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { Readable } from 'node:stream';
 import { EventEmitter } from 'node:events';
 import { FreqtradeBridge } from '../../backend/freqtrade/bridge.js';
 
 const spawnCalls: Array<{ cmd: string; args: string[]; opts: any }> = [];
+const TEST_FREQTRADE_API_USER = 'test-user';
+const TEST_FREQTRADE_API_PASS = 'test-pass';
+const originalFreqtradeApiUser = process.env.FREQTRADE_API_USER;
+const originalFreqtradeApiPass = process.env.FREQTRADE_API_PASS;
+const originalFreqtradeUsername = process.env.FREQTRADE__API_SERVER__USERNAME;
+const originalFreqtradePassword = process.env.FREQTRADE__API_SERVER__PASSWORD;
+
+function restoreEnv(name: string, value: string | undefined) {
+    if (value === undefined) {
+        delete process.env[name];
+    } else {
+        process.env[name] = value;
+    }
+}
+
+function restoreTestFreqtradeApiEnv() {
+    restoreEnv('FREQTRADE_API_USER', originalFreqtradeApiUser);
+    restoreEnv('FREQTRADE_API_PASS', originalFreqtradeApiPass);
+    restoreEnv('FREQTRADE__API_SERVER__USERNAME', originalFreqtradeUsername);
+    restoreEnv('FREQTRADE__API_SERVER__PASSWORD', originalFreqtradePassword);
+}
+
+function setTestFreqtradeApiEnv() {
+    process.env.FREQTRADE_API_USER = TEST_FREQTRADE_API_USER;
+    process.env.FREQTRADE_API_PASS = TEST_FREQTRADE_API_PASS;
+    process.env.FREQTRADE__API_SERVER__USERNAME = TEST_FREQTRADE_API_USER;
+    process.env.FREQTRADE__API_SERVER__PASSWORD = TEST_FREQTRADE_API_PASS;
+}
 
 class MockChildProcess extends EventEmitter {
     stdout = new Readable({ read() { } });
@@ -71,6 +99,11 @@ describe('FreqtradeBridge.listStrategies', () => {
     beforeEach(() => {
         spawnCalls.length = 0;
         latestChildProcess = null;
+        setTestFreqtradeApiEnv();
+    });
+
+    afterEach(() => {
+        restoreTestFreqtradeApiEnv();
     });
 
     it('parses strategy names from list-strategies output', async () => {

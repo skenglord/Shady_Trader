@@ -10,6 +10,7 @@ import { runQuery } from '../../database.js';
 import { logger } from '../../logging/logger.js';
 import { recordFreqtradeJob } from '../../observability/freqtrade_metrics.js';
 import { runBacktestStandalone } from '../../backtest/service.js';
+import { normalizeValidateTolerance } from '../validation.js';
 
 export const VALIDATE_QUEUE_NAME = 'freqtrade-validate';
 
@@ -188,7 +189,7 @@ export async function processFreqtradeValidateJob(job: Job<FreqtradeValidateJobD
         const compare: (a: number, b: number) => number = (a, b) =>
             b === 0 ? (a === 0 ? 0 : Math.abs(a)) : Math.abs((a - b) / b);
 
-        const tol = req.tolerance ?? 0.05;
+        const tol = normalizeValidateTolerance(req.tolerance ?? process.env.FREQTRADE_VALIDATE_TOLERANCE ?? 0.05);
         const deltas: Record<string, number> = {};
         const pass: string[] = [];
 

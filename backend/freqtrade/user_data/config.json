@@ -13,10 +13,10 @@
   "trading_mode": "futures",
   "margin_mode": "isolated",
   "exchange": {
-    "name": "${EXCHANGE_NAME:-binance}",
-    "key": "${EXCHANGE_API_KEY:-}",
-    "secret": "${EXCHANGE_API_SECRET:-}",
-    "password": "${EXCHANGE_API_PASSWORD:-}",
+    "name": "${FREQTRADE__EXCHANGE__NAME}",
+    "key": "${FREQTRADE__EXCHANGE__KEY}",
+    "secret": "${FREQTRADE__EXCHANGE__SECRET}",
+    "password": "${FREQTRADE__EXCHANGE__PASSWORD}",
     "ccxt_config": {},
     "ccxt_sync_config": {
       "options": {
@@ -57,9 +57,9 @@
     "listen_port": 8081,
     "verbosity": "info",
     "enable_openapi": false,
-    "jwt_secret_key": "${FREQTRADE_JWT_SECRET_KEY}",
-    "username": "${FREQTRADE_API_USER:-freqtrade}",
-    "password": "${FREQTRADE_API_PASS:-freqtrade}"
+    "jwt_secret_key": "${FREQTRADE__API_SERVER__JWT_SECRET_KEY}",
+    "username": "${FREQTRADE__API_SERVER__USERNAME}",
+    "password": "${FREQTRADE__API_SERVER__PASSWORD}"
   },
   "bot_name": "shady_trader_freqtrade",
   "initial_state": "stopped",

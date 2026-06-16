@@ -3,8 +3,15 @@
 import { Command } from 'commander';
 import chalk from 'chalk';
 import { apiGet, apiPost } from '../utils/api.js';
+import { normalizeFreqtradeTimerange, normalizeValidateTolerance } from '../../../backend/freqtrade/validation.js';
 
 export const freqtradeCmd = new Command('freqtrade').description('Freqtrade sidecar operations');
+
+function parseTimerange(value: string) {
+  if (!value.includes('-')) return undefined;
+  const [start, end] = value.split('-');
+  return normalizeFreqtradeTimerange({ start, end });
+}
 
 // ── freqtrade info ───────────────────────────────────────────────────
 freqtradeCmd.command('info').description('Show Freqtrade sidecar status').action(async () => {
@@ -88,7 +95,7 @@ freqtradeCmd
         return;
       }
       for (const p of pairs) {
-        console.log(`${chalk.bold(p.symbol)}  ${chalk.gray(p.timeframe)}`);
+        console.log(`${chalk.bold(p.pair ?? p.symbol)}  ${chalk.gray(p.timeframe)}`);
       }
     } catch (e: any) {
       console.error(chalk.red(`Cannot reach bot: ${e.message}`));
@@ -101,26 +108,22 @@ freqtradeCmd
   .command('download')
   .description('Download historical data via Freqtrade')
   .requiredOption('--exchange <name>', 'exchange name', 'binance')
-  .option('--pairs <list>', 'comma-separated pairs', 'BTC/USDT,ETH/USDT')
+  .option('--pairs <list>', 'comma-separated pairs', 'BTC/USDT:USDT,ETH/USDT:USDT')
   .option('--timeframes <list>', 'comma-separated timeframes', '1h,4h,1d')
+  .option('--trading-mode <mode>', 'spot|futures|margin', 'futures')
+  .option('--data-format <format>', 'json|feather|parquet', 'parquet')
   .option('--timerange <range>', 'e.g. 20240101-20241231')
   .action(async (opts: Record<string, string>) => {
     try {
-      const timerange = opts.timerange || '';
-      const start = timerange.includes('-') ? timerange.split('-')[0] : '';
-      const end = timerange.includes('-') ? timerange.split('-')[1] || '' : '';
       const body: any = {
         exchange: opts.exchange,
         pairs: opts.pairs.split(',').map((s: string) => s.trim()),
         timeframes: opts.timeframes.split(',').map((s: string) => s.trim()),
-        tradingMode: 'spot',
-        dataFormat: 'parquet',
+        tradingMode: opts.tradingMode,
+        dataFormat: opts.dataFormat,
       };
-      if (start || end) {
-        body.timerange = {};
-        if (start) body.timerange.start = start;
-        if (end) body.timerange.end = end;
-      }
+      const timerange = parseTimerange(opts.timerange || '');
+      if (timerange) body.timerange = timerange;
       const result = await apiPost('/freqtrade/download-data', body);
       console.log(chalk.green(`Download queued: ${result.jobId}`));
     } catch (e: any) {
@@ -135,25 +138,19 @@ freqtradeCmd
   .description('Run a Freqtrade backtest')
   .requiredOption('--strategy <name>', 'strategy class name')
   .option('--timerange <range>', 'e.g. 20240101-20241231')
-  .option('--pairs <list>', 'comma-separated pairs', 'BTC/USDT')
+  .option('--pairs <list>', 'comma-separated pairs', 'BTC/USDT:USDT')
   .option('--timeframe <tf>', 'candle timeframe', '1h')
   .option('--wallet <n>', 'dry-run wallet USDT', '10000')
   .action(async (opts: Record<string, string>) => {
     try {
-      const timerange = opts.timerange || '';
-      const start = timerange.includes('-') ? timerange.split('-')[0] : '';
-      const end = timerange.includes('-') ? timerange.split('-')[1] || '' : '';
       const body: any = {
         strategy: opts.strategy,
         pairs: opts.pairs.split(',').map((s: string) => s.trim()),
         timeframe: opts.timeframe || '1h',
         dryRunWallet: parseFloat(opts.wallet) || 10000,
       };
-      if (start || end) {
-        body.timerange = {};
-        if (start) body.timerange.start = start;
-        if (end) body.timerange.end = end;
-      }
+      const timerange = parseTimerange(opts.timerange || '');
+      if (timerange) body.timerange = timerange;
       const result = await apiPost('/freqtrade/backtest', body);
       console.log(chalk.green(`Backtest queued: ${result.jobId}`));
     } catch (e: any) {
@@ -170,13 +167,11 @@ freqtradeCmd
   .requiredOption('--symbol <sym>', 'trading pair', 'BTC/USDT')
   .option('--timerange <range>', 'e.g. 20240101-20241231')
   .option('--mode <mode>', 'risk mode', 'moderate')
-  .option('--pairs <list>', 'comma-separated pairs', 'BTC/USDT')
+  .option('--pairs <list>', 'comma-separated pairs', 'BTC/USDT:USDT')
   .option('--timeframe <tf>', 'candle timeframe', '1h')
+  .option('--tolerance <n>', 'metric tolerance', '0.05')
   .action(async (opts: Record<string, string>) => {
     try {
-      const timerange = opts.timerange || '';
-      const start = timerange.includes('-') ? timerange.split('-')[0] : '';
-      const end = timerange.includes('-') ? timerange.split('-')[1] || '' : '';
       const body: any = {
         strategy: opts.strategy,
         symbol: opts.symbol,
@@ -184,12 +179,10 @@ freqtradeCmd
         pairs: opts.pairs.split(',').map((s: string) => s.trim()),
         timeframe: opts.timeframe || '1h',
         dryRunWallet: 10000,
+        tolerance: normalizeValidateTolerance(opts.tolerance),
       };
-      if (start || end) {
-        body.timerange = {};
-        if (start) body.timerange.start = start;
-        if (end) body.timerange.end = end;
-      }
+      const timerange = parseTimerange(opts.timerange || '');
+      if (timerange) body.timerange = timerange;
       const result = await apiPost('/freqtrade/validate', body);
       console.log(chalk.green('Validation result:'));
       console.log(JSON.stringify(result, null, 2));

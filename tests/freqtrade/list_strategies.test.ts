@@ -83,7 +83,12 @@ describe("freqtrade list-strategies", () => {
           ...process.env,
           PYTHONUNBUFFERED: "1",
           FREQTRADE__EXCHANGE__NAME: "binance",
+          FREQTRADE__EXCHANGE__KEY: "",
+          FREQTRADE__EXCHANGE__SECRET: "",
+          FREQTRADE__EXCHANGE__PASSWORD: "",
           FREQTRADE__API_SERVER__JWT_SECRET_KEY: "dummy-secret-key-for-testing-1234567890",
+          FREQTRADE__API_SERVER__USERNAME: "freqtrade",
+          FREQTRADE__API_SERVER__PASSWORD: "freqtrade",
         },
       }
     );

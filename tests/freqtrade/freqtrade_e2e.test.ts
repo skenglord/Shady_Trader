@@ -46,6 +46,34 @@ class MockChildProcess extends EventEmitter {
 
 let latestChildProcess: MockChildProcess | null = null;
 const spawnCalls: Array<{ cmd: string; args: string[] }> = [];
+const TEST_FREQTRADE_API_USER = 'test-e2e-user';
+const TEST_FREQTRADE_API_PASS = 'test-e2e-pass';
+const originalFreqtradeApiUser = process.env.FREQTRADE_API_USER;
+const originalFreqtradeApiPass = process.env.FREQTRADE_API_PASS;
+const originalFreqtradeUsername = process.env.FREQTRADE__API_SERVER__USERNAME;
+const originalFreqtradePassword = process.env.FREQTRADE__API_SERVER__PASSWORD;
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
+  }
+}
+
+function setTestFreqtradeApiEnv() {
+  process.env.FREQTRADE_API_USER = TEST_FREQTRADE_API_USER;
+  process.env.FREQTRADE_API_PASS = TEST_FREQTRADE_API_PASS;
+  process.env.FREQTRADE__API_SERVER__USERNAME = TEST_FREQTRADE_API_USER;
+  process.env.FREQTRADE__API_SERVER__PASSWORD = TEST_FREQTRADE_API_PASS;
+}
+
+function restoreTestFreqtradeApiEnv() {
+  restoreEnv('FREQTRADE_API_USER', originalFreqtradeApiUser);
+  restoreEnv('FREQTRADE_API_PASS', originalFreqtradeApiPass);
+  restoreEnv('FREQTRADE__API_SERVER__USERNAME', originalFreqtradeUsername);
+  restoreEnv('FREQTRADE__API_SERVER__PASSWORD', originalFreqtradePassword);
+}
 
 function mockSpawnFn(cmd: string, args: string[], _opts?: any) {
   spawnCalls.push({ cmd, args });
@@ -79,8 +107,13 @@ describe('FreqtradeBridge — complete API', () => {
     spawnCalls.length = 0;
     latestChildProcess = null;
     mockSpawnCalls.length = 0;
+    setTestFreqtradeApiEnv();
 
     // Dynamic import so each test gets a fresh instance
+  });
+
+  after(() => {
+    restoreTestFreqtradeApiEnv();
   });
 
   // ── ping ──────────────────────────────────────────────────────────────
@@ -268,6 +301,7 @@ describe('FreqtradeBridge — complete API', () => {
       timeframes: ['1h'],
       tradingMode: 'spot',
       dataFormat: 'json',
+      timerange: { start: '20250101', end: '20250102' },
     });
 
     // Get the child reference from the spawn call
@@ -297,6 +331,7 @@ describe('FreqtradeBridge — complete API', () => {
       timeframes: ['1h'],
       tradingMode: 'spot',
       dataFormat: 'json',
+      timerange: { start: '20250101', end: '20250102' },
     });
     assert.equal(result.exchange, 'binance');
   });
@@ -590,6 +625,7 @@ describe('Freqtrade API Routes', () => {
         timeframes: ['1h'],
         tradingMode: 'spot',
         dataFormat: 'json',
+        timerange: { start: '20250101', end: '20250102' },
       });
 
     // The route returns 503 when queue is null
@@ -606,6 +642,23 @@ describe('Freqtrade API Routes', () => {
     assert.equal(res.status, 400);
   });
 
+  test('POST /api/freqtrade/download-data rejects unbounded timeranges', async () => {
+    const res = await request(app)
+      .post('/api/freqtrade/download-data')
+      .set('x-api-token', TEST_ADMIN_TOKEN)
+      .send({
+        exchange: 'binance',
+        pairs: ['BTC/USDT'],
+        timeframes: ['1h'],
+        tradingMode: 'spot',
+        dataFormat: 'json',
+        timerange: { start: '20200101', end: '20220102' },
+      });
+
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
   test('POST /api/freqtrade/download-data returns 403 for trader (needs admin)', async () => {
     const res = await request(app)
       .post('/api/freqtrade/download-data')
@@ -616,6 +669,7 @@ describe('Freqtrade API Routes', () => {
         timeframes: ['1h'],
         tradingMode: 'spot',
         dataFormat: 'json',
+        timerange: { start: '20250101', end: '20250102' },
       });
 
     // Auth middleware returns 403 (Forbidden) for trader tokens on admin routes
@@ -659,6 +713,22 @@ describe('Freqtrade API Routes', () => {
     assert.equal(res.status, 400);
   });
 
+  test('POST /api/freqtrade/backtest rejects unbounded timeranges', async () => {
+    const res = await request(app)
+      .post('/api/freqtrade/backtest')
+      .set('x-api-token', TEST_ADMIN_TOKEN)
+      .send({
+        strategy: 'ShadyTraderReferenceStrategy',
+        timerange: { start: '20200101', end: '20220102' },
+        pairs: ['BTC/USDT'],
+        timeframe: '1h',
+        dryRunWallet: 10000,
+      });
+
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
+  });
+
   // ── POST /api/freqtrade/validate ──────────────────────────────────────
 
   test('POST /api/freqtrade/validate with valid body queues the job when Redis is available', async () => {
@@ -694,6 +764,25 @@ describe('Freqtrade API Routes', () => {
       .send({}); // empty body — Zod rejects before queue check
 
     assert.equal(res.status, 400);
+  });
+
+  test('POST /api/freqtrade/validate rejects tolerance outside 0..1', async () => {
+    const res = await request(app)
+      .post('/api/freqtrade/validate')
+      .set('x-api-token', TEST_ADMIN_TOKEN)
+      .send({
+        symbol: 'BTC/USDT',
+        timerange: { start: '20250101', end: '20250601' },
+        strategy: 'ShadyTraderReferenceStrategy',
+        mode: 'moderate',
+        pairs: ['BTC/USDT'],
+        timeframe: '1h',
+        dryRunWallet: 10000,
+        tolerance: 1.5,
+      });
+
+    assert.equal(res.status, 400);
+    assert.ok(res.body.error);
   });
 
   // ── POST /api/freqtrade/jobs/:id/cancel ──────────────────────────────
@@ -770,6 +859,7 @@ describe('Freqtrade API Routes', () => {
         timeframes: ['1h'],
         tradingMode: 'spot',
         dataFormat: 'csv', // not valid: json/feather/parquet only
+        timerange: { start: '20250101', end: '20250102' },
       });
 
     assert.equal(res.status, 400);

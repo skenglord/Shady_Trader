@@ -27,6 +27,7 @@ import os from 'os';
 import path from 'path';
 import { z } from 'zod';
 import { logger as defaultLogger } from '../logging/logger.js';
+import { buildFreqtradeEnv, normalizeFreqtradeTimerange } from './validation.js';
 
 // ──────────────────────────────────────────────────────────────────────
 // Public types / Zod schemas
@@ -48,8 +49,7 @@ const noopLogger: Logger = {
   debug: () => undefined
 };
 
-/** Time range filter used by both download and backtest. Either or both
- *  bounds may be omitted (matches Freqtrade's `--timerange` semantics). */
+/** Time range filter used by both download and backtest. */
 const TimerangeSchema = z
   .object({
     start: z.string().optional(),
@@ -164,13 +164,6 @@ const activeJobs = new Map<string, ChildProcess>();
 /** Resolves a venv path to the absolute freqtrade binary path. */
 function defaultFreqtradeBin(venvDir: string): string {
   return path.join(venvDir, 'bin', 'freqtrade');
-}
-
-/** Compose a `--timerange` string from a partial timerange. */
-function composeTimerange(tr?: { start?: string; end?: string }): string | undefined {
-  if (!tr) return undefined;
-  if (!tr.start && !tr.end) return undefined;
-  return `${tr.start ?? ''}-${tr.end ?? ''}`;
 }
 
 /** Build a `freqtrade <subcommand> ...` argv. Filters out undefined. */
@@ -430,15 +423,14 @@ export class FreqtradeBridge {
   ): Promise<AsyncIterable<DownloadProgress>> {
     const parsed = DownloadDataRequestSchema.parse(req);
     const jobId = randomUUID();
-    const timerange = composeTimerange(parsed.timerange);
+    const timerange = normalizeFreqtradeTimerange(parsed.timerange, 'download-data timerange');
 
     const args = buildArgs([
       'download-data',
       '--exchange', parsed.exchange,
       '--pairs', parsed.pairs,
       '--timeframes', parsed.timeframes,
-      timerange !== undefined ? '--timerange' : undefined,
-      timerange,
+      '--timerange', timerange.start === timerange.end ? undefined : `${timerange.start}-${timerange.end}`,
       '--trading-mode', parsed.tradingMode,
       '--data-format-ohlcv', parsed.dataFormat,
       '-c', this.configPath,
@@ -464,7 +456,7 @@ export class FreqtradeBridge {
     const parsed = RunBacktestRequestSchema.parse(req);
     const jobId = randomUUID();
     const start = Date.now();
-    const timerange = composeTimerange(parsed.timerange);
+    const timerange = normalizeFreqtradeTimerange(parsed.timerange, 'backtest timerange');
 
     // Freqtrade writes to a relative dir, so use an absolute temp file
     // to avoid CWD surprises.
@@ -476,7 +468,7 @@ export class FreqtradeBridge {
     const args = buildArgs([
       'backtesting',
       '--strategy', parsed.strategy,
-      '--timerange', timerange,
+      '--timerange', `${timerange.start}-${timerange.end}`,
       '--timeframe', parsed.timeframe,
       '--pairs', parsed.pairs,
       '--dry-run-wallet', String(parsed.dryRunWallet),
@@ -818,7 +810,7 @@ export class FreqtradeBridge {
     const proc = this.spawnFn(this.freqtradeBin, args, {
       cwd: this.userDataDir,
       stdio: 'pipe',
-      env: process.env
+      env: buildFreqtradeEnv(),
     });
     activeJobs.set(jobId, proc);
     return proc;
