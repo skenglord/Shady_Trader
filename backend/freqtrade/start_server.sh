@@ -8,6 +8,15 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+
+# Load project .env if it exists
+if [ -f "${PROJECT_ROOT}/.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "${PROJECT_ROOT}/.env"
+  set +a
+fi
 VENV_DIR="${SCRIPT_DIR}/venv"
 PID_FILE="${SCRIPT_DIR}/.pid"
 LOG_FILE="${SCRIPT_DIR}/freqtrade.log"

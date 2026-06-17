@@ -25,7 +25,8 @@
     },
     "pair_whitelist": [
       "BTC/USDT:USDT",
-      "ETH/USDT:USDT"
+      "ETH/USDT:USDT",
+      "SOL/USDT:USDT"
     ],
     "pair_blacklist": []
   },

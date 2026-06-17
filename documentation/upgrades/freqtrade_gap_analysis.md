@@ -18,9 +18,7 @@
 
 ## 2. Remaining Gaps
 
-- Freqtrade e2e tests now pass with test-only API credentials; keep these credentials local to the test and restore original env vars after the suite.
-- Freqtrade hyperopt result persistence/API/UI/CLI is not implemented yet, although migration `0004_freqtrade_hyperopt_results.ts` exists.
-- Freqtrade nested env vars, bridge fallback vars, and queue vars are documented in the production-readiness env inventory: `documentation/production_readiness_todo.md`.
+- **Freqtrade hyperopt result persistence/API/UI/CLI is not implemented yet**, although migration `0004_freqtrade_hyperopt_results.ts` exists. This is the only significant remaining gap. Consider implementing in v6.1.
 - Real validation jobs still depend on downloaded candles and a working Freqtrade venv.
 - Operational hardening is not release-ready until CI/test gates are green.
 

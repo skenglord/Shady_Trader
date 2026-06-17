@@ -6,7 +6,7 @@
 
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
 
-const BASE_URL = 'http://localhost:3001';
+const BASE_URL = 'http://localhost:3000';
 const API = `${BASE_URL}/api`;
 
 // ─────────────────────────────────────────────

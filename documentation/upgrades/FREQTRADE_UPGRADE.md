@@ -3,7 +3,7 @@
 This document describes the process for upgrading the Freqtrade sidecar
 integration, from dependency changes through smoke test and verification.
 
-**Current status:** Implementation is present. Freqtrade config/env wiring, bounded timerange validation, tolerance normalization, fail-closed API credentials, CLI payload defaults, and React request payloads have been aligned. June 16 targeted verification now uses the local Node/npm toolchain; `tests/freqtrade/freqtrade_e2e.test.ts` passes with test-only API credentials, and `start_server.sh` preserves nested `FREQTRADE__*` env vars over legacy fallbacks. Coverage/complexity/audit gates remain unverified.
+**Current status:** Implementation is present and operational. Freqtrade sidecar is fully configured with Binance testnet keys, webserver auth, and JWT secrets in `.env`. `start_server.sh` sources the project `.env` via `set -a; source .env; set +a`. Historical data downloaded for BTC/USDT:USDT, ETH/USDT:USDT, SOL/USDT:USDT (3 years, 5 timeframes + mark prices + funding rates, 35 MB). API login works via HTTP Basic auth. Strategy discovery passes. Coverage/complexity/audit gates remain unverified.
 
 ## Upgrade Checklist
 

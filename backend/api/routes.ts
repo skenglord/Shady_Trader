@@ -194,6 +194,7 @@ function cacheIdempotentResponse() {
 type Role = 'trader' | 'admin';
 
 const TIMEFRAME_ALLOWLIST = new Set(['1m', '5m', '15m', '1h', '1d']);
+const SYMBOL_ALLOWLIST = new Set(['BTC/USDT', 'ETH/USDT', 'SOL/USDT']);
 const MUTABLE_SETTINGS_BLOCKLIST = new Set(['apiKey', 'apiSecret', 'apiPassword', 'exchange', 'apiProviders']);
 const riskModes = new Set(Object.values(RiskMode));
 const regimeModes = new Set(Object.values(RegimeType));
@@ -528,6 +529,11 @@ const timeframeSchema = z.object({
 });
 const validateTimeframeBody = validateBody(timeframeSchema);
 
+const symbolSchema = z.object({
+  symbol: z.string().refine((v) => SYMBOL_ALLOWLIST.has(v), `Invalid symbol. Allowed: ${[...SYMBOL_ALLOWLIST].join(', ')}`)
+});
+const validateSymbolBody = validateBody(symbolSchema);
+
 const settingsSchema = z.record(z.any()).superRefine((settings, ctx) => {
   for (const key of Object.keys(settings)) {
     if (MUTABLE_SETTINGS_BLOCKLIST.has(key)) {
@@ -788,6 +794,27 @@ apiRouter.post('/timeframe', validateTimeframeBody, async (req, res) => {
   if (engine) {
     await engine.setTimeframe(timeframe);
     res.json({ success: true, message: `Timeframe updated to ${timeframe}` });
+  } else {
+    res.status(500).json({ success: false, message: 'Engine not initialized' });
+  }
+});
+
+apiRouter.post('/symbol', validateSymbolBody, async (req, res) => {
+  const engine = getTradingEngine();
+  const { symbol } = req.body;
+
+  if (!symbol) {
+    return res.status(400).json({ success: false, message: 'Symbol is required' });
+  }
+
+  await runQuery(`
+    INSERT OR REPLACE INTO settings (key, value)
+    VALUES (?, ?)
+  `, ['symbol', symbol]);
+
+  if (engine) {
+    await engine.setSymbol(symbol);
+    res.json({ success: true, message: `Trading pair updated to ${symbol}` });
   } else {
     res.status(500).json({ success: false, message: 'Engine not initialized' });
   }

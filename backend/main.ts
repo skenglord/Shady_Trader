@@ -836,6 +836,18 @@ export class TradingEngine {
     }
   }
 
+  async setSymbol(symbol: string) {
+    this.symbol = symbol;
+    if (this.exchange) {
+      this.exchange.setActiveSymbol(symbol);
+    }
+    logger.info(`Trading pair changed to ${symbol}`, { service: 'main' });
+    this.broadcast({ type: 'status', data: { symbol } });
+    if (this.isRunning) {
+      await this.runCycle();
+    }
+  }
+
   private abortCycleIfNeeded(cycleToken: number, step: string): boolean {
     if (!this.isRunning || cycleToken !== this.cycleAbortToken) {
       logger.debug('Trading cycle aborted before next step', { service: 'TradingEngine', step });

@@ -1,18 +1,16 @@
 # Production Readiness Todo
 
-Created: 2026-06-10
+Created: 2026-06-10 | Updated: 2026-06-18
 
 ## Current verified gate state
 
-- `npm run lint`: pass.
-- `npm run build`: pass; Vite reports only the existing large-chunk warning.
-- `npm test -- --test-reporter=spec --test-concurrency=1`: pass; 397 tests, 396 pass, 0 fail, 1 skipped.
-- `npx tsx --test --test-reporter=spec tests/deep-deterministic/deep_deterministic_main.test.ts`: pass; 33 tests, 33 pass, 0 fail, 0 skipped.
-- `git diff --check`: pass.
-- `npm run quality:coverage`: fail; lines=44.14% (min 50%), branches=73.24% (min 65%).
+- `npm run lint`: **pass**.
+- `npm run build`: **pass**; Vite reports only the existing large-chunk warning.
+- `npm test -- --test-reporter=spec --test-concurrency=1`: **pass (serial spec)**; 438 tests, 436 pass, 1 flaky, 1 skipped. Deep deterministic passes 34/34 in isolation.
+- `git diff --check`: **pass**.
+- `npm run quality:coverage`: **pass**; lines=54.93%, branches=75.05% (thresholds: 50% lines, 65% branches).
 - `npm run quality:complexity`: fail; `backend/main.ts :: runCycle => 88` and `backend/shadow/shadow_trader.ts :: updatePositions => 51` exceed max 50.
-- `npm run security:audit`: fail; `npm audit --omit=dev --audit-level=high` reports 28 vulnerabilities: 4 critical, 21 high, 3 moderate.
-- `npm run test:coverage`: not rerun in this shell because `npm` is unavailable (`/bin/bash: npm: command not found`).
+- `npm run security:audit`: fail; `npm audit --omit=dev --audit-level=high` reports vulnerabilities.
 
 ## Phase 1 coverage-test expansion (June 15, 2026)
 

@@ -1333,6 +1333,28 @@ export default function App() {
     }
   };
 
+  const changeSymbol = async (sym: string) => {
+    try {
+      setLastCallTime(Date.now());
+      const res = await fetch(`${APP_URL}/api/symbol`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-token': TRADER_TOKEN
+        },
+        body: JSON.stringify({ symbol: sym })
+      });
+      if (!res.ok) {
+        debug.warn('[Symbol] API rejected:', await res.text());
+      }
+      setStatus(prev => ({ ...prev, symbol: sym }));
+      setSettings(prev => ({ ...prev, symbol: sym }));
+      fetchCandles();
+    } catch (e) {
+      debug.error(e);
+    }
+  };
+
   const getRegimeColor = (regime: string) => {
     switch (regime) {
       case 'strongbull': return 'text-emerald-500 bg-emerald-500 bg-opacity-10 border border-emerald-500 border-opacity-20';
@@ -1600,7 +1622,24 @@ export default function App() {
               <h1 className="text-2xl font-bold tracking-tight">Adaptive Trading System</h1>
               <InfoButton text="Shadow Trading runs multiple risk profiles simultaneously in a simulated environment. The 'Active Mode' is what would be executed on your real account. This allows you to compare performance across different risk appetites in real-time." />
             </div>
-            <p className="text-gray-400 text-sm mt-1">{status.symbol} • Multi-Regime Shadow Trading</p>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="text-gray-500 text-sm">• Multi-Regime Shadow Trading</span>
+            </div>
+            <div className="flex items-center gap-1.5 mt-2">
+              {['BTC/USDT', 'ETH/USDT', 'SOL/USDT'].map(sym => (
+                <button
+                  key={sym}
+                  onClick={() => changeSymbol(sym)}
+                  className={`px-3 py-1 text-xs rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none ${
+                    status.symbol === sym
+                      ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30'
+                      : 'bg-white/5 hover:bg-white/10 text-gray-400 border border-transparent'
+                  }`}
+                >
+                  {sym}
+                </button>
+              ))}
+            </div>
           </div>
           
           <div className="flex items-center gap-4">
