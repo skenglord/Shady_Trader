@@ -5,6 +5,7 @@ import { logger } from '../logging/logger.js';
 import { randomUUID } from 'crypto';
 import { ExchangeAdapterFactory, BaseExchangeAdapter } from './adapter.js';
 import { PositionReconciliationEngine } from './reconciliation.js';
+import { ProviderRotator, type ProviderName } from './provider-rotator.js';
 
 type ExchangeName = 'coinmarketcap' | 'coinapi' | 'coingecko' | 'binance' | 'kraken' | 'okx' | 'coinbase';
 type Capabilities = {
@@ -43,6 +44,7 @@ export class ExchangeConnector {
   private executionAdapter: ExecutionAdapter;
   private exchangeAdapter: BaseExchangeAdapter;
   private reconciliationEngine: PositionReconciliationEngine;
+  readonly providerRotator: ProviderRotator;
   private symbolMap: Record<string, string> = {
     'BTC/USDT': 'BTC',
     'ETH/USDT': 'ETH',
@@ -58,6 +60,20 @@ export class ExchangeConnector {
     this.apiPassword = apiPassword;
     this.testnet = testnet;
     this.ccApiKey = process.env.CRYPTOCOMPARE_API_KEY || '';
+
+    // Initialize provider rotator with all available API keys
+    this.providerRotator = new ProviderRotator(
+      this.exchangeName as ProviderName,
+      {
+        coingecko: process.env.COINGECKO_API_KEY || '',
+        binance: process.env.BINANCE_API_KEY || '',
+        coinmarketcap: process.env.COINMARKETCAP_API_KEY || this.apiKey,
+        coinapi: process.env.COINAPI_API_KEY || '',
+      },
+      {
+        binance: process.env.BINANCE_SECRET_KEY || this.apiSecret,
+      }
+    );
 
     // Validate credentials for non-demo exchanges in production mode
     // In testnet mode, allow empty credentials for testing purposes
@@ -179,6 +195,21 @@ export class ExchangeConnector {
 
   private async fetchLatestPrice(symbol: string) {
     const baseSymbol = this.symbolMap[symbol] || symbol.split('/')[0];
+
+    // Try provider rotator first (CoinGecko → Binance → CoinMarketCap → CoinAPI)
+    try {
+      const price = await this.providerRotator.fetchPrice(symbol);
+      if (price > 0 && Number.isFinite(price)) {
+        this.currentPrice = price;
+        this.lastUpdate = Date.now();
+        await this.saveTickToDb(symbol, this.currentPrice, 0);
+        return;
+      }
+    } catch (err: any) {
+      logger.debug(`[ExchangeConnector] Rotator price fetch failed: ${err.message}`, { service: 'connector' });
+    }
+
+    // Fall back to exchange-specific endpoints
     try {
       if (this.exchangeName === 'binance') {
         const pair = symbol.replace('/', '');
@@ -594,6 +625,25 @@ export class ExchangeConnector {
   }
 
   async getCandles(symbol: string, timeframe: string, limit: number = 100) {
+    // 1. Try provider rotator (CoinGecko → Binance → CoinMarketCap → CoinAPI)
+    //    with 5s timeout per provider and auto-rotate on failure.
+    try {
+      const rotated = await this.providerRotator.getCandles(symbol, timeframe, limit);
+      if (rotated.length >= 20) {
+        // Persist fetched candles to DB for offline resilience
+        for (const c of rotated) {
+          runQuery(
+            `INSERT OR IGNORE INTO candles (symbol, timeframe, time, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [symbol, timeframe, c.time, c.open, c.high, c.low, c.close, c.volume]
+          ).catch(() => {});
+        }
+        return rotated;
+      }
+    } catch (err: any) {
+      logger.warn(`[ExchangeConnector] Provider rotator failed: ${err.message}`, { service: 'connector' });
+    }
+
+    // 2. Fall back to local DB
     let rows = await runQuery(
       `
       SELECT time, open, high, low, close, volume

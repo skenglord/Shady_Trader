@@ -59,3 +59,6 @@ qa-output/
 qa-output-*/
 cli-smoke-output.txt
 fix_script.py
+
+# Collected API keys (never commit)
+api-keys-collected/

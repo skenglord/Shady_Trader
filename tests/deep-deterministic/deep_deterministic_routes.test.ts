@@ -68,6 +68,12 @@ describe('Deep Deterministic Tests - API Routes', { concurrency: false }, () => 
       const response = await request(app).get('/api/health/ready');
       assert.ok([200, 503].includes(response.status));
     });
+
+    test('GET /api/health/providers returns 503 when engine not initialized', async () => {
+      const response = await request(app).get('/api/health/providers');
+      assert.strictEqual(response.status, 503);
+      assert.ok(response.body.error);
+    });
   });
 
   describe('Status Endpoint', () => {

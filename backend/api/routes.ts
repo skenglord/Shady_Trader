@@ -417,6 +417,15 @@ apiRouter.get('/health/ready', async (req, res) => {
   }
 });
 
+apiRouter.get('/health/providers', async (req, res) => {
+  const engine = getTradingEngine();
+  if (!engine?.exchange) {
+    return res.status(503).json({ error: 'Exchange not initialized' });
+  }
+  const summary = engine.exchange.providerRotator.getSummary();
+  res.status(200).json(summary);
+});
+
 apiRouter.use((req, res, next) => {
   const start = process.hrtime.bigint();
   req.requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);

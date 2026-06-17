@@ -555,10 +555,24 @@ export class TradingEngine {
         config.exchange || process.env.EXCHANGE_NAME || 'coingecko'
       ).toLowerCase();
       const exchangeApiKey = String(
-        config.apiKey || process.env.COINGECKO_API_KEY || process.env.COINAPI_API_KEY || process.env.EXCHANGE_API_KEY || ''
+        config.apiKey
+        || (exchangeName === 'coingecko' && process.env.COINGECKO_API_KEY)
+        || (exchangeName === 'coinapi' && process.env.COINAPI_API_KEY)
+        || (exchangeName === 'binance' && process.env.BINANCE_API_KEY)
+        || (exchangeName === 'kraken' && process.env.KRAKEN_API_KEY)
+        || (exchangeName === 'okx' && process.env.OKX_API_KEY)
+        || (exchangeName === 'coinbase' && process.env.COINBASE_API_KEY)
+        || process.env.EXCHANGE_API_KEY
+        || ''
       );
       const exchangeApiSecret = String(
-        config.apiSecret || process.env.EXCHANGE_API_SECRET || ''
+        config.apiSecret
+        || (exchangeName === 'binance' && process.env.BINANCE_SECRET_KEY)
+        || (exchangeName === 'kraken' && process.env.KRAKEN_PRIVATE_KEY)
+        || (exchangeName === 'okx' && process.env.OKX_SECRET_KEY)
+        || (exchangeName === 'coinbase' && process.env.COINBASE_SECRET_KEY)
+        || process.env.EXCHANGE_API_SECRET
+        || ''
       );
       const exchangeApiPassword = String(
         config.apiPassword || process.env.EXCHANGE_API_PASSWORD || ''

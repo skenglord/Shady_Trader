@@ -75,6 +75,8 @@ Verification caveat:
 
 Source scan found **68 environment variables** referenced by backend, CLI, frontend, and server code. The largest setup gaps are:
 
+> **Update (June 17, 2026)**: `.env.example` was expanded to 87 vars with service-specific env var names (e.g., `BINANCE_API_KEY`, `COINGECKO_API_KEY`). Most "Missing from `.env.example`" items below are now documented. The lists below remain as a cross-reference audit trail.
+
 ### Missing from `.env.example`
 These variables are referenced by source code but not documented in `.env.example`:
 

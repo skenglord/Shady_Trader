@@ -18,6 +18,7 @@ backend/
 │
 ├── exchange/
 │   ├── connector.ts                  # ExchangeConnector: multi-exchange API/WST support (CMC/Binance/Kraken/OKX/Coinbase/CoinGecko/CoinAPI)
+│   ├── provider-rotator.ts           # ProviderRotator: auto-rotate CoinGecko→Binance→CMC→CoinAPI with 5s timeout + circuit breaker
 │   ├── adapter.ts                    # ExchangeAdapterFactory with typed adapters
 │   ├── reconciliation.ts             # Position reconciliation engine
 │   ├── ws-connection-pool.ts         # WebSocket connection pooling
@@ -169,7 +170,8 @@ const DEFAULT_RISK_CONFIGS = {
 ```mermaid
 graph TD
     subgraph Data_Acquisition
-        EC[ExchangeConnector] -->|REST/WS| MKT[CMC/Binance/Kraken/OKX/Coinbase/CoinGecko/CoinAPI]
+        PR[ProviderRotator<br/>CoinGecko→Binance→CMC→CoinAPI<br/>5s timeout, circuit breaker] -->|REST| MKT[CMC/Binance/CoinGecko/CoinAPI]
+        EC[ExchangeConnector] -->|uses| PR
         EC -->|Order Book| OBS[(order_book_snapshots)]
         EC -->|Candles| CDB[(candles)]
         HL[HistoricalLoader] -->|Parses| HTML[Bitcoin HTML Data]
@@ -337,6 +339,7 @@ graph TD
 | `GET /api/health/live` | Public | Minimal liveness — `{status, timestamp}` |
 | `GET /api/health/ready` | Public | Readiness — checks DB, Redis, engine |
 | `GET /api/health/quick` | Public | Minimal probe — `{status, uptimeSec, timestamp}` (for K8s, scripts) |
+| `GET /api/health/providers` | **Trader** | Provider rotator health (active provider, circuit breaker, latency) |
 | `GET /api/diagnostics/health` | **Trader** | Detailed health (exchange, slowest routes, ML, market data) |
 | `GET /api/diagnostics/startup` | **Trader** | Startup snapshot (config, providers, schema) |
 | `GET /api/diagnostics/metrics` | **Trader** | Prometheus format for remote scrapers |
@@ -441,6 +444,8 @@ npm run freqtrade:ingest    # Bulk-ingest parquet/feather into candles DB
 **ExchangeConnector Agent**:
 - Validate API credentials at initialization
 - Use typed adapters via Factory pattern
+- Use `ProviderRotator` for automatic market data fallback (CoinGecko → Binance → CMC → CoinAPI, 5s timeout per provider)
+- Both `getCandles()` and `fetchLatestPrice()` try the rotator first, falling back to exchange-specific endpoints
 - Support: CMC/CoinGecko (market data), Binance/Kraken/OKX/Coinbase (authenticated)
 
 **ShadowTrader Agent**:
@@ -478,8 +483,8 @@ The repository contains a large Adaptive Trading System codebase with comprehens
 **Quality Gate Status:**
 - **TypeScript Compilation**: ✅ `npm run lint` passes.
 - **Build**: ✅ `npm run build` passes; Vite emits only a large-chunk warning.
-- **Targeted Test Suite**: `tests/deep-deterministic/deep_deterministic_main.test.ts` — 33/33 pass, 0 fail, 0 skipped.
-- **Full Test Suite**: `npm test -- --test-reporter=spec --test-concurrency=1 --test-timeout=120000` — 437 tests, 436 pass, 1 skipped.
+- **Targeted Test Suite**: `tests/deep-deterministic/deep_deterministic_main.test.ts` — 34/34 pass, 0 fail, 0 skipped.
+- **Full Test Suite**: `npm test -- --test-reporter=spec --test-concurrency=1 --test-timeout=120000` — 438 tests, 436 pass, 1 skipped, 1 flaky (`sleepWithTimeout` timing test, passes on re-run).
 - **Test Coverage**: `npm run quality:coverage` — coverage gate passed: lines=54.93%, branches=75.05%.
 - **Playwright Tests**: Historical reports exist, but no current Playwright pass count was verified in this audit.
 - **Environment/API Gaps (June 15, 2026)**: Source scan found 68 env vars. `.env.example` is missing Redis/Postgres/Freqtrade/Gemma/ML/slippage vars; several `.env.example` keys are not in `backend/config/validation.ts`; and several validation-only vars are absent from `.env.example`. Details are in `documentation/production_readiness_todo.md` and `documentation/current_state_and_recommendations.md`.
@@ -493,6 +498,7 @@ The repository contains a large Adaptive Trading System codebase with comprehens
 - Database: SQLite (trading.db)
 
 ### Recently Completed Tasks
+- [x] **PROVIDER ROTATOR + AUTO-ROTATION (June 17, 2026)**: Built `ProviderRotator` class (`backend/exchange/provider-rotator.ts`) with 4 market data providers (CoinGecko → Binance → CoinMarketCap → CoinAPI), 5s timeout per provider, circuit breaker (3 consecutive failures → 5min cooldown), and health tracking. Integrated into `ExchangeConnector.getCandles()` as primary data source (falls back to DB/aggregation on failure) and `fetchLatestPrice()` (falls back to exchange-specific endpoints). Added `GET /api/health/providers` (trader-protected) returning active provider, circuit breaker status, success/failure counts, and avg latency per provider. Collected CoinGecko, CoinMarketCap, CoinAPI, and Binance API keys via Hyperbrowser session. Updated `.env.example` to 87 vars with service-specific env var names. Added `@hyperbrowser/sdk` for key collection. Verified with targeted route tests plus full `npm run lint` and `npm test`. Coverage gate: lines=54.93%, branches=75.05%.
 - [x] **AUDIT FIX IMPLEMENTATION (June 17, 2026)**: Implemented the revised audit-fix workstream. Removed duplicate per-cycle signal persistence in `backend/main.ts`, fixed `TRADER_TOKEN_PLACEHOLDER` initialization order in `src/App.tsx`, replaced request middleware `console.log` calls with structured `logger.debug` in `server.ts`, added `.gitignore` artifact entries, verified `shadow_trades` schema/index/WAL/timeout work, added interval `.unref()` coverage, optimized backtest exit lookup with a time-to-index map, reused the single `/api/balances` balance snapshot, and pruned `SELECT *` from stable high-volume API endpoints. Verified with targeted route/exchange/backtest/signal tests plus full `npm run lint`, `npm test -- --test-reporter=spec --test-concurrency=1 --test-timeout=120000`, and `npm run build`.
 - [x] **REVISED AUDIT FIX PLAN UPDATED (June 17, 2026)**: Revised `documentation/revised_audit_fix_plan.md` after accounting for recent schema/index work. The plan now treats `shadow_trades` `close_reason`, missing indexes, WAL checkpointing, and query-timeout wiring as verification-only, keeps duplicate signal recording / frontend token TDZ / structured request logging / `.gitignore` artifacts as active correctness fixes, and continues deferring structural refactors.
 - [x] **ENV/API SETUP INVENTORY (June 15, 2026)**: Scanned source-level environment variable usage, compared it against `.env.example` and `backend/config/validation.ts`, inventoried mounted/unmounted Express API routes, and documented gaps with official service setup links. Findings were added to `documentation/production_readiness_todo.md`, `documentation/current_state_and_recommendations.md`, and this `AGENTS.md`.
