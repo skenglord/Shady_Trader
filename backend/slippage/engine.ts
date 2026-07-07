@@ -1,5 +1,4 @@
 import { Decimal } from 'decimal.js';
-import { nj } from 'numjs';
 import {
   SlippageEngine as ISlippageEngine,
   OrderRequest,
