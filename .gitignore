@@ -25,6 +25,8 @@ backups/
 *.webm
 coverage/
 coverage/tmp/
+.nyc_output/
+playwright-report/
 playwright-results.json
 test-results/
 *.pyc

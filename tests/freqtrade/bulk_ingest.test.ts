@@ -5,8 +5,11 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-const scriptPath = join('/home/creekz/Shady_Trader', 'backend/freqtrade/scripts/bulk_ingest_candles.py');
-const venvPython = '/home/creekz/Shady_Trader/backend/freqtrade/venv/bin/python3';
+// Resolve paths relative to the repo root (process.cwd() when run via `npm test`)
+// instead of a hardcoded /home/creekz absolute path, so the test is portable.
+const REPO_ROOT = process.cwd();
+const scriptPath = join(REPO_ROOT, 'backend/freqtrade/scripts/bulk_ingest_candles.py');
+const venvPython = join(REPO_ROOT, 'backend/freqtrade/venv/bin/python3');
 
 /**
  * Helper: query the SQLite DB via Python and return a scalar result.
