@@ -12,17 +12,16 @@ const debug = {
 };
 import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
 import FreqtradePanel from './components/FreqtradePanel';
+import { setTokens, getAdminToken, getTraderToken } from './auth/tokenStore';
 
 const APP_URL = '';
-// SECURITY: Auth tokens are injected at build time via Vite define().
-// In dev, they fall back to the .env values. In production, the build must
-// include these via CI/CD secrets. Never commit real tokens.
-// @ts-ignore - Vite injects these at build time
-const ADMIN_TOKEN = (import.meta as any).env?.VITE_ADMIN_TOKEN || '';
-// @ts-ignore - Vite injects these at build time
-const TRADER_TOKEN_PLACEHOLDER = '__set_VITE_TRADER_TOKEN__';
-// @ts-ignore - Vite injects these at build time
-const TRADER_TOKEN = (import.meta as any).env?.VITE_TRADER_TOKEN || TRADER_TOKEN_PLACEHOLDER;
+// SECURITY: Auth tokens are now supplied at runtime by the operator via the
+// token-entry UI and held in the in-memory token store (src/auth/tokenStore.ts).
+// They are never baked into the compiled bundle. The helper functions below read
+// the store at call-time so the latest value is always used.
+function ADMIN_TOKEN(): string { return getAdminToken() || ''; }
+function TRADER_TOKEN(): string { return getTraderToken() || ''; }
+const TRADER_TOKEN_PLACEHOLDER = '__TRADER_TOKEN_NOT_SET__';
 
 // Request deduplication cache — prevents duplicate identical requests in flight.
 // Two-layer strategy:
@@ -91,7 +90,7 @@ async function safeFetch(url: string, options?: RequestInit): Promise<{ ok: bool
     // Use admin token for admin endpoints, trader for others
     const adminPaths = ['/settings', '/risk-configs', '/start', '/stop', '/kill', '/backtest', '/optimize', '/import-csv', '/ml/', '/freqtrade/', '/mc/'];
     const isAdminCall = adminPaths.some(p => url.includes(p));
-    const token = isAdminCall ? ADMIN_TOKEN : TRADER_TOKEN;
+    const token = isAdminCall ? ADMIN_TOKEN() : TRADER_TOKEN();
     if (token && !token.includes('PLACEHOLDER')) {
       headers['x-api-token'] = token;
     }
@@ -205,7 +204,72 @@ enum RiskMode {
   DEGEN = "degen"
 }
 
-export default function App() {
+// --- Operator token-entry UI (shown at app start when no trader token is set) ---
+function TokenEntry({ onSubmit }: { onSubmit: (admin: string, trader: string) => void }) {
+  const [admin, setAdmin] = useState('');
+  const [trader, setTrader] = useState('');
+  const [error, setError] = useState('');
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!trader.trim()) {
+      setError('Trader token is required.');
+      return;
+    }
+    onSubmit(admin.trim(), trader.trim());
+  };
+  return (
+    <div className="min-h-screen bg-[#121212] text-gray-100 p-6 font-sans flex items-center justify-center">
+      <form onSubmit={handleSubmit} className="w-full max-w-sm space-y-4">
+        <h1 className="text-xl font-bold">Operator Authentication</h1>
+        <p className="text-sm text-gray-400">Enter API tokens to access the dashboard. Tokens are held in memory only and cleared on page reload.</p>
+        <div>
+          <label className="block text-sm text-gray-400 mb-1">Admin token (optional)</label>
+          <input
+            type="password"
+            value={admin}
+            onChange={e => setAdmin(e.target.value)}
+            className="w-full px-3 py-2 rounded bg-gray-800 border border-gray-700 text-sm"
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <label className="block text-sm text-gray-400 mb-1">Trader token (required)</label>
+          <input
+            type="password"
+            value={trader}
+            onChange={e => setTrader(e.target.value)}
+            className="w-full px-3 py-2 rounded bg-gray-800 border border-gray-700 text-sm"
+            autoComplete="off"
+          />
+        </div>
+        {error && <p className="text-sm text-red-400">{error}</p>}
+        <button type="submit" className="w-full px-4 py-2 rounded bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium">
+          Enter Dashboard
+        </button>
+      </form>
+    </div>
+  );
+}
+
+// Gated wrapper: shows the token-entry UI until a trader token is provided,
+// then renders the dashboard. The `entered` state ensures the token check
+// re-evaluates after setTokens() is called.
+function AppGated() {
+  const [entered, setEntered] = useState(false);
+  if (!entered && !getTraderToken()) {
+    return (
+      <TokenEntry
+        onSubmit={(admin, trader) => {
+          setTokens({ adminToken: admin || undefined, traderToken: trader });
+          setEntered(true);
+        }}
+      />
+    );
+  }
+  return <App />;
+}
+
+function App() {
   const [status, setStatus] = useState({ isRunning: false, currentRegime: 'uncertain', symbol: 'BTC/USDT', timeframe: '15m' });
   const [performance, setPerformance] = useState<any>({});
   const [regimeReasoning, setRegimeReasoning] = useState('');
@@ -332,13 +396,12 @@ export default function App() {
     fetchBotTrades();
 
     // Setup WebSocket with timeout
-    // Pass the trader token as a query string param — server.ts verifyClient validates it
-    // against API_TRADER_TOKEN. WebSocket browsers cannot send custom headers, so the
-    // token in the query string is the standard WS auth pattern.
+    // T3: auth is now a first-message handshake, NOT a query-string token.
+    // The WS URL carries no secret. After connect, the client sends
+    // {"type":"auth","token":"<trader_token>"} and the server responds with
+    // {"type":"auth_ok","role":"trader"} before any broadcast data flows.
     const wsBase = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}`;
-    const wsUrl = TRADER_TOKEN && TRADER_TOKEN !== TRADER_TOKEN_PLACEHOLDER
-      ? `${wsBase}/?token=${encodeURIComponent(TRADER_TOKEN)}`
-      : wsBase;
+    const wsUrl = wsBase;
     const ws = new WebSocket(wsUrl);
 
     // Connection timeout - prevent hanging forever
@@ -352,6 +415,15 @@ export default function App() {
     ws.onopen = () => {
       clearTimeout(wsTimeout);
       debug.log('WebSocket connected');
+      // T3: send the auth handshake as the first message after connect.
+      // The server will close the socket (4401) if this is not received
+      // within WS_AUTH_TIMEOUT_MS.
+      const token = TRADER_TOKEN();
+      if (token) {
+        ws.send(JSON.stringify({ type: 'auth', token }));
+      } else {
+        debug.warn('No trader token available for WS auth — connection will be rejected by server');
+      }
     };
 
     ws.onerror = (error) => {
@@ -370,6 +442,11 @@ export default function App() {
         lastMessageTimeRef.current = Date.now();
         setIsDataPassing(true);
         const data = JSON.parse(event.data);
+        // T3: handle the auth confirmation message (no-op, just acknowledge)
+        if (data.type === 'auth_ok') {
+          debug.log(`WebSocket auth confirmed: role=${data.role}`);
+          return;
+        }
         if (data.type === 'status') {
           setStatus(prev => ({ ...prev, ...data.data }));
         } else if (data.type === 'regime') {
@@ -787,7 +864,7 @@ export default function App() {
   const fetchBotTrades = async () => {
     setLastCallTime(Date.now());
     const result = await safeFetch(`${APP_URL}/api/trades/closed?limit=100`, {
-      headers: { 'x-api-token': ADMIN_TOKEN }
+      headers: { 'x-api-token': ADMIN_TOKEN() }
     });
     if (result.ok && result.data) {
       setBotTrades(Array.isArray(result.data) ? result.data : []);
@@ -805,7 +882,7 @@ export default function App() {
   const fetchSettings = async () => {
     setLastCallTime(Date.now());
     const result = await safeFetch(`${APP_URL}/api/settings`, {
-      headers: { 'x-api-token': ADMIN_TOKEN }
+      headers: { 'x-api-token': ADMIN_TOKEN() }
     });
     if (result.ok && result.data) {
       setSettings(prev => ({ ...prev, ...result.data }));
@@ -815,7 +892,7 @@ export default function App() {
   const fetchRiskConfigs = async () => {
     setLastCallTime(Date.now());
     const result = await safeFetch(`${APP_URL}/api/risk-configs`, {
-      headers: { 'x-api-token': ADMIN_TOKEN }
+      headers: { 'x-api-token': ADMIN_TOKEN() }
     });
     if (result.ok && result.data) {
       setRiskConfigs(result.data);
@@ -829,7 +906,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': ADMIN_TOKEN
+          'x-api-token': ADMIN_TOKEN()
         },
         body: JSON.stringify(riskConfigs)
       });
@@ -844,7 +921,7 @@ export default function App() {
       setLastCallTime(Date.now());
       const res = await fetch(`${APP_URL}/api/risk-configs/reset`, {
         method: 'POST',
-        headers: { 'x-api-token': ADMIN_TOKEN }
+        headers: { 'x-api-token': ADMIN_TOKEN() }
       });
       const data = await res.json();
       if (data.success) {
@@ -860,7 +937,7 @@ export default function App() {
       setLastCallTime(Date.now());
       const res = await fetch(`${APP_URL}/api/risk-configs/ai-recommend`, {
         method: 'POST',
-        headers: { 'x-api-token': ADMIN_TOKEN }
+        headers: { 'x-api-token': ADMIN_TOKEN() }
       });
       if (!res.ok) {
         throw new Error(`API error: ${res.status}`);
@@ -906,7 +983,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': ADMIN_TOKEN
+          'x-api-token': ADMIN_TOKEN()
         },
         body: JSON.stringify(payload)
       });
@@ -990,7 +1067,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': ADMIN_TOKEN
+          'x-api-token': ADMIN_TOKEN()
         },
         body: JSON.stringify(settings)
       });
@@ -1229,7 +1306,7 @@ export default function App() {
       const endpoint = status.isRunning ? '/api/stop' : '/api/start';
       const result = await safeFetch(`${APP_URL}${endpoint}`, {
         method: 'POST',
-        headers: { 'x-api-token': ADMIN_TOKEN }
+        headers: { 'x-api-token': ADMIN_TOKEN() }
       });
       if (result.ok) {
         fetchStatus();
@@ -1276,7 +1353,7 @@ export default function App() {
         setLastCallTime(Date.now());
         await fetch(`${APP_URL}/api/start`, {
           method: 'POST',
-          headers: { 'x-api-token': ADMIN_TOKEN }
+          headers: { 'x-api-token': ADMIN_TOKEN() }
         });
         setStatus(prev => ({ ...prev, isRunning: true }));
       } catch (e) {
@@ -1290,7 +1367,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': TRADER_TOKEN
+          'x-api-token': TRADER_TOKEN()
         },
         body: JSON.stringify({
           side,
@@ -1319,7 +1396,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': TRADER_TOKEN
+          'x-api-token': TRADER_TOKEN()
         },
         body: JSON.stringify({ timeframe: tf })
       });
@@ -1340,7 +1417,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': TRADER_TOKEN
+          'x-api-token': TRADER_TOKEN()
         },
         body: JSON.stringify({ symbol: sym })
       });
@@ -1415,7 +1492,7 @@ export default function App() {
       setLastCallTime(Date.now());
       await safeFetch(`${APP_URL}/api/market/refresh`, {
         method: 'POST',
-        headers: { 'x-api-token': TRADER_TOKEN }
+        headers: { 'x-api-token': TRADER_TOKEN() }
       });
       await fetchMarketData();
       await fetchMarketNews();
@@ -1432,7 +1509,7 @@ export default function App() {
       setLastCallTime(Date.now());
       const res = await fetch(`${APP_URL}/api/optimize`, {
         method: 'POST',
-        headers: { 'x-api-token': ADMIN_TOKEN }
+        headers: { 'x-api-token': ADMIN_TOKEN() }
       });
       const data = await res.json();
       if (data.success) {
@@ -1464,7 +1541,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': TRADER_TOKEN
+          'x-api-token': TRADER_TOKEN()
         },
         body: JSON.stringify({ amount })
       });
@@ -1477,7 +1554,9 @@ export default function App() {
       if (data.balances) {
         updateBalances(data.balances);
       } else if (data.success) {
-        const balRes = await fetch(`${APP_URL}/api/balances`);
+        const balRes = await fetch(`${APP_URL}/api/balances`, {
+          headers: { 'x-api-token': TRADER_TOKEN() }
+        });
         if (balRes.ok) {
           const balData = await balRes.json();
           updateBalances(balData);
@@ -1497,7 +1576,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': TRADER_TOKEN
+          'x-api-token': TRADER_TOKEN()
         },
         body: JSON.stringify({ amount })
       });
@@ -1514,7 +1593,7 @@ export default function App() {
       setLastCallTime(Date.now());
       const response = await fetch(`${APP_URL}/api/balances/half`, {
         method: 'POST',
-        headers: { 'x-api-token': TRADER_TOKEN }
+        headers: { 'x-api-token': TRADER_TOKEN() }
       });
       const data = await response.json();
       if (data.balances) updateBalances(data.balances);
@@ -1528,7 +1607,7 @@ export default function App() {
       setLastCallTime(Date.now());
       const response = await fetch(`${APP_URL}/api/balances/double`, {
         method: 'POST',
-        headers: { 'x-api-token': TRADER_TOKEN }
+        headers: { 'x-api-token': TRADER_TOKEN() }
       });
       const data = await response.json();
       if (data.balances) updateBalances(data.balances);
@@ -1545,7 +1624,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': TRADER_TOKEN
+          'x-api-token': TRADER_TOKEN()
         },
         body: JSON.stringify({ tradeId, currentPrice })
       });
@@ -1566,7 +1645,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': TRADER_TOKEN
+          'x-api-token': TRADER_TOKEN()
         },
         body: JSON.stringify({ tradeId, stopLoss, takeProfit })
       });
@@ -1584,7 +1663,7 @@ export default function App() {
         setLastCallTime(Date.now());
         await safeFetch(`${APP_URL}/api/kill`, {
           method: 'POST',
-          headers: { 'x-api-token': ADMIN_TOKEN }
+          headers: { 'x-api-token': ADMIN_TOKEN() }
         });
         fetchStatus();
         fetchTrades();
@@ -1602,7 +1681,7 @@ export default function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-api-token': TRADER_TOKEN
+          'x-api-token': TRADER_TOKEN()
         },
         body: JSON.stringify({ mode })
       });
@@ -1661,7 +1740,7 @@ export default function App() {
                         method: 'POST',
                         headers: {
                           'Content-Type': 'application/json',
-                          'x-api-token': TRADER_TOKEN
+                          'x-api-token': TRADER_TOKEN()
                         },
                         body: JSON.stringify({ regime: val === 'auto' ? null : val })
                       });
@@ -3309,3 +3388,5 @@ export default function App() {
     </div>
   );
 }
+
+export default AppGated;

@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Activity, AlertTriangle, CheckCircle, Clock, Database, Download, Loader2, Play, XCircle, RefreshCw, TrendingUp, TrendingDown, Minus, AlertCircle, Settings, ChevronRight } from 'lucide-react';
+import { getAdminToken } from '../auth/tokenStore';
 
 // Types
 interface FreqtradeJob {
@@ -57,11 +58,7 @@ function setCached(url: string, data: any) {
 
 const APP_URL = '';
 function getToken(): string {
-  try {
-    // @ts-ignore
-    const token = (import.meta as any).env?.VITE_ADMIN_TOKEN || '';
-    return token;
-  } catch { return ''; }
+  return getAdminToken() || '';
 }
 
 async function safeFetch(url: string, options?: RequestInit): Promise<{ ok: boolean; data?: any; error?: string }> {

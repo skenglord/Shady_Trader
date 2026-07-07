@@ -1,2 +1,0 @@
-file trading-system.aof.1.base.rdb seq 1 type b
-file trading-system.aof.1.incr.aof seq 1 type i
