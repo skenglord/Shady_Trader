@@ -106,7 +106,7 @@ spec:
   template:
     metadata:
       labels:
-        app: shady-trader-app
+        app: shady-trader
         component: backend
       annotations:
         prometheus.io/scrape: "true"
