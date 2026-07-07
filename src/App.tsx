@@ -11,7 +11,7 @@
  * T3 invariant: the WS sends {type:'auth', token} as its first message (no query-string secret).
  */
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Activity, TrendingUp, TrendingDown, Minus, AlertCircle, X, ExternalLink, Database as DatabaseIcon } from 'lucide-react';
+import { Activity, TrendingUp, TrendingDown, Minus, AlertCircle, X, ExternalLink, Database as DatabaseIcon, Brain } from 'lucide-react';
 import { safeFetch, APP_URL, adminToken, traderToken, debug } from './api/client';
 import { setTokens, getTraderToken } from './auth/tokenStore';
 import { useTradingWebSocket } from './hooks/useTradingWebSocket';
@@ -22,6 +22,7 @@ import BacktestOverlay from './components/BacktestOverlay';
 import RiskConfigModal from './components/RiskConfigModal';
 import EngineControls from './components/EngineControls';
 import FreqtradePanel from './components/FreqtradePanel';
+import MLDashboard from './components/MLDashboard';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 
 const StatusLight = ({ isLive, apiName, isDataPassing, lastCallTime }: { isLive: boolean; apiName: string; isDataPassing: boolean; lastCallTime: number }) => {
@@ -153,6 +154,7 @@ function App() {
   const [isBacktesting, setIsBacktesting] = useState(false);
   const [balances, setBalances] = useState<typeof DEFAULT_BALANCES>(DEFAULT_BALANCES);
   const [showFreqtrade, setShowFreqtrade] = useState(false);
+  const [showMlDashboard, setShowMlDashboard] = useState(false);
   const [marketData, setMarketData] = useState<any>(null);
   const [isRefreshingMarket, setIsRefreshingMarket] = useState(false);
   const [indicatorToggles, setIndicatorToggles] = useState<IndicatorToggles>({ ema9: false, ema21: false, ema50: false, vwap: false, bb: false });
@@ -264,6 +266,7 @@ function App() {
             </div>
             <SignalConfidencePanel signalStatus={signalStatus} currentRegime={status.currentRegime} />
             <EngineControls isRunning={status.isRunning} currentPrice={currentPrice} balances={balances} riskConfigs={riskConfigs} activeMode={activeMode} symbol={status.symbol} onToggleEngine={toggleEngine} onManualTrade={manualTrade} onKillBot={killBot} onOpenSettings={() => setShowSettings(true)} onOpenFreqtrade={() => setShowFreqtrade(true)} />
+            <button onClick={() => setShowMlDashboard(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-purple-500 focus-visible:outline-none" aria-label="Open ML monitoring dashboard"><Brain className="w-4 h-4" />ML Dashboard</button>
           </div>
         </div>
         {/* Market Overview Bar */}
@@ -286,6 +289,7 @@ function App() {
       </div>
       {showSettings && <SettingsModal settings={settings} setSettings={setSettings} onClose={() => setShowSettings(false)} onSave={saveSettings} />}
       {showFreqtrade && (<div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowFreqtrade(false)}><div className="bg-[#1e1e1e] border border-white/10 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}><div className="flex justify-between items-center p-4 border-b border-white/10"><h2 className="text-xl font-bold flex items-center gap-2"><DatabaseIcon className="w-5 h-5 text-indigo-400" />Freqtrade Integration</h2><button onClick={() => setShowFreqtrade(false)} className="text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none" aria-label="Close Freqtrade panel"><X className="w-5 h-5" /></button></div><div className="p-4"><FreqtradePanel /></div></div></div>)}
+      {showMlDashboard && (<div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowMlDashboard(false)}><div className="bg-[#1e1e1e] border border-white/10 rounded-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}><div className="flex justify-between items-center p-4 border-b border-white/10"><h2 className="text-xl font-bold flex items-center gap-2"><Brain className="w-5 h-5 text-purple-400" />ML Monitoring</h2><button onClick={() => setShowMlDashboard(false)} className="text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none" aria-label="Close ML dashboard"><X className="w-5 h-5" /></button></div><div className="p-4"><MLDashboard symbol={status.symbol} /></div></div></div>)}
     </div>
   );
 }

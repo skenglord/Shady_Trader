@@ -42,4 +42,12 @@ test('T12 smoke: dashboard loads, chart renders, engine status visible, kill con
     await page.waitForTimeout(800);
     expect(confirmDialogSeen).toBe(true);
   }
+
+  // T13: the ML Dashboard nav affordance opens the ML view and it renders.
+  const mlBtn = page.locator('button', { hasText: 'ML Dashboard' });
+  await expect(mlBtn).toBeVisible({ timeout: 10000 });
+  await mlBtn.click();
+  await page.waitForTimeout(1500);
+  // The ML modal header "ML Monitoring" should appear.
+  await expect(page.getByRole('heading', { name: /ML monitoring/i })).toBeVisible({ timeout: 10000 });
 });
