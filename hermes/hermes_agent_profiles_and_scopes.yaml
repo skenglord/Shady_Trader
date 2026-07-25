@@ -1,0 +1,162 @@
+---
+# ASTS Hermes profiles and write scopes — CORRECTED to the real repository layout.
+#
+# SUPERSEDES the original hermes_agent_profiles_and_scopes.yaml, whose scopes
+# (src/domain, src/application/*, src/infrastructure/*, migrations, tests/unit)
+# described a TARGET structure that does not exist in this repository.
+#
+#   backend/**  = ALL backend domain code
+#   src/**      = React FRONTEND only
+#
+# Assigning backend work to src/domain/** would either write into the frontend
+# or create an empty parallel tree. See hermes/06-HERMES-OPERATING-MODEL.md.
+version: 2
+programme: ASTS-HARDENING
+board: crypto-trading-hardening
+baseline_sha: "63f1ecc0a2a90b8035cd8773e897e0953577c523"
+
+profiles:
+  orchestrator:
+    role: programme_orchestrator
+    writes_code: false
+    recommended_toolsets: [kanban, clarify]
+
+  architecture:
+    role: architecture_and_contracts
+    write_scope: [documentation/architecture]
+    reviewers: [review-architecture]
+
+  domain-types:
+    role: unit_safe_domain_types
+    write_scope: [backend/types, backend/validation]
+    reviewers: [review-architecture]
+
+  execution-oms:
+    role: order_management
+    write_scope: [backend/execution, backend/shadow]
+    reviewers: [review-architecture, qa-integration]
+    note: "Cluster C1 lives here. Sequence strictly; never parallelise within shadow_trader.ts."
+
+  exchange-reconciliation:
+    role: exchange_reconciliation
+    write_scope: [backend/exchange]
+    reviewers: [review-architecture, qa-integration]
+    note: "PositionReconciliationEngine already exists — wire it, do not rebuild it."
+
+  ledger-accounting:
+    role: ledger_and_pnl
+    write_scope: [backend/balance, backend/analytics]
+    reviewers: [risk-engine, qa-unit]
+
+  risk-engine:
+    role: final_pretrade_risk
+    write_scope: [backend/risk]
+    reviewers: [qa-quant, review-architecture]
+
+  market-data:
+    role: point_in_time_data
+    write_scope: [backend/api/marketDataService.ts, backend/exchange/provider-rotator.ts]
+    reviewers: [qa-integration]
+
+  indicator-validation:
+    role: indicator_correctness
+    write_scope: [backend/indicators]
+    reviewers: [qa-unit, qa-quant]
+
+  regime-research:
+    role: regime_calibration
+    write_scope: [backend/regime]
+    reviewers: [qa-quant]
+
+  backtest-replay:
+    role: deterministic_replay
+    write_scope: [backend/backtest, backend/research]
+    reviewers: [qa-quant]
+
+  quant-research:
+    role: quantitative_research
+    write_scope: [backend/research, reports/quant]
+    prohibited_scope: [config/production.env, backend/risk, backend/shadow]
+    reviewers: [qa-quant]
+
+  ai-governance:
+    role: advisory_ai_gateway
+    write_scope: [backend/ai, backend/ml]
+    reviewers: [review-security, risk-engine]
+
+  database:
+    role: persistence_and_migrations
+    write_scope: [backend/migrations, backend/database.ts, backend/database_postgres.ts, backend/database_worker.ts]
+    reviewers: [ledger-accounting, review-security]
+
+  security:
+    role: security_hardening
+    write_scope: [documentation/security, backend/config]
+    reviewers: [review-security]
+
+  observability:
+    role: telemetry_and_runbooks
+    write_scope: [backend/observability, backend/logging, documentation/runbooks]
+    reviewers: [review-architecture]
+
+  frontend:
+    role: react_spa
+    write_scope: [src]
+    reviewers: [review-architecture]
+    note: "ADDED — the original YAML had no owner for src/, silently exposing the SPA to backend profiles."
+
+  infra:
+    role: deployment_and_ci
+    write_scope: [k8s, docker, .github/workflows]
+    reviewers: [review-security, qa-integration]
+    note: "ADDED — owns G-076 (red CI) triage."
+
+  qa-unit:
+    role: unit_and_property_verification
+    write_scope: [tests]
+    reviewers: []
+
+  qa-integration:
+    role: integration_and_fault_verification
+    write_scope: [tests/integration, tests/playwright]
+    reviewers: []
+
+  qa-quant:
+    role: independent_quant_verification
+    write_scope: [reports/verification]
+    prohibited_scope: [config/production.env]
+    reviewers: []
+
+  review-architecture:
+    role: independent_architecture_review
+    writes_code: false
+
+  review-security:
+    role: independent_security_review
+    writes_code: false
+
+  release-manager:
+    role: merge_release_and_rollback
+    write_scope: [documentation/releases]
+    reviewers: []
+
+# Files multiple phases touch. NEVER allow two concurrent tasks on these.
+contested_paths:
+  backend/main.ts:
+    primary: architecture
+    touched_by_phases: [0, 5, 6, 7, 10]
+    note: "58.9 KB composition root. Biggest conflict risk in the programme. Exclusive lock."
+  backend/api/routes.ts:
+    primary: architecture
+    note: "73.2 KB, largest file in the repo. Serialize all edits."
+  backend/shadow/shadow_trader.ts:
+    primary: execution-oms
+    note: "Cluster C1: G-001, G-002, G-004, G-014, G-028, G-068 all live here."
+
+protected_paths:
+  - package-lock.json
+  - docker-compose.yml
+  - .github/workflows/**
+  - config/production.env
+  - hermes/**
+  - hermes/okf/**
