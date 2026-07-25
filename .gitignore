@@ -25,6 +25,8 @@ backups/
 *.webm
 coverage/
 coverage/tmp/
+.nyc_output/
+playwright-report/
 playwright-results.json
 test-results/
 *.pyc
@@ -68,3 +70,13 @@ linux-amd64/
 
 # Collected API keys (never commit)
 api-keys-collected/
+
+# Redis persistence / binaries / stale backups (T11 git hygiene purge)
+data/*.rdb
+data/appendonlydir/
+*.backup
+helm.tar.gz
+
+# Editor / workspace settings (contains secrets — never commit)
+settings.json
+.vscode/settings.json

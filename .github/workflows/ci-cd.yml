@@ -114,8 +114,29 @@ jobs:
         docker tag shady-trader:${{ github.sha }} shady-trader:latest
         docker push shady-trader:latest
 
-  deploy-staging:
+  # Validate Kubernetes manifests before any deploy job runs.
+  # Both deploy-staging and deploy-production depend on this job so that a
+  # malformed manifest fails CI instead of reaching kubectl apply.
+  validate-manifests:
     needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Validate Kubernetes manifests with kubeconform
+      uses: yannh/kubeconform-action@v1
+      with:
+        files: k8s/
+        # Skip the monitoring/ subdirectory — it contains vendored CRD-based
+        # bundles (Prometheus, Grafana) whose schemas are not available to
+        # kubeconform and would produce false negatives.
+        ignore: k8s/monitoring/
+        # Use Kubernetes 1.28.0 schemas for validation
+        kubernetes_version: "1.28.0"
+
+  deploy-staging:
+    needs: [build, validate-manifests]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/develop'
 
@@ -143,7 +164,7 @@ jobs:
         kubectl wait --for=condition=available --timeout=300s deployment/shady-trader-postgres
 
   deploy-production:
-    needs: build
+    needs: [build, validate-manifests]
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
 

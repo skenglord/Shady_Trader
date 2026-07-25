@@ -93,6 +93,22 @@ To configure these APIs and strategies:
 - Mutating endpoints now enforce request validation (type/shape/range checks) before execution.
 - Validation schemas are implemented with **Zod** for consistent runtime type enforcement.
 
+### Frontend Security & Auth (operator-supplied tokens)
+- **No secrets in the bundle.** Auth tokens (`API_ADMIN_TOKEN`, `API_TRADER_TOKEN`) and `GEMINI_API_KEY` are **never** compiled into the SPA — they were removed from `vite.config.ts`'s `define`. An operator enters tokens at app start via a token-entry UI; they are held in **module-scoped memory only** (`src/auth/tokenStore.ts`) and never written to localStorage, sessionStorage, cookies, or the URL. They are lost on page reload by design.
+- The frontend attaches `x-api-token: <token>` to API calls (admin token for admin-prefixed routes, trader token otherwise), sourced from the in-memory store at call time.
+- **WebSocket auth is a first-message handshake**, not a query-string token. The client connects with a clean URL and sends `{"type":"auth","token":"<trader_token>"}` as its first message; the server replies `{"type":"auth_ok","role":"trader"}` and closes with code `4401` on invalid token, timeout (`WS_AUTH_TIMEOUT_MS`, default 5s), or when no tokens are configured server-side. This keeps tokens out of access logs, browser history, and Referer headers. Broadcasts are gated behind an `authed` flag — no data flows to an unauthenticated socket.
+- Server-side `GEMINI_API_KEY` is still read from `process.env` by the `/api/risk-configs/ai-recommend` endpoint (unchanged); only the frontend/bundle injection was removed.
+
+### Frontend Architecture
+- `src/App.tsx` is a **composition root** (~290 lines) that imports and composes feature modules with explicit props (data down, callbacks up):
+  - `src/api/client.ts` — shared `safeFetch` (two-layer LRU cache, 5s TTL, 100-entry cap, in-flight dedup) integrated with the token store.
+  - `src/hooks/useTradingWebSocket.ts` — WS lifecycle (connect, auth handshake, reconnect with max-5 attempts).
+  - `src/components/` — `ChartPanel`, `TradeTables`, `BalanceControls`, `BacktestOverlay`, `RiskConfigModal`, `EngineControls`, `FreqtradePanel`, `MLDashboard`.
+- **MLDashboard** is reachable via a "ML Dashboard" toolbar button that opens a monitoring modal (`/api/ml/*` endpoints). It degrades gracefully when `ML_ENABLED=false`.
+
+### Database Migrations
+- Migrations are tracked in a `schema_migrations` state table (`backend/migrations/runner.ts`): each of the 5 migrations runs exactly once and is skipped on subsequent boots. `listAppliedMigrations()` returns applied ids. Schema DDL is owned by application startup (`backend/database_postgres.ts` + `backend/migrations/`); `docker/postgres/init.sql` and the `k8s/configmap.yaml` init block are bootstrap+seed-only (idempotent default balance row).
+
 ### Diagnostics
 - `GET /api/diagnostics/startup`: public startup configuration status (non-secret), exchange readiness, mode/timeframe context.
 - `GET /api/diagnostics/health`: public runtime heartbeat including uptime, request-level API telemetry, market-data cache status, Redis status, and ML health.

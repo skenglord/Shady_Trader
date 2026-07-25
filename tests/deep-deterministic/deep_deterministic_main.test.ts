@@ -245,6 +245,7 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', { concurrency: fa
       const sentMessages: string[] = [];
       const mockClient = {
         readyState: 1,
+        authed: true,
         send: (msg: string) => { sentMessages.push(msg); }
       };
       
@@ -265,10 +266,12 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', { concurrency: fa
       const sentMessages: string[] = [];
       const closedClient = {
         readyState: 3,
+        authed: true,
         send: (msg: string) => { sentMessages.push(msg); }
       };
       const openClient = {
         readyState: 1,
+        authed: true,
         send: (msg: string) => { sentMessages.push(msg); }
       };
       

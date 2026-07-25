@@ -355,52 +355,29 @@ async function startServer() {
     process.exit(1);
   });
   
-  // Setup WebSocket with token-based auth (defense-in-depth: never accept anonymous
-  // connections to a trading data broadcast). The token is passed as a query string
-  // parameter, validated against the same API_ADMIN_TOKEN / API_TRADER_TOKEN used
-  // for the REST API. The role is stashed on the upgrade request so the connection
-  // handler in backend/api/websocket.ts can tag the client for downstream filtering.
+  // ── WebSocket auth (T3: first-message handshake) ──────────────────────────
+  //
+  // The upgrade is now accepted WITHOUT any token in the URL. The client must
+  // send {"type":"auth","token":"<value>"} as its first message within
+  // WS_AUTH_TIMEOUT_MS (default 5s). The handshake is validated in
+  // backend/api/websocket.ts setupWebsocket(). This avoids putting secrets in
+  // the upgrade URL (visible in server logs / proxy access logs) while keeping
+  // the same admin/trader token values used by the REST API requireRole().
   const getWsAuthTokens = () => ({
     adminToken: process.env.API_ADMIN_TOKEN || process.env.API_AUTH_TOKEN || '',
     traderToken: process.env.API_TRADER_TOKEN || ''
   });
+  // Make getWsAuthTokens reachable by setupWebsocket (which runs in a different
+  // module). We stash it on the WebSocketServer instance.
   const wss = new WebSocketServer({
     server,
-    verifyClient: (info, done) => {
-      try {
-        const url = new URL(info.req.url || '/', `http://${info.req.headers.host || 'localhost'}`);
-        const token = url.searchParams.get('token');
-        if (!token) {
-          logger.warn('WebSocket connection rejected: no token', {
-            remoteAddr: info.req.socket.remoteAddress
-          });
-          return done(false, 401, 'Unauthorized');
-        }
-        const { adminToken, traderToken } = getWsAuthTokens();
-        // If no tokens are configured server-side, reject the connection (fail closed).
-        if (!adminToken && !traderToken) {
-          logger.warn('WebSocket connection rejected: API tokens not configured server-side', {
-            remoteAddr: info.req.socket.remoteAddress
-          });
-          return done(false, 503, 'Auth not configured');
-        }
-        let role: 'admin' | 'trader' | null = null;
-        if (adminToken && token === adminToken) role = 'admin';
-        else if (traderToken && token === traderToken) role = 'trader';
-        if (!role) {
-          logger.warn('WebSocket connection rejected: invalid token', {
-            remoteAddr: info.req.socket.remoteAddress
-          });
-          return done(false, 401, 'Unauthorized');
-        }
-        (info.req as any).wsRole = role;
-        done(true);
-      } catch (err) {
-        logger.error('WebSocket verifyClient error', { error: (err as Error).message });
-        done(false, 500, 'Internal error');
-      }
+    verifyClient: (_info, done) => {
+      // Accept all HTTP upgrade requests. Auth happens after the WS handshake
+      // via the first-message protocol in backend/api/websocket.ts.
+      done(true);
     }
   });
+  (wss as any).getWsAuthTokens = getWsAuthTokens;
   setupWebsocket(wss);
 
   // Start trading engine

@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
+import { APP_URL } from "../api/client";
+import { getAdminToken } from "../auth/tokenStore";
 
 interface MLModel {
   symbol: string;
@@ -40,12 +42,12 @@ interface Prediction {
   top_features: string;
 }
 
-const API_BASE = import.meta.env.VITE_API_URL ?? '';
-const AUTH_TOKEN = () => localStorage.getItem('api_token') ?? '';
+const API_BASE = APP_URL;
+const AUTH_TOKEN = () => getAdminToken() ?? '';
 
 async function apiFetch<T>(path: string): Promise<T> {
   const res = await fetch(`${API_BASE}${path}`, {
-    headers: { 'Authorization': `Bearer ${AUTH_TOKEN()}` }
+    headers: { 'x-api-token': AUTH_TOKEN() }
   });
   if (!res.ok) throw new Error(`${path} → ${res.status}`);
   return res.json() as Promise<T>;

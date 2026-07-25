@@ -103,15 +103,15 @@ spec:
     matchLabels:
       app: shady-trader
       component: backend
-   template:
-     metadata:
-       labels:
-         app: shady-trader-app
-         component: backend
-       annotations:
-         prometheus.io/scrape: "true"
-         prometheus.io/port: "3000"
-         prometheus.io/path: "/metrics"
+  template:
+    metadata:
+      labels:
+        app: shady-trader
+        component: backend
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "3000"
+        prometheus.io/path: "/metrics"
     spec:
       containers:
       - name: shady-trader
@@ -158,7 +158,7 @@ spec:
             secretKeyRef:
               name: shady-trader-secrets
               key: BINANCE_API_KEY
-- name: BINANCE_SECRET_KEY
+        - name: BINANCE_SECRET_KEY
           valueFrom:
             secretKeyRef:
               name: shady-trader-secrets
@@ -198,28 +198,28 @@ spec:
             port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
-         readinessProbe:
-           httpGet:
-             path: /api/health
-             port: 3000
-           initialDelaySeconds: 5
-           periodSeconds: 5
-       - name: fluent-bit
-         image: fluent/fluent-bit:2.2
-         ports:
-         - containerPort: 2020
-         volumeMounts:
-         - name: fluent-bit-config
-           mountPath: /fluent-bit/etc/
-         - name: varlogcontainers
-           mountPath: /var/log/containers
-           readOnly: true
-         - name: varlogpods
-           mountPath: /var/log/pods
-           readOnly: true
-         - name: varlibdockercontainers
-           mountPath: /var/lib/docker/containers
-           readOnly: true
-         # Session affinity for WebSocket sticky sessions
+        readinessProbe:
+          httpGet:
+            path: /api/health
+            port: 3000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      - name: fluent-bit
+        image: fluent/fluent-bit:2.2
+        ports:
+        - containerPort: 2020
+        volumeMounts:
+        - name: fluent-bit-config
+          mountPath: /fluent-bit/etc/
+        - name: varlogcontainers
+          mountPath: /var/log/containers
+          readOnly: true
+        - name: varlogpods
+          mountPath: /var/log/pods
+          readOnly: true
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+        # Session affinity for WebSocket sticky sessions
         # This helps maintain WebSocket connections on the same pod
         # Note: For true sticky sessions, configure at the ingress level

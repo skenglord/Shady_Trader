@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Activity, AlertTriangle, CheckCircle, Clock, Database, Download, Loader2, Play, XCircle, RefreshCw, TrendingUp, TrendingDown, Minus, AlertCircle, Settings, ChevronRight } from 'lucide-react';
+import { safeFetch, invalidate, APP_URL } from '../api/client';
 
 // Types
 interface FreqtradeJob {
@@ -27,90 +28,6 @@ interface FreqtradeInfo {
   version?: string;
   strategies?: string[];
   exchanges?: string[];
-}
-
-// Safe fetch with auth + dedup + 5s LRU cache
-const inflightRequests = new Map<string, Promise<any>>();
-const responseCache = new Map<string, { ts: number; data: any }>();
-const CACHE_TTL = 5000;
-const MAX_CACHE_ENTRIES = 100;
-
-function getCached(url: string) {
-  const entry = responseCache.get(url);
-  if (!entry) return undefined;
-  if (Date.now() - entry.ts >= CACHE_TTL) {
-    responseCache.delete(url);
-    return undefined;
-  }
-  responseCache.delete(url);
-  responseCache.set(url, entry);
-  return entry.data;
-}
-
-function setCached(url: string, data: any) {
-  responseCache.set(url, { ts: Date.now(), data });
-  while (responseCache.size > MAX_CACHE_ENTRIES) {
-    const key = responseCache.keys().next().value;
-    if (key !== undefined) responseCache.delete(key);
-  }
-}
-
-const APP_URL = '';
-function getToken(): string {
-  try {
-    // @ts-ignore
-    const token = (import.meta as any).env?.VITE_ADMIN_TOKEN || '';
-    return token;
-  } catch { return ''; }
-}
-
-async function safeFetch(url: string, options?: RequestInit): Promise<{ ok: boolean; data?: any; error?: string }> {
-  const method = options?.method?.toUpperCase() || 'GET';
-
-  if (method === 'GET') {
-    const cached = getCached(url);
-    if (cached !== undefined) return { ok: true, data: cached };
-
-    const inflight = inflightRequests.get(url);
-    if (inflight) return inflight;
-  }
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    ...(options?.headers as Record<string, string> || {}),
-  };
-  const token = getToken();
-  if (token && !token.includes('PLACEHOLDER')) {
-    headers['x-api-token'] = token;
-  }
-
-  const request = (async () => {
-    try {
-      const res = await fetch(url, { ...options, headers });
-      const text = await res.text();
-      if (!res.ok) return { ok: false, error: `HTTP ${res.status}: ${text.slice(0, 100)}` };
-      try {
-        const data = JSON.parse(text);
-        if (method === 'GET') setCached(url, data);
-        return { ok: true, data };
-      } catch {
-        return { ok: true, data: text };
-      }
-    } catch (e: any) {
-      return { ok: false, error: e.message || 'Network error' };
-    } finally {
-      if (method === 'GET') inflightRequests.delete(url);
-    }
-  })();
-
-  if (method === 'GET') inflightRequests.set(url, request);
-  return request;
-}
-
-function invalidateCache(prefix: string) {
-  for (const key of responseCache.keys()) {
-    if (key.startsWith(prefix)) responseCache.delete(key);
-  }
 }
 
 // Helper: format timestamp
@@ -357,8 +274,8 @@ export default function FreqtradePanel() {
         alert(`Download failed: ${res.error}`);
       }
       // Invalidate cache so next fetch gets fresh data
-      invalidateCache(`${APP_URL}/api/freqtrade/pairs`);
-      invalidateCache(`${APP_URL}/api/freqtrade/jobs`);
+      invalidate(`${APP_URL}/api/freqtrade/pairs`);
+      invalidate(`${APP_URL}/api/freqtrade/jobs`);
       await fetchJobs();
     } catch (e: any) {
       alert(`Download error: ${e.message}`);
@@ -387,7 +304,7 @@ export default function FreqtradePanel() {
       if (res.ok && res.data) {
         setBtJobId(res.data.jobId);
         setBtStatus(res.data.message || 'queued');
-        invalidateCache(`${APP_URL}/api/freqtrade/jobs`);
+        invalidate(`${APP_URL}/api/freqtrade/jobs`);
         await fetchJobs();
       } else {
         alert(`Backtest failed: ${res.error}`);

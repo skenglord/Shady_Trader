@@ -2,7 +2,7 @@ import { WebSocketServer } from 'ws';
 import { ExchangeConnector } from './exchange/connector.js';
 import { IndicatorEngine } from './indicators/engine.js';
 import { RegimeDetector, RegimeType } from './regime/detector.js';
-import { SignalGenerator } from './strategy/signal_generator.js';
+import { SignalGenerator, Signal } from './strategy/signal_generator.js';
 import { ShadowTrader } from './shadow/shadow_trader.js';
 import { validateModeForLive } from './risk/manager.js';
 import { BalanceManager } from './balance/manager.js';
@@ -23,6 +23,61 @@ import { PaperTradingWebSocketHandler } from './paper-trading/websocket-handler.
 import { getServiceManager, StatelessServiceManager } from './stateless-manager.js';
 import { acquireTradeLock, releaseTradeLock } from './execution/executionLock.js';
 import Redis from 'ioredis';
+
+// ── runCycle decomposition: cycle context and stage result types ──
+
+/**
+ * Carries the mutable state of a single trading cycle.
+ * Each stage reads from and writes to this context, replacing the
+ * closure variables that runCycle() previously captured inline.
+ */
+interface CycleContext {
+  cycleToken: number;
+  symbol: string;
+  timeframe: string;
+  strategy: string;
+  activeMode: string;
+  currentRegime: RegimeType;
+  manualRegime: RegimeType | null;
+  aiSignalGeneration: boolean;
+  aiSentimentAnalysis: boolean;
+  aiStrategySwitching: boolean;
+  redisClient?: Redis;
+}
+
+/** Result of fetching market candles. */
+interface CycleMarketData {
+  candles: any[];
+}
+
+/** Result of calculating indicators (the dataframe). */
+interface IndicatorSet {
+  df: any[];
+}
+
+/** Result of regime detection, matching the shape returned by RegimeDetector.detect(). */
+interface RegimeResult {
+  regime: RegimeType;
+  confidence: number;
+  reasoning: string;
+  metrics: any;
+  timestamp: number;
+  composite?: any;
+  trendDir?: any;
+  trendStrength?: any;
+  volRegime?: any;
+  stability?: number;
+  atrPercentile?: number | null;
+  atrUsable?: boolean;
+  aiValidation?: any;
+}
+
+/** Result of signal generation stage. */
+interface SignalStageResult {
+  signal: Signal | null;
+  liveConfidence: { score: number; side: string; indicators: string[]; distances: Record<string, number> };
+  latestCandleData: any;
+}
 
 export class TradingEngine {
   exchange: ExchangeConnector | null;
@@ -856,82 +911,89 @@ export class TradingEngine {
     return false;
   }
 
-  async runCycle() {
-    if (!this.isRunning) return;
-    if (this.cycleInProgress) {
-      logger.debug('Skipping overlapping trading cycle', { service: 'TradingEngine' });
-      return;
-    }
-
-    const cycleToken = this.cycleAbortToken;
-    this.cycleInProgress = true;
+  // ── Stage 1: Fetch market data (candles) ──
+  private async fetchMarketData(ctx: CycleContext): Promise<CycleMarketData | null> {
+    let candles = [];
     try {
-      logger.info(`Starting cycle at ${new Date().toISOString()}`, { service: 'cycle' });
-      // 1. Fetch new candles
-      let candles = [];
-      try {
-        candles = this.exchange ? await this.exchange.getCandles(this.symbol, this.timeframe, 200) : [];
-      } catch (e) {
-        logger.warn(`Exchange API failed to fetch candles: ${e}`, { service: 'main' });
-      }
-      if (this.abortCycleIfNeeded(cycleToken, 'after_fetch_candles')) return;
-      if (candles.length < 20) return;
+      candles = this.exchange ? await this.exchange.getCandles(ctx.symbol, ctx.timeframe, 200) : [];
+    } catch (e) {
+      logger.warn(`Exchange API failed to fetch candles: ${e}`, { service: 'main' });
+    }
+    if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_fetch_candles')) return null;
+    if (candles.length < 20) return null;
+    return { candles };
+  }
 
-      // 2. Calculate indicators
-      const df = this.indicators.calculateAll(candles);
-      if (this.abortCycleIfNeeded(cycleToken, 'after_calculate_indicators')) return;
-      if (df.length === 0) return;
+  // ── Stage 2: Compute indicators ──
+  private computeIndicators(ctx: CycleContext, data: CycleMarketData): IndicatorSet | null {
+    const df = this.indicators.calculateAll(data.candles);
+    if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_calculate_indicators')) return null;
+    if (df.length === 0) return null;
+    return { df };
+  }
 
-      // 3. Detect regime
-      let regimeResult;
-    if (this.manualRegime) {
-      regimeResult = {
-        regime: this.manualRegime,
+  // ── Stage 3: Detect regime (manual or AI-driven) ──
+  private async detectRegimeStage(
+    ctx: CycleContext,
+    data: CycleMarketData,
+    indicators: IndicatorSet
+  ): Promise<RegimeResult | null> {
+    if (ctx.manualRegime) {
+      const regimeResult: RegimeResult = {
+        regime: ctx.manualRegime,
         confidence: 100,
         reasoning: "Manually set by user",
         metrics: {},
         timestamp: Date.now()
       };
-    } else {
-      // Fetch recent shadow performance for AI context (MD 1.3)
-      // Wrapped in try/catch with last-good-cache fallback: a single bad
-      // call no longer aborts the cycle or fires the error-rate alarm.
-      let shadowPerformance: any;
-      try {
-        shadowPerformance = await this.shadowTrader.getPerformance();
-        if (this.abortCycleIfNeeded(cycleToken, 'after_shadow_performance')) return;
-        // Stamp the snapshot so the fallback path can report how stale it is.
-        // We attach to a fresh shallow object so we don't mutate the engine's
-        // return value (in case it's a shared cache or frozen ref).
-        this.lastPerformance = { ...shadowPerformance, _cachedAt: Date.now() };
-      } catch (perfErr: any) {
-        logger.error('getPerformance failed in runCycle (using last good snapshot)', {
-          service: 'TradingEngine',
-          error: perfErr?.message ?? String(perfErr),
-          fallbackAge: this.lastPerformance?._cachedAt
-            ? `${Date.now() - this.lastPerformance._cachedAt}ms`
-            : 'never',
-        });
-        shadowPerformance = this.lastPerformance || {};
-      }
-
-      // Fetch latest market data and news for AI context
-      const marketData = await this.marketDataService.getLatestMarketData();
-      if (this.abortCycleIfNeeded(cycleToken, 'after_market_data')) return;
-      const marketNews = await this.marketDataService.getLatestNews(10);
-      if (this.abortCycleIfNeeded(cycleToken, 'after_market_news')) return;
-
-      const marketContext = {
-        btc_dominance: marketData?.btc_dominance ? `${marketData.btc_dominance.toFixed(1)}%` : "N/A",
-        fear_greed_index: marketData?.fear_greed_index || "N/A",
-        major_news: marketNews.length > 0 ? marketNews[0].title : "No recent major news",
-        all_news: marketNews.map(n => n.title)
-      };
-
-      regimeResult = await this.regimeDetector.detect(df, this.aiSentimentAnalysis, shadowPerformance, marketContext);
-      if (this.abortCycleIfNeeded(cycleToken, 'after_regime_detection')) return;
+      return regimeResult;
     }
 
+    // Fetch recent shadow performance for AI context (MD 1.3)
+    // Wrapped in try/catch with last-good-cache fallback: a single bad
+    // call no longer aborts the cycle or fires the error-rate alarm.
+    let shadowPerformance: any;
+    try {
+      shadowPerformance = await this.shadowTrader.getPerformance();
+      if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_shadow_performance')) return null;
+      // Stamp the snapshot so the fallback path can report how stale it is.
+      // We attach to a fresh shallow object so we don't mutate the engine's
+      // return value (in case it's a shared cache or frozen ref).
+      this.lastPerformance = { ...shadowPerformance, _cachedAt: Date.now() };
+    } catch (perfErr: any) {
+      logger.error('getPerformance failed in runCycle (using last good snapshot)', {
+        service: 'TradingEngine',
+        error: perfErr?.message ?? String(perfErr),
+        fallbackAge: this.lastPerformance?._cachedAt
+          ? `${Date.now() - this.lastPerformance._cachedAt}ms`
+          : 'never',
+      });
+      shadowPerformance = this.lastPerformance || {};
+    }
+
+    // Fetch latest market data and news for AI context
+    const marketData = await this.marketDataService.getLatestMarketData();
+    if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_market_data')) return null;
+    const marketNews = await this.marketDataService.getLatestNews(10);
+    if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_market_news')) return null;
+
+    const marketContext = {
+      btc_dominance: marketData?.btc_dominance ? `${marketData.btc_dominance.toFixed(1)}%` : "N/A",
+      fear_greed_index: marketData?.fear_greed_index || "N/A",
+      major_news: marketNews.length > 0 ? marketNews[0].title : "No recent major news",
+      all_news: marketNews.map(n => n.title)
+    };
+
+    const regimeResult = await this.regimeDetector.detect(indicators.df, ctx.aiSentimentAnalysis, shadowPerformance, marketContext);
+    if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_regime_detection')) return null;
+    return regimeResult as RegimeResult;
+  }
+
+  // ── Stage 3b: Persist regime to regimes_v2 and apply regime change side effects ──
+  private async persistRegimeAndApplyChange(
+    ctx: CycleContext,
+    regimeResult: RegimeResult
+  ): Promise<boolean> {
     // ── v6.0: persist three-axis composite to regimes_v2 each cycle ──
     if (regimeResult.composite) {
       try {
@@ -941,26 +1003,27 @@ export class TradingEngine {
              composite, stability, atr_percentile, atr_usable)
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         `, [
-          this.symbol, Date.now(),
+          ctx.symbol, Date.now(),
           regimeResult.trendDir, regimeResult.trendStrength, regimeResult.volRegime,
           regimeResult.composite, regimeResult.stability ?? 1.0,
           regimeResult.atrPercentile ?? null, regimeResult.atrUsable ? 1 : 0
         ], 'run');
-        if (this.abortCycleIfNeeded(cycleToken, 'after_regimes_v2_persist')) return;
+        if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_regimes_v2_persist')) return false;
       } catch (e: any) {
         logger.debug('regimes_v2 persist skipped', { service: 'TradingEngine', error: e?.message });
       }
     }
-    
-    if (this.manualRegime || this.regimeDetector.shouldUpdateRegime(this.currentRegime, regimeResult.regime, regimeResult.confidence)) {
+
+    if (ctx.manualRegime || this.regimeDetector.shouldUpdateRegime(ctx.currentRegime, regimeResult.regime, regimeResult.confidence)) {
       this.currentRegime = regimeResult.regime;
-      
+      ctx.currentRegime = this.currentRegime;
+
       // Save regime history
       await runQuery(`
         INSERT INTO regime_history (timestamp, regime, confidence, reasoning)
         VALUES (?, ?, ?, ?)
       `, [Date.now(), this.currentRegime, regimeResult.confidence, regimeResult.reasoning]);
-      if (this.abortCycleIfNeeded(cycleToken, 'after_regime_history_persist')) return;
+      if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_regime_history_persist')) return false;
 
       // Audit log: regime change
       try {
@@ -970,75 +1033,106 @@ export class TradingEngine {
           INSERT INTO audit_system_events (id, event_type, message, timestamp, severity, metadata)
           VALUES (?, ?, ?, ?, ?, ?)
         `, [auditId, 'regime_change', `Regime changed to ${this.currentRegime}`, timestamp, 'info', JSON.stringify({ confidence: regimeResult.confidence, reasoning: regimeResult.reasoning })]);
-        if (this.abortCycleIfNeeded(cycleToken, 'after_regime_audit_persist')) return;
+        if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_regime_audit_persist')) return false;
       } catch (error) {
         logger.error('Failed to log regime change audit', { error: String(error), service: 'main' });
       }
 
       this.broadcast({ type: 'regime', data: regimeResult });
 
-      if (this.aiStrategySwitching && TradingEngine.aiStrategySwitchingEnabled) {
-        try {
-          const { default: OpenAI } = await import('openai');
-          const openai = new OpenAI({
-            baseURL: (process.env.OLLAMA_BASE_URL || 'http://localhost:11434') + '/v1',
-            apiKey: 'ollama'
-          });
-
-          const prompt = `You are an expert quantitative trader. The market regime has just changed to "${this.currentRegime}" with ${regimeResult.confidence}% confidence. 
-          Reasoning: ${regimeResult.reasoning}
-          
-          Based on this new regime, which risk mode should the trading bot switch to?
-          Available modes: "ultra_conservative", "conservative", "moderate", "aggressive", "degen".
-          
-          Return ONLY the mode name as a plain string.`;
-
-          const response = await openai.chat.completions.create({
-            model: process.env.OLLAMA_MODEL || "llama3",
-            messages: [{ role: 'user', content: prompt }]
-          });
-          if (this.abortCycleIfNeeded(cycleToken, 'after_ai_mode_recommendation')) return;
-
-          const text = response.choices[0].message.content;
-          if (text) {
-            const newMode = text.trim().toLowerCase().replace(/[^a-z_]/g, '');
-            const validModes = ["ultra_conservative", "conservative", "moderate", "aggressive", "degen"];
-            if (validModes.includes(newMode)) {
-              this.activeMode = newMode;
-              await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
-              if (this.abortCycleIfNeeded(cycleToken, 'after_ai_mode_persist')) return;
-              this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
-              logger.info(`AI switched strategy to ${newMode}`, { service: 'main' });
-            }
-          }
-        } catch (error: any) {
-          logger.error("AI Strategy Switch failed", { error: error.message, service: 'trading-engine' });
-          // Fallback
-          let newMode = 'moderate';
-          if (this.currentRegime === 'strongbull' || this.currentRegime === 'bear') {
-            newMode = 'aggressive';
-          } else if (this.currentRegime === 'sideways') {
-            newMode = 'conservative';
-          }
-          this.activeMode = newMode;
-          await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
-          if (this.abortCycleIfNeeded(cycleToken, 'after_fallback_mode_persist')) return;
-          this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
-        }
+      if (ctx.aiStrategySwitching && TradingEngine.aiStrategySwitchingEnabled) {
+        await this.applyAiStrategySwitch(ctx, regimeResult);
+        if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_fallback_mode_persist')) return false;
       }
     }
 
-    // 4. Generate signal
-    const signal = await this.signalGenerator.generateSignal(df, this.currentRegime, this.symbol, this.aiSignalGeneration, this.strategy, this.activeMode);
-    if (this.abortCycleIfNeeded(cycleToken, 'after_signal_generation')) return;
-    
+    return true;
+  }
+
+  // ── Stage 3c: AI strategy switching (try AI, fallback on failure) ──
+  private async applyAiStrategySwitch(ctx: CycleContext, regimeResult: RegimeResult): Promise<void> {
+    try {
+      const { default: OpenAI } = await import('openai');
+      const openai = new OpenAI({
+        baseURL: (process.env.OLLAMA_BASE_URL || 'http://localhost:11434') + '/v1',
+        apiKey: 'ollama'
+      });
+
+      const prompt = `You are an expert quantitative trader. The market regime has just changed to "${this.currentRegime}" with ${regimeResult.confidence}% confidence. 
+      Reasoning: ${regimeResult.reasoning}
+      
+      Based on this new regime, which risk mode should the trading bot switch to?
+      Available modes: "ultra_conservative", "conservative", "moderate", "aggressive", "degen".
+      
+      Return ONLY the mode name as a plain string.`;
+
+      const response = await openai.chat.completions.create({
+        model: process.env.OLLAMA_MODEL || "llama3",
+        messages: [{ role: 'user', content: prompt }]
+      });
+      if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_ai_mode_recommendation')) return;
+
+      const text = response.choices[0].message.content;
+      if (text) {
+        const newMode = text.trim().toLowerCase().replace(/[^a-z_]/g, '');
+        const validModes = ["ultra_conservative", "conservative", "moderate", "aggressive", "degen"];
+        if (validModes.includes(newMode)) {
+          this.activeMode = newMode;
+          ctx.activeMode = newMode;
+          await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
+          if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_ai_mode_persist')) return;
+          this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
+          logger.info(`AI switched strategy to ${newMode}`, { service: 'main' });
+        }
+      }
+    } catch (error: any) {
+      logger.error("AI Strategy Switch failed", { error: error.message, service: 'trading-engine' });
+      // Fallback
+      let newMode = 'moderate';
+      if (this.currentRegime === 'strongbull' || this.currentRegime === 'bear') {
+        newMode = 'aggressive';
+      } else if (this.currentRegime === 'sideways') {
+        newMode = 'conservative';
+      }
+      this.activeMode = newMode;
+      ctx.activeMode = newMode;
+      await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
+      if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_fallback_mode_persist')) return;
+      this.broadcast({ type: 'ai_mode_switch', data: { mode: newMode } });
+    }
+  }
+
+  // ── Stage 4: Generate signals + broadcast signal_status + persist to signals table + broadcast signal_record ──
+  private async generateSignalsStage(
+    ctx: CycleContext,
+    indicators: IndicatorSet
+  ): Promise<SignalStageResult | null> {
+    const signal = await this.signalGenerator.generateSignal(indicators.df, ctx.currentRegime, ctx.symbol, ctx.aiSignalGeneration, ctx.strategy, ctx.activeMode);
+    if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_signal_generation')) return null;
+
     // Compute live confidence every cycle — dynamic 0-100 score based on
     // indicator proximity, even when no full signal triggers
-    const liveConfidence = this.signalGenerator.computeLiveConfidence(df, this.currentRegime);
-    
+    const liveConfidence = this.signalGenerator.computeLiveConfidence(indicators.df, ctx.currentRegime);
+
     // Broadcast signal info regardless of whether one was generated (for frontend readout)
     // Includes the regime context and why no signal or what the signal was
-    const latestCandleData = df[df.length - 1];
+    const latestCandleData = indicators.df[indicators.df.length - 1];
+    this.broadcastSignalStatus(ctx, signal, liveConfidence, latestCandleData);
+
+    // Record signal in DB every cycle (includes live confidence when no full signal)
+    const persistOk = await this.persistSignalRecord(ctx, signal, liveConfidence, latestCandleData);
+    if (!persistOk) return null;
+
+    return { signal, liveConfidence, latestCandleData };
+  }
+
+  // ── Stage 4b: Broadcast signal_status message ──
+  private broadcastSignalStatus(
+    ctx: CycleContext,
+    signal: Signal | null,
+    liveConfidence: { score: number; side: string; indicators: string[]; distances: Record<string, number> },
+    latestCandleData: any
+  ): void {
     this.broadcast({ 
       type: 'signal_status', 
       data: { 
@@ -1059,15 +1153,22 @@ export class TradingEngine {
         liveSide: liveConfidence.side,
         liveIndicators: liveConfidence.indicators,
         liveDistances: liveConfidence.distances,
-        regime: this.currentRegime,
+        regime: ctx.currentRegime,
         currentPrice: latestCandleData?.close || 0,
-        activeMode: this.activeMode,
+        activeMode: ctx.activeMode,
         priceChange24h: latestCandleData?.price_change_24h || 0,
         timestamp: Date.now()
       } 
     });
-    
-    // Record signal in DB every cycle (includes live confidence when no full signal)
+  }
+
+  // ── Stage 4c: Persist signal record to DB + broadcast signal_record ──
+  private async persistSignalRecord(
+    ctx: CycleContext,
+    signal: Signal | null,
+    liveConfidence: { score: number; side: string; indicators: string[]; distances: Record<string, number> },
+    latestCandleData: any
+  ): Promise<boolean> {
     try {
       const signalId = `sig-${Date.now()}-${Math.random().toString(36).substr(2, 6)}`;
       await runQuery(`
@@ -1076,9 +1177,9 @@ export class TradingEngine {
       `, [
         signalId,
         Date.now(),
-        this.symbol,
-        this.currentRegime,
-        this.strategy,
+        ctx.symbol,
+        ctx.currentRegime,
+        ctx.strategy,
         signal?.side || liveConfidence?.side || 'neutral',
         signal?.confidence || liveConfidence?.score || 0,
         signal?.entryPrice || latestCandleData?.close || 0,
@@ -1087,57 +1188,86 @@ export class TradingEngine {
         liveConfidence?.score || null,
         signal?.mlScore || null
       ]);
-      if (this.abortCycleIfNeeded(cycleToken, 'after_live_signal_persist')) return;
+      if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_live_signal_persist')) return false;
       // Broadcast signal record for frontend markers
-      this.broadcast({
-        type: 'signal_record',
-        data: {
-          id: signalId,
-          timestamp: Date.now(),
-          symbol: this.symbol,
-          regime: this.currentRegime,
-          strategy: this.strategy,
-          side: signal?.side || liveConfidence?.side || 'neutral',
-          confidence: signal?.confidence || liveConfidence?.score || 0,
-          entry_price: signal?.entryPrice || latestCandleData?.close || 0,
-          indicators: signal?.indicators || liveConfidence?.indicators || [],
-          liveConfidence: liveConfidence?.score || 0,
-        }
-      });
+      this.broadcastSignalRecord(ctx, signalId, signal, liveConfidence, latestCandleData);
     } catch (err: any) {
       logger.warn('Failed to record signal', { error: err?.message, service: 'trading-engine' });
     }
-    
+    return true;
+  }
+
+  // ── Stage 4d: Broadcast signal_record message ──
+  private broadcastSignalRecord(
+    ctx: CycleContext,
+    signalId: string,
+    signal: Signal | null,
+    liveConfidence: { score: number; side: string; indicators: string[]; distances: Record<string, number> },
+    latestCandleData: any
+  ): void {
+    this.broadcast({
+      type: 'signal_record',
+      data: {
+        id: signalId,
+        timestamp: Date.now(),
+        symbol: ctx.symbol,
+        regime: ctx.currentRegime,
+        strategy: ctx.strategy,
+        side: signal?.side || liveConfidence?.side || 'neutral',
+        confidence: signal?.confidence || liveConfidence?.score || 0,
+        entry_price: signal?.entryPrice || latestCandleData?.close || 0,
+        indicators: signal?.indicators || liveConfidence?.indicators || [],
+        liveConfidence: liveConfidence?.score || 0,
+      }
+    });
+  }
+
+  // ── Stage 5: Run shadow trades and update live positions (if signal) + update all positions ──
+  private async runShadowAndLiveStage(
+    ctx: CycleContext,
+    signalStage: SignalStageResult,
+    indicators: IndicatorSet
+  ): Promise<boolean> {
+    const df = indicators.df;
+    const signal = signalStage.signal;
+
     if (signal) {
       // 5. Execute shadow trades — guarded by Redis execution lock (Block 8)
       const currentPrice = df[df.length - 1].close;
-      const lockToken = await acquireTradeLock(this.symbol, this.redisClient);
-      if (this.abortCycleIfNeeded(cycleToken, 'after_trade_lock')) return;
+      const lockToken = await acquireTradeLock(ctx.symbol, ctx.redisClient);
+      if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_trade_lock')) return false;
       if (!lockToken) {
-        logger.warn('Trade lock held — skipping execution', { service: 'TradingEngine', symbol: this.symbol });
+        logger.warn('Trade lock held — skipping execution', { service: 'TradingEngine', symbol: ctx.symbol });
       } else {
         try {
           await this.shadowTrader.processSignal(
             signal,
             currentPrice,
-            this.activeMode,
+            ctx.activeMode,
             this.balanceManager,
             this.exchange,
-            this.currentRegime
+            ctx.currentRegime
           );
-          if (this.abortCycleIfNeeded(cycleToken, 'after_process_signal')) return;
+          if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_process_signal')) return false;
         } finally {
-          await releaseTradeLock(this.symbol, lockToken, this.redisClient);
+          await releaseTradeLock(ctx.symbol, lockToken, ctx.redisClient);
         }
       }
     }
 
     // 6. Update positions
     const currentPrice = df[df.length - 1].close;
-    await this.shadowTrader.updatePositions(currentPrice, this.activeMode, this.balanceManager, this.exchange, df[df.length - 1]);
-    if (this.abortCycleIfNeeded(cycleToken, 'after_update_positions')) return;
+    await this.shadowTrader.updatePositions(currentPrice, ctx.activeMode, this.balanceManager, this.exchange, df[df.length - 1]);
+    if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_update_positions')) return false;
 
-    // 7. Broadcast updates
+    return true;
+  }
+
+  // ── Stage 7: Broadcast cycle results (performance, balances, candle) ──
+  private async broadcastCycleStage(
+    ctx: CycleContext,
+    indicators: IndicatorSet
+  ): Promise<boolean> {
     // Same try/catch + last-good-cache pattern as above. The broadcast is
     // cosmetic for the dashboard, but if it throws, it aborts the cycle.
     let performance: any;
@@ -1155,14 +1285,73 @@ export class TradingEngine {
     this.broadcast({ type: 'performance', data: performance });
 
     const balances = await this.balanceManager.getBalances();
-    if (this.abortCycleIfNeeded(cycleToken, 'after_balances')) return;
+    if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_balances')) return false;
     this.broadcast({ type: 'balances', data: balances });
 
     // Broadcast latest candle for chart - always, so frontend can update current candle price
-    const latestCandle = df[df.length - 1];
+    const latestCandle = indicators.df[indicators.df.length - 1];
     if (latestCandle) {
       this.broadcast({ type: 'candle', data: latestCandle });
     }
+    return true;
+  }
+
+  async runCycle() {
+    if (!this.isRunning) return;
+    if (this.cycleInProgress) {
+      logger.debug('Skipping overlapping trading cycle', { service: 'TradingEngine' });
+      return;
+    }
+
+    const cycleToken = this.cycleAbortToken;
+    this.cycleInProgress = true;
+    try {
+      logger.info(`Starting cycle at ${new Date().toISOString()}`, { service: 'cycle' });
+
+      const ctx: CycleContext = {
+        cycleToken,
+        symbol: this.symbol,
+        timeframe: this.timeframe,
+        strategy: this.strategy,
+        activeMode: this.activeMode,
+        currentRegime: this.currentRegime,
+        manualRegime: this.manualRegime,
+        aiSignalGeneration: this.aiSignalGeneration,
+        aiSentimentAnalysis: this.aiSentimentAnalysis,
+        aiStrategySwitching: this.aiStrategySwitching,
+        redisClient: this.redisClient,
+      };
+
+      // 1. Fetch new candles
+      const data = await this.fetchMarketData(ctx);
+      if (!data) return;
+
+      // 2. Calculate indicators
+      const indicators = this.computeIndicators(ctx, data);
+      if (!indicators) return;
+
+      // 3. Detect regime
+      const regimeResult = await this.detectRegimeStage(ctx, data, indicators);
+      if (!regimeResult) return;
+
+      // 3b. Persist regime + apply regime change side effects (DB writes, WS, AI switching)
+      const regimeOk = await this.persistRegimeAndApplyChange(ctx, regimeResult);
+      if (!regimeOk) return;
+
+      // Sync ctx.currentRegime / ctx.activeMode in case stage 3b mutated this.*
+      ctx.currentRegime = this.currentRegime;
+      ctx.activeMode = this.activeMode;
+
+      // 4. Generate signal + broadcast signal_status + persist to signals table + broadcast signal_record
+      const signalStage = await this.generateSignalsStage(ctx, indicators);
+      if (!signalStage) return;
+
+      // 5+6. Execute shadow/live trades (lock-guarded) + update positions
+      const execOk = await this.runShadowAndLiveStage(ctx, signalStage, indicators);
+      if (!execOk) return;
+
+      // 7. Broadcast updates (performance, balances, candle)
+      await this.broadcastCycleStage(ctx, indicators);
     } finally {
       this.cycleInProgress = false;
     }
@@ -1170,7 +1359,9 @@ export class TradingEngine {
 
   broadcast(message: any) {
     this.wss.clients.forEach(client => {
-      if (client.readyState === 1) { // WebSocket.OPEN
+      // T3: skip sockets that haven't completed the first-message auth handshake.
+      // Unauthenticated (pending) sockets must never receive broadcast data.
+      if (client.readyState === 1 && (client as any).authed === true) { // WebSocket.OPEN
         client.send(JSON.stringify(message));
       }
     });

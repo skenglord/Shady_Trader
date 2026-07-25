@@ -5,6 +5,22 @@ import { CostEstimator, OrderRequest, SlippageCircuitBreaker } from '../slippage
 import { computeFill } from '../slippage/fillCalculator.js';
 import { Decimal } from 'decimal.js';
 
+type ExitDecision = { exitPrice: number; reason: string; pnlOverride?: number };
+type RatchetUpdate = { trailingStopApplied: boolean; runnerTriggered: boolean } | null;
+type ExitContext = {
+  currentPrice: number;
+  config: any;
+  mode: RiskMode;
+  leverage: number;
+  marginUsed: number;
+  currentMargin: number;
+  profitPct: number;
+  maintenanceMargin: number;
+  activeMode?: string;
+  balanceManager?: any;
+  portfolio: { balance: number; initialBalance: number; openTrades: any[] };
+};
+
 export class ShadowTrader {
   portfolios: Record<RiskMode, { balance: number, initialBalance: number, openTrades: any[] }>;
   riskManager: RiskManager;
@@ -273,198 +289,233 @@ export class ShadowTrader {
     }
   }
 
+  private async evaluateRatchet(trade: any, ctx: ExitContext): Promise<RatchetUpdate> {
+    let trailingStopApplied = false;
+    let runnerTriggered = false;
+
+    if (trade.side === 'buy') {
+      if (ctx.config.multiCandleHoldEnabled && ctx.profitPct > 0.005) {
+        const trailStop = ctx.currentPrice * 0.996;
+        if (trailStop > trade.stopLoss) {
+          trade.stopLoss = trailStop;
+          trailingStopApplied = true;
+        }
+      }
+
+      if (ctx.config.runnerEnabled && !trade.isRunner && ctx.profitPct >= (ctx.config.runnerConditions?.triggerProfit / 100 || 0.015)) {
+        console.log(`[ShadowTrader] [${ctx.mode}] Runner triggered for ${trade.id}`);
+        const exitFactor = ctx.config.runnerConditions?.partialExit || 0.6;
+        const closeAmount = trade.amount * exitFactor;
+        const partialPnl = (ctx.currentMargin - ctx.marginUsed) * (closeAmount / trade.amount);
+
+        ctx.portfolio.balance += partialPnl;
+        trade.amount -= closeAmount;
+        trade.isRunner = true;
+        trade.stopLoss = Math.max(trade.stopLoss, trade.price * 1.005);
+
+        if (ctx.mode === ctx.activeMode && ctx.balanceManager) {
+          const tradeCost = closeAmount * trade.price / trade.leverage;
+          ctx.balanceManager.recordTradeResult(partialPnl, tradeCost);
+        }
+
+        await this.logAuditTrade(
+          trade.id,
+          'partial_exit',
+          ctx.mode,
+          trade.leverage,
+          trade.symbol,
+          trade.side,
+          closeAmount,
+          ctx.currentPrice,
+          'runner',
+          partialPnl,
+          { remainingAmount: trade.amount, totalExited: closeAmount, profitPct: ctx.profitPct }
+        );
+        runnerTriggered = true;
+      }
+    } else {
+      if (ctx.config.multiCandleHoldEnabled && ctx.profitPct > 0.005) {
+        const trailStop = ctx.currentPrice * 1.004;
+        if (trailStop < trade.stopLoss) {
+          trade.stopLoss = trailStop;
+          trailingStopApplied = true;
+        }
+      }
+    }
+
+    if (!trailingStopApplied && !runnerTriggered) return null;
+    return { trailingStopApplied, runnerTriggered };
+  }
+
+  private evaluateStopLoss(trade: any, ctx: ExitContext): ExitDecision | null {
+    const lossPct = (ctx.marginUsed - ctx.currentMargin) / ctx.marginUsed;
+    const liquidationThreshold = (1 / ctx.leverage) - ctx.maintenanceMargin;
+
+    if (lossPct >= liquidationThreshold) {
+      return { exitPrice: ctx.currentPrice, reason: 'liquidation', pnlOverride: -ctx.marginUsed };
+    }
+
+    if (trade.side === 'buy') {
+      if (ctx.currentPrice <= trade.stopLoss) {
+        return { exitPrice: ctx.currentPrice, reason: 'stop_loss' };
+      }
+    } else {
+      if (ctx.currentPrice >= trade.stopLoss) {
+        return { exitPrice: ctx.currentPrice, reason: 'stop_loss' };
+      }
+    }
+
+    return null;
+  }
+
+  private evaluateTakeProfit(trade: any, ctx: ExitContext): ExitDecision | null {
+    let decision: ExitDecision | null = null;
+
+    if (ctx.config.earlyExitEnabled && ctx.profitPct >= (ctx.config.earlyExitTarget / 100)) {
+      decision = { exitPrice: ctx.currentPrice, reason: 'early_exit' };
+    }
+
+    if (trade.side === 'buy') {
+      if (ctx.currentPrice >= trade.takeProfit && !trade.isRunner) {
+        decision = { exitPrice: ctx.currentPrice, reason: 'take_profit' };
+      }
+    } else {
+      if (ctx.currentPrice <= trade.takeProfit && !trade.isRunner) {
+        decision = { exitPrice: ctx.currentPrice, reason: 'take_profit' };
+      }
+    }
+
+    return decision;
+  }
+
+  private evaluateMlExitCheckpoints(trade: any, ctx: ExitContext): ExitDecision | null {
+    if (ctx.config.multiCandleHoldEnabled && trade.candlesHeld >= (ctx.config.holdConditions?.maxCandles || 3)) {
+      return { exitPrice: ctx.currentPrice, reason: 'multi_candle_expiry' };
+    }
+    return null;
+  }
+
+  private async executeTradeClosure(
+    trade: any,
+    exitDecision: ExitDecision,
+    pnlRef: { value: number },
+    ctx: ExitContext,
+    exchange?: any
+  ): Promise<void> {
+    if (exitDecision.pnlOverride !== undefined) {
+      pnlRef.value = exitDecision.pnlOverride;
+    }
+
+    const pnl = pnlRef.value;
+    ctx.portfolio.balance += pnl;
+
+    if (pnl > 0) {
+      this.riskManager.recordWin(ctx.mode);
+    } else {
+      this.riskManager.recordLoss(ctx.mode);
+    }
+
+    if (ctx.mode === ctx.activeMode && ctx.balanceManager) {
+      const tradeCost = trade.amount * trade.price / trade.leverage;
+      ctx.balanceManager.recordTradeResult(pnl, tradeCost);
+
+      if (exchange && exchange.apiKey) {
+        try {
+          const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
+          const order = await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
+          console.log(`Live close order executed for ${trade.symbol} (${closeSide}): ${order.id}`);
+        } catch (e: any) {
+          console.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`);
+        }
+      }
+    }
+
+    await runQuery(`
+      UPDATE shadow_trades
+      SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
+      WHERE id = ?
+    `, [pnl, ctx.currentPrice, Date.now(), trade.id]);
+
+    await this.logAuditTrade(
+      trade.id,
+      'close',
+      ctx.mode,
+      trade.leverage,
+      trade.symbol,
+      trade.side,
+      trade.amount,
+      ctx.currentPrice,
+      exitDecision.reason,
+      pnl,
+      { candlesHeld: trade.candlesHeld, profitPct: ctx.profitPct, liquidationThreshold: ctx.leverage ? 1 / ctx.leverage - ctx.maintenanceMargin : null }
+    );
+
+    console.log(`Shadow Trader [${ctx.mode}]: Trade ${trade.id} closed due to ${exitDecision.reason}. PnL: ${pnl.toFixed(2)}`);
+  }
+
   async updatePositions(currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any, lastCandle: any = null) {
     for (const mode of Object.values(RiskMode)) {
       const portfolio = this.portfolios[mode];
       const newOpenTrades = [];
-       const config = this.riskManager.getConfig(mode as RiskMode);
-       const maintenanceMargin = 0.005; // 0.5% maintenance margin
+      const config = this.riskManager.getConfig(mode as RiskMode);
+      const maintenanceMargin = 0.005;
 
-       for (const trade of portfolio.openTrades) {
-         // Increment candles held if a new candle is provided
-         if (lastCandle && (!trade.lastUpdateTime || lastCandle.time > trade.lastUpdateTime)) {
-           trade.candlesHeld = (trade.candlesHeld || 0) + 1;
-           trade.lastUpdateTime = lastCandle.time;
-         }
+      for (const trade of portfolio.openTrades) {
+        if (lastCandle && (!trade.lastUpdateTime || lastCandle.time > trade.lastUpdateTime)) {
+          trade.candlesHeld = (trade.candlesHeld || 0) + 1;
+          trade.lastUpdateTime = lastCandle.time;
+        }
 
-         console.log(`[ShadowTrader] Checking trade ${trade.id} for ${mode}. Price: ${currentPrice}, SL: ${trade.stopLoss}, TP: ${trade.takeProfit}`);
-         let pnl = 0;
-         let closed = false;
-         let exitReason = '';
-         const leverage = trade.leverage || config.leverage || 1;
-         const marginUsed = trade.amount * trade.price / leverage;
-         const currentNotional = trade.amount * currentPrice;
-         const currentMargin = currentNotional / leverage;
-         const profitPct = trade.side === 'buy'
-           ? (currentPrice - trade.price) / trade.price
-           : (trade.price - currentPrice) / trade.price;
+        console.log(`[ShadowTrader] Checking trade ${trade.id} for ${mode}. Price: ${currentPrice}, SL: ${trade.stopLoss}, TP: ${trade.takeProfit}`);
+        let pnl = 0;
+        const leverage = trade.leverage || config.leverage || 1;
+        const marginUsed = trade.amount * trade.price / leverage;
+        const currentNotional = trade.amount * currentPrice;
+        const currentMargin = currentNotional / leverage;
+        const profitPct = trade.side === 'buy'
+          ? (currentPrice - trade.price) / trade.price
+          : (trade.price - currentPrice) / trade.price;
 
-         if (trade.side === 'buy') {
-           pnl = (currentMargin - marginUsed); // Leveraged PnL based on margin
-           
-          // MD Part 2.1: Multi-candle hold & Trailing Stop
-          if (config.multiCandleHoldEnabled && profitPct > 0.005) {
-            const trailStop = currentPrice * 0.996; // 0.4% trail as per Moderate mode
-            if (trailStop > trade.stopLoss) {
-              trade.stopLoss = trailStop;
-            }
-          }
+        if (trade.side === 'buy') {
+          pnl = currentMargin - marginUsed;
+        } else {
+          pnl = marginUsed - currentMargin;
+        }
 
-          // Part 2.1: Runner Position Logic
-          if (config.runnerEnabled && !trade.isRunner && profitPct >= (config.runnerConditions?.triggerProfit / 100 || 0.015)) {
-             console.log(`[ShadowTrader] [${mode}] Runner triggered for ${trade.id}`);
-             // Partial exit (close e.g. 60%)
-             const exitFactor = config.runnerConditions?.partialExit || 0.6;
-             const closeAmount = trade.amount * exitFactor;
-             const closeMargin = closeAmount * trade.price / leverage;
-             const partialPnl = (currentMargin - marginUsed) * (closeAmount / trade.amount); // Proportional margin PnL
+        const ctx: ExitContext = {
+          currentPrice, config, mode: mode as RiskMode, leverage, marginUsed, currentMargin,
+          profitPct, maintenanceMargin, activeMode, balanceManager, portfolio
+        };
 
-            portfolio.balance += partialPnl;
-            trade.amount -= closeAmount;
-            trade.isRunner = true;
-            // Lock in minimum profit on runner (entry + 0.5%)
-            trade.stopLoss = Math.max(trade.stopLoss, trade.price * 1.005);
+        // 1. Ratchet: trailing stop + runner (mutates trade, side effects)
+        await this.evaluateRatchet(trade, ctx);
 
-            if (mode === activeMode && balanceManager) {
-              const tradeCost = closeAmount * trade.price / trade.leverage;
-              balanceManager.recordTradeResult(partialPnl, tradeCost);
-            }
+        // 2. Take profit / early exit (lowest precedence — can be overridden)
+        let exitDecision: ExitDecision | null = this.evaluateTakeProfit(trade, ctx);
 
-            // Audit log: partial exit
-            await this.logAuditTrade(
-              trade.id,
-              'partial_exit',
-              mode,
-              trade.leverage,
-              trade.symbol,
-              trade.side,
-              closeAmount,
-              currentPrice,
-              'runner',
-              partialPnl,
-              { remainingAmount: trade.amount, totalExited: closeAmount, profitPct }
-            );
-          }
+        // 3. Stop loss / liquidation (overrides TP / early_exit)
+        const slDecision = this.evaluateStopLoss(trade, ctx);
+        if (slDecision) {
+          exitDecision = slDecision;
+        }
 
-          // Part 2.1: Early Exit Feature
-          if (config.earlyExitEnabled && profitPct >= (config.earlyExitTarget / 100)) {
-            closed = true;
-            exitReason = 'early_exit';
-          }
+        // 4. ML checkpoints / multi-candle expiry (highest precedence)
+        const mlDecision = this.evaluateMlExitCheckpoints(trade, ctx);
+        if (mlDecision) {
+          exitDecision = mlDecision;
+        }
 
-           // Liquidation Logic
-           const lossPct = (marginUsed - currentMargin) / marginUsed; // Percentage of margin lost (same as notional loss %)
-           if (lossPct >= (1 / leverage) - maintenanceMargin) { // Liquidation threshold based on leverage
-             closed = true;
-             exitReason = 'liquidation';
-             pnl = -marginUsed; // Total loss of margin
-           } else if (currentPrice <= trade.stopLoss) {
-             closed = true;
-             exitReason = 'stop_loss';
-           } else if (currentPrice >= trade.takeProfit && !trade.isRunner) {
-             closed = true;
-             exitReason = 'take_profit';
-           }
+        if (exitDecision) {
+          const pnlRef = { value: pnl };
+          await this.executeTradeClosure(trade, exitDecision, pnlRef, ctx, exchange);
+        } else {
+          newOpenTrades.push(trade);
+        }
+      }
 
-          // Multi-candle expiration
-          if (config.multiCandleHoldEnabled && trade.candlesHeld >= (config.holdConditions?.maxCandles || 3)) {
-            closed = true;
-            exitReason = 'multi_candle_expiry';
-          }
-         } else {
-           pnl = (marginUsed - currentMargin); // Leveraged PnL based on margin
-            
-           // Trailing Stop Logic for Shorts
-          if (config.multiCandleHoldEnabled && profitPct > 0.005) {
-            const trailStop = currentPrice * 1.004; // 0.4% trail
-            if (trailStop < trade.stopLoss) {
-              trade.stopLoss = trailStop;
-            }
-          }
-
-          // Part 2.1: Early Exit Feature
-          if (config.earlyExitEnabled && profitPct >= (config.earlyExitTarget / 100)) {
-            closed = true;
-            exitReason = 'early_exit';
-          }
-
-           // Liquidation Logic
-           const lossPct = (marginUsed - currentMargin) / marginUsed; // Percentage of margin lost (same as notional loss %)
-           if (lossPct >= (1 / leverage) - maintenanceMargin) { // Liquidation threshold based on leverage
-             closed = true;
-             exitReason = 'liquidation';
-             pnl = -marginUsed; // Total loss of margin
-           } else if (currentPrice >= trade.stopLoss) {
-             closed = true;
-             exitReason = 'stop_loss';
-           } else if (currentPrice <= trade.takeProfit && !trade.isRunner) {
-             closed = true;
-             exitReason = 'take_profit';
-           }
-
-          // Multi-candle expiration
-          if (config.multiCandleHoldEnabled && trade.candlesHeld >= (config.holdConditions?.maxCandles || 3)) {
-            closed = true;
-            exitReason = 'multi_candle_expiry';
-          }
-         }
-
-         if (closed) {
-           portfolio.balance += pnl;
-           
-           // Record win/loss for circuit breaker tracking
-           if (pnl > 0) {
-             this.riskManager.recordWin(mode);
-           } else {
-             this.riskManager.recordLoss(mode);
-           }
-           
-           if (mode === activeMode && balanceManager) {
-             const tradeCost = trade.amount * trade.price / trade.leverage;
-             balanceManager.recordTradeResult(pnl, tradeCost);
-             
-             if (exchange && exchange.apiKey) {
-                try {
-                  const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
-                  const order = await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
-                  console.log(`Live close order executed for ${trade.symbol} (${closeSide}): ${order.id}`);
-                } catch (e: any) {
-                  console.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`);
-                }
-             }
-           }
-           
-            // Update DB
-            await runQuery(`
-              UPDATE shadow_trades
-              SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
-              WHERE id = ?
-            `, [pnl, currentPrice, Date.now(), trade.id]);
-
-            // Audit log: trade close
-            await this.logAuditTrade(
-              trade.id,
-              'close',
-              mode,
-              trade.leverage,
-              trade.symbol,
-              trade.side,
-              trade.amount,
-              currentPrice,
-              exitReason,
-              pnl,
-              { candlesHeld: trade.candlesHeld, profitPct, liquidationThreshold: leverage ? 1 / leverage - maintenanceMargin : null }
-            );
-
-            console.log(`Shadow Trader [${mode}]: Trade ${trade.id} closed due to ${exitReason}. PnL: ${pnl.toFixed(2)}`);
-         } else {
-           newOpenTrades.push(trade);
-         }
-       }
-
-       portfolio.openTrades = newOpenTrades;
-     }
-   }
+      portfolio.openTrades = newOpenTrades;
+    }
+  }
 
     async closeTrade(tradeId: string, currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any) {
      for (const mode of Object.values(RiskMode)) {
