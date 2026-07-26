@@ -1,0 +1,93 @@
+---
+# ASTS quality gates. Extends the original asts_quality_gates.yaml with the
+# evidence-strength model and per-gate machine-checkable criteria.
+# Full definitions: hermes/05-QUALITY-GATES.md
+version: 2
+programme: ASTS-HARDENING
+baseline_sha: "63f1ecc0a2a90b8035cd8773e897e0953577c523"
+
+quality_gates:
+  QG-0:
+    name: specification_completeness
+    mandatory: true
+    requires: [scope_explicit, prohibited_scope_explicit, okf_concepts_cited, gap_ids_cited, rollback_single_operation]
+  QG-1:
+    name: build_static_type_safety
+    mandatory: true
+    commands: ["npm run lint", "npm run build", "npm run quality:complexity"]
+    blocked_by: G-076   # CI red on main; until resolved, cite local runs explicitly
+  QG-2:
+    name: unit_property_tests
+    mandatory: true
+    commands: ["npm test", "npm run quality:coverage"]
+    thresholds: {lines_pct: 50, branches_pct: 65}
+    rule: "No test may be disabled or quarantined to make this gate pass."
+    blocked_by: G-076
+  QG-3:
+    name: integration_restart_faults
+    mandatory: true
+    requires: [restart_preserves_open_positions, restart_preserves_breaker_state, fault_injection_suite, degraded_startup_is_paper_only]
+  QG-4:
+    name: accounting_risk_reconciliation
+    mandatory: true
+    requires: [ledger_matches_exchange_within_tolerance, leveraged_pnl_regression_test, daily_loss_breaker_fires_in_test, no_order_exceeds_free_collateral, risk_within_limits_after_rounding]
+    regression_for: [G-004, G-006, G-031, G-034, G-035, G-036]
+  QG-5:
+    name: market_data_indicator_integrity
+    mandatory: true
+    requires: [feature_windows_map_to_real_duration, parallel_equals_serial_on_corpus, data_quality_checks_active, missing_values_excluded_not_zeroed, regime_returns_insufficient_history_until_bootstrap]
+    regression_for: [G-016, G-017, G-018, G-019, G-020, G-021]
+  QG-6:
+    name: quantitative_research_integrity
+    mandatory: true
+    requires: [manifest_reproducible, walk_forward_with_frozen_holdout, all_trials_reported, dsr_computed, pbo_computed, cost_stress_2x, independently_reproduced_by_qa_quant]
+    rule: "No parameter promoted on published evidence alone."
+  QG-7:
+    name: security
+    mandatory: true
+    requires: [no_secrets_in_tree, no_secrets_in_built_artifacts, no_secrets_in_storage_or_urls, auth_positive_and_negative_tests, least_privilege_keys, withdrawals_disabled, pre_baseline_credentials_rotated]
+  QG-8:
+    name: performance_capacity
+    mandatory: true
+    requires: [cycle_latency_within_timeframe_budget, no_unbounded_memory_growth_in_soak, db_performance_under_realistic_volume]
+  QG-9:
+    name: independent_review
+    mandatory: true
+    requires: [independent_architecture_review_approved, no_self_approval, migrations_have_rollback_tests, residual_risk_recorded]
+  QG-10:
+    name: shadow_paper_soak
+    mandatory: true
+    duration_days: 30
+    requires: {orphaned_positions: 0, unprotected_positions: 0, duplicate_intents: 0, unresolved_reconciliation_mismatches: 0}
+  QG-11:
+    name: human_live_capital_approval
+    mandatory: true
+    agent_approvable: false
+    note: "NEVER agent-approvable under any circumstance."
+
+evidence_strength:
+  levels: [PASS_RUNTIME, PASS_SEMANTIC, PASS_STRUCTURAL, PASS_STATIC_GREP, PARTIAL_BLOCKED, FAIL]
+  strong: [PASS_RUNTIME, PASS_SEMANTIC]
+  weak: [PASS_STRUCTURAL, PASS_STATIC_GREP]
+  require_strong_for:
+    - execution
+    - accounting
+    - risk
+    - security
+    - database
+    - migration
+    - deployment
+    - authentication
+    - money-path
+  substitution_rule: >
+    A semantic substitute is allowed only when it checks the same failure mode, and it must be
+    named in the implementation log. Otherwise the criterion is PARTIAL_BLOCKED.
+  rationale: >
+    PR #14 demonstrated the failure mode: schema validators passed while a Deployment
+    selector/template label mismatch and an init-order SQL defect both survived to Final Review.
+
+release_gates:
+  p0_count: 16
+  p1_count: 11
+  live_status: "NO-GO until all P0 gates are true"
+  reference: hermes/05-QUALITY-GATES.md

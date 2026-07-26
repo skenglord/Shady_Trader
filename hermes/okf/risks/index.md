@@ -1,0 +1,30 @@
+# Concepts
+
+* [AI can influence risk mode without a deterministic policy gate](ai-unbounded-authority.md) - Model output can affect or select risk mode, including Degen, with no deterministic transition matrix constraining it.
+* [backend/main.ts remains an orchestration monolith](backend-monolith.md) - The composition root still mixes dependency construction, scheduling, persistence, AI policy, kill-switch behaviour and broadcasting.
+* [Backtesting does not replay the production decision path](backtest-not-production-equivalent.md) - Signals can execute on the decision candle, AI is nondeterministic, and no realistic fill, fee or funding model is shared with live code.
+* [CI has been failing on main since before the remediation branch](ci-red-on-main.md) - The test and quality jobs fail on main at the pre-merge baseline and on every remediation commit; root cause is unknown because logs expired.
+* [Historical risks closed by PR #14 — do not re-open](closed-by-pr14.md) - Nine OKF risks from the previous bundle were resolved by the merged remediation branch. Recorded so agents do not chase fixed problems.
+* [Postgres path is non-functional and configuration is unvalidated](database-abstraction-leak.md) - Application-wide SQLite placeholder syntax is routed to the pg driver unchanged, and saved config JSON is merged with no schema validation.
+* [No exact-once guarantee for candle processing](exact-once-execution.md) - Symbol-only locks, random signal ids and no unique constraint allow the same candle to produce repeated trades.
+* [Exchange treated as a fire-and-forget side effect](exchange-as-side-effect.md) - Live order failures are logged and execution proceeds, so internal state can claim positions the exchange does not hold. Root cause behind five P0 gaps.
+* [No single enforced final pre-trade risk gate](final-risk-gate-missing.md) - Risk caps omit leverage, Kelly floors allocation on negative edge, and no stored RiskDecision is required before submission.
+* [Daily-loss circuit breaker can never fire](inert-daily-loss-breaker.md) - A literal zero is passed as the day's loss into the circuit-breaker check, disabling the control entirely.
+* [Initialisation and dependency failures fail open](init-fails-open.md) - Risk initialisation errors are logged at warn level and Redis failure starts the engine in a live-capable mode.
+* [Kill path clears internal state without confirming exchange closure](kill-switch-unverified.md) - The kill switch can clear positions and return funds even when live closes fail.
+* [Leveraged PnL divided by leverage instead of multiplied](leveraged-pnl-inversion.md) - PnL is computed as (amount x price-change) / leverage, understating leveraged results quadratically. Fees, funding and exit slippage are never deducted.
+* [No divergence SLOs and mixed logging](no-divergence-slos.md) - There are no metrics or alerts for ledger-to-exchange mismatch, and console and structured logging are mixed.
+* [No authoritative exchange reconciliation is wired into the engine](no-reconciliation-loop.md) - A PositionReconciliationEngine exists and is instantiated by the connector, but no startup or continuous reconciliation runs in the engine lifecycle.
+* [Timeframe durations are hard-coded and schedules do not derive from them](no-timeframe-registry.md) - The timeframe-to-milliseconds map is duplicated in at least four places and the market-data job runs hourly against a 15-minute trading cadence.
+* [Exchange key policy and route authentication are unproven](operational-security-unproven.md) - Withdrawal restrictions, IP allowlisting and least-privilege API keys are not demonstrated, and paper WebSocket routing used substring matching.
+* [Optimiser output can reach active configuration without validation](optimiser-unbounded-authority.md) - Candidate settings are saved before validation, trial scores are persisted as zero, and one optimum may be applied across all modes.
+* [Worker-parallel indicator path is incorrect and disagrees with the serial path](parallel-indicator-pipeline.md) - Warm-up overlap is appended on the wrong side, results are merged by array position rather than timestamp, and the two paths use different minimum history.
+* [Slippage and protection controls do not fail closed](protection-not-fail-closed.md) - Live trading can proceed when slippage and liquidity dependencies are unavailable.
+* [Regime confidence is uncalibrated and missing values are treated as zero](regime-signal-quality.md) - Confidence is a hard-coded literal per branch and null RSI values are averaged as zero, deflating the mean.
+* [Loss-streak and recovery state is in-memory and mis-sequenced](risk-state-not-persisted.md) - Streak counters never reach the database, and recordWin zeroes the loss count before the recovery path reads it.
+* [Trade loop reads shared state once per iteration](shared-state-races.md) - A single current price is applied to all trades and balance is checked against a stale snapshot taken before the exchange call.
+* [Position sizing and allocation run off simulated capital](simulated-capital-sizing.md) - Balances default to a simulated 100000 and the entire main balance is auto-allocated to the bot at startup with no cap or operator approval.
+* [Startup discards restored open trades](startup-state-destruction.md) - init() rehydrates open trades from the database, then start() immediately resets every portfolio, discarding them.
+* [Runtime fetches far less history than features require](starved-history.md) - A hard-coded 200-candle fetch feeds regime windows that ask for 672 and 2880 candles, so multi-day features silently clamp.
+* [Shutdown does not track in-flight operations](untracked-shutdown.md) - waitForPendingOperations sleeps instead of tracking work, and there is no live-position handoff policy.
+* [Drawdown and daily limits measured from initial balance](wrong-equity-baseline.md) - Both controls compare against a fixed initial balance rather than a persisted high-water mark or a start-of-day equity snapshot.
