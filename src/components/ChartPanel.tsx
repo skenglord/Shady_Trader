@@ -8,14 +8,14 @@
  * Props are explicit: data in (trades, backtestTrades, regime changes, etc.),
  * callbacks out (fetchCandles, changeTimeframe). No reach-back into App state.
  */
-import React, { useEffect, useRef, useState, useCallback } from 'react';
+import React, { useEffect, useRef, useState, useCallback, lazy, Suspense } from 'react';
 import {
   createChart, ColorType, IChartApi, ISeriesApi,
   CandlestickSeries, LineSeries, CrosshairMode,
   createSeriesMarkers, ISeriesMarkersPluginApi,
 } from 'lightweight-charts';
 import { Activity, History, Maximize2, Calendar, Play, X } from 'lucide-react';
-import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, Tooltip, CartesianGrid } from 'recharts';
+const PerformanceChart = lazy(() => import('./PerformanceChart'));
 import { safeFetch, APP_URL, debug } from '../api/client';
 
 export interface IndicatorToggles {
@@ -630,34 +630,9 @@ export default function ChartPanel(props: ChartPanelProps) {
         </h2>
         <div className="h-[180px] w-full mb-6" style={{ minHeight: 180 }}>
           {(performance[activeMode]?.history?.length > 0) ? (
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={performance[activeMode]?.history || []}>
-                <defs>
-                  <linearGradient id="colorBalance" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor={showBacktestUI ? "#f59e0b" : "#6366f1"} stopOpacity={0.3} />
-                    <stop offset="95%" stopColor={showBacktestUI ? "#f59e0b" : "#6366f1"} stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" vertical={false} />
-                <XAxis dataKey="time" hide />
-                <YAxis domain={['auto', 'auto']} hide />
-                <Tooltip content={({ active, payload }) => {
-                  if (active && payload && payload.length) {
-                    return (
-                      <div className="bg-[#1e1e1e] border border-white/10 p-2 rounded shadow-xl text-[10px] font-mono">
-                        <p className="text-gray-400">{new Date(payload[0].payload.time).toLocaleString()}</p>
-                        <p className={showBacktestUI ? "text-amber-400" : "text-indigo-400"}>
-                          Balance: ${(payload[0].value as number).toFixed(2)}
-                        </p>
-                      </div>
-                    );
-                  }
-                  return null;
-                }} />
-                <Area type="monotone" dataKey="balance" stroke={showBacktestUI ? "#f59e0b" : "#6366f1"}
-                  fillOpacity={1} fill="url(#colorBalance)" strokeWidth={2} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <Suspense fallback={<div role="status" className="h-full flex items-center justify-center text-gray-500 text-sm">Loading performance chart…</div>}>
+              <PerformanceChart history={performance[activeMode].history} showBacktestUI={showBacktestUI} />
+            </Suspense>
           ) : (
             <div className="h-full flex items-center justify-center text-gray-500 text-sm">No performance data yet</div>
           )}

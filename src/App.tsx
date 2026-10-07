@@ -10,20 +10,21 @@
  * T2 invariant: tokens come from the in-memory token store (src/auth/tokenStore.ts).
  * T3 invariant: the WS sends {type:'auth', token} as its first message (no query-string secret).
  */
-import React, { useEffect, useState, useRef, useCallback } from 'react';
+import React, { useEffect, useState, useRef, useCallback, lazy, Suspense } from 'react';
 import { Activity, TrendingUp, TrendingDown, Minus, AlertCircle, X, ExternalLink, Database as DatabaseIcon, Brain } from 'lucide-react';
 import { safeFetch, APP_URL, adminToken, traderToken, debug } from './api/client';
 import { setTokens, getTraderToken } from './auth/tokenStore';
 import { InstallAppButton } from './components/InstallAppButton';
 import { useTradingWebSocket } from './hooks/useTradingWebSocket';
-import ChartPanel, { IndicatorToggles } from './components/ChartPanel';
+import type { IndicatorToggles } from './components/ChartPanel';
 import TradeTables from './components/TradeTables';
 import BalanceControls from './components/BalanceControls';
-import BacktestOverlay from './components/BacktestOverlay';
 import RiskConfigModal from './components/RiskConfigModal';
 import EngineControls from './components/EngineControls';
-import FreqtradePanel from './components/FreqtradePanel';
-import MLDashboard from './components/MLDashboard';
+const ChartPanel = lazy(() => import('./components/ChartPanel'));
+const FreqtradePanel = lazy(() => import('./components/FreqtradePanel'));
+const MLDashboard = lazy(() => import('./components/MLDashboard'));
+
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 
 const StatusLight = ({ isLive, apiName, isDataPassing, lastCallTime }: { isLive: boolean; apiName: string; isDataPassing: boolean; lastCallTime: number }) => {
@@ -286,7 +287,9 @@ function App() {
         </div>
         {/* Main Content Grid */}
         <div className={`grid grid-cols-1 lg:grid-cols-3 gap-6 transition-colors duration-300 ${showBacktestUI ? 'bg-amber-950/5' : ''}`}>
+          <Suspense fallback={<div role="status" className="lg:col-span-2 h-[400px] flex items-center justify-center text-gray-400">Loading market charts…</div>}>
           <ChartPanel status={status} trades={trades} backtestTrades={backtestTrades} backtestRegimeChanges={backtestRegimeChanges} liveRegimeChanges={liveRegimeChanges} shadowTrades={shadowTrades} performance={performance} activeMode={activeMode} showBacktestUI={showBacktestUI} indicatorToggles={indicatorToggles} onIndicatorToggle={(key) => setIndicatorToggles(p => ({ ...p, [key]: !p[key] }))} onToggleBacktest={() => setShowBacktestUI(!showBacktestUI)} onResetZoom={() => chartRef.current?.timeScale().fitContent()} onChangeTimeframe={changeTimeframe} onRunBacktest={(s, e) => runBacktest(s, e)} isBacktesting={isBacktesting} backtestDates={backtestDates} onBacktestDatesChange={setBacktestDates} showSignalMarkers={showSignalMarkers} showTradeMarkers={showTradeMarkers} onToggleSignalMarkers={() => setShowSignalMarkers(!showSignalMarkers)} onToggleTradeMarkers={() => setShowTradeMarkers(!showTradeMarkers)} modeVisibility={modeVisibility} onToggleModeVisibility={(mode) => setModeVisibility(prev => ({ ...prev, [mode]: !prev[mode] }))} onChangeActiveMode={changeActiveMode} chartRef={chartRef} seriesRef={seriesRef} onCurrentPriceChange={setCurrentPrice} candleDataRef={candleDataRef} />
+          </Suspense>
           <div className="space-y-6">
             <BalanceControls balances={balances} showBacktestUI={showBacktestUI} botBalanceFlash={botBalanceFlash} onKillBot={killBot} onAllocate={allocateBalance} onWithdraw={withdrawBalance} onHalf={halfBalance} onDouble={doubleBalance} />
             <RiskConfigModal activeMode={activeMode} riskConfigs={riskConfigs} showBacktestUI={showBacktestUI} isBacktesting={isBacktesting} backtestTrades={backtestTrades} performance={performance} showConfigModal={showConfigModal} onToggleConfigModal={() => setShowConfigModal(!showConfigModal)} onRiskConfigsChange={setRiskConfigs} onSaveRiskConfigs={saveRiskConfigs} onResetRiskConfigs={resetRiskConfigs} onGetAiRecommendations={getAiRecommendations} onChangeActiveMode={changeActiveMode} />
@@ -295,8 +298,8 @@ function App() {
         </div>
       </div>
       {showSettings && <SettingsModal settings={settings} setSettings={setSettings} onClose={() => setShowSettings(false)} onSave={saveSettings} />}
-      {showFreqtrade && (<div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowFreqtrade(false)}><div className="bg-[#1e1e1e] border border-white/10 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}><div className="flex justify-between items-center p-4 border-b border-white/10"><h2 className="text-xl font-bold flex items-center gap-2"><DatabaseIcon className="w-5 h-5 text-indigo-400" />Freqtrade Integration</h2><button onClick={() => setShowFreqtrade(false)} className="text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none" aria-label="Close Freqtrade panel"><X className="w-5 h-5" /></button></div><div className="p-4"><FreqtradePanel /></div></div></div>)}
-      {showMlDashboard && (<div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowMlDashboard(false)}><div className="bg-[#1e1e1e] border border-white/10 rounded-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}><div className="flex justify-between items-center p-4 border-b border-white/10"><h2 className="text-xl font-bold flex items-center gap-2"><Brain className="w-5 h-5 text-purple-400" />ML Monitoring</h2><button onClick={() => setShowMlDashboard(false)} className="text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none" aria-label="Close ML dashboard"><X className="w-5 h-5" /></button></div><div className="p-4"><MLDashboard symbol={status.symbol} /></div></div></div>)}
+      {showFreqtrade && (<div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowFreqtrade(false)}><div className="bg-[#1e1e1e] border border-white/10 rounded-xl w-full max-w-4xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}><div className="flex justify-between items-center p-4 border-b border-white/10"><h2 className="text-xl font-bold flex items-center gap-2"><DatabaseIcon className="w-5 h-5 text-indigo-400" />Freqtrade Integration</h2><button onClick={() => setShowFreqtrade(false)} className="text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none" aria-label="Close Freqtrade panel"><X className="w-5 h-5" /></button></div><div className="p-4"><Suspense fallback={<p role="status">Loading Freqtrade…</p>}><FreqtradePanel /></Suspense></div></div></div>)}
+      {showMlDashboard && (<div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowMlDashboard(false)}><div className="bg-[#1e1e1e] border border-white/10 rounded-xl w-full max-w-5xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}><div className="flex justify-between items-center p-4 border-b border-white/10"><h2 className="text-xl font-bold flex items-center gap-2"><Brain className="w-5 h-5 text-purple-400" />ML Monitoring</h2><button onClick={() => setShowMlDashboard(false)} className="text-gray-400 hover:text-white focus-visible:ring-2 focus-visible:ring-white/30 focus-visible:outline-none" aria-label="Close ML dashboard"><X className="w-5 h-5" /></button></div><div className="p-4"><Suspense fallback={<p role="status">Loading ML monitoring…</p>}><MLDashboard symbol={status.symbol} /></Suspense></div></div></div>)}
     </div>
   );
 }

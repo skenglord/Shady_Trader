@@ -146,6 +146,13 @@ npm run app
 Run `nvm use` first to select Node 22 and match the SQLite native runtime. The launcher builds the frontend, creates a private `.env` with local admin/trader tokens when needed, opens `http://127.0.0.1:3000`, and prints the tokens for the sign-in screen. Those `.env` tokens are also explicitly passed to the server, overriding shell tokens so the displayed credentials match. The launcher refuses live mode enabled in either `.env` or the shell before changing configuration. Keep that terminal open while using the app; press Ctrl+C to stop it. Use the **Install Shady Trader app** button on the sign-in screen (or the browser's install menu) to add it to the desktop. The app requires a network connection to its local server; it does not cache market data or work offline. Do not change `LIVE_TRADING_ENABLED` to `true` for local desktop use.
 
 ### Diagnostics
+
+To verify production frontend loading without starting a trading engine, run
+`npm run test:ui:isolated` after installing Chromium with
+`npx playwright install chromium`. The checks serve the built frontend on a
+temporary local port and mock API/WebSocket traffic. They cover sign-in,
+market and performance charts, and opening the ML and Freqtrade panels.
+
 - `GET /api/diagnostics/startup`: public startup configuration status (non-secret), exchange readiness, mode/timeframe context.
 - `GET /api/diagnostics/health`: public runtime heartbeat including uptime, request-level API telemetry, market-data cache status, Redis status, and ML health.
 - `GET /api/diagnostics/metrics`: public Prometheus-style plaintext metrics for API, market-data, and Freqtrade counters/latencies.

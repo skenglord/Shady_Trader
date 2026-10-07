@@ -1,4 +1,5 @@
 {
+  "exclude": ["node_modules", "dist", "build", "coverage", "playwright-report", "test-results"],
   "compilerOptions": {
     "target": "ES2022",
     "experimentalDecorators": true,

@@ -24,6 +24,15 @@
 
 ## Verification results
 
+### October 7 frontend readiness loop
+
+- All preceding changes were committed as `61cdd91` and fast-forward merged into local `main`. Pushing to `origin/main` failed because this machine has no usable GitHub credentials; remote publication remains pending.
+- Split the market chart, performance chart, ML panel, and Freqtrade panel using lazy imports. Sign-in does not request these feature chunks; Recharts loads only when portfolio history is available. Loading placeholders preserve chart space and modal close controls.
+- Production entry JS decreased from **788.42 kB to 217.82 kB**, and the largest output chunk is **332.43 kB**. Build passed without the previous 500 kB advisory.
+- **Two isolated Chromium scenarios passed**, covering empty/populated history, chart rendering, sign-in gating, ML/Freqtrade modal rendering, and feature chunk request timing, with no browser page errors. API and WebSocket traffic is mocked; service workers are blocked for fixture interception, so these checks do not verify PWA installation or real backend integration.
+- Typecheck passed. Generated build/test directories are now excluded from TypeScript inputs, preventing stale bundle paths from breaking checks while rebuilding.
+- Added `npm run test:ui:isolated` and CI browser verification. CI deployment commands now verify the operator-created `shady-trader-secrets` instead of applying the removed credential manifest. No deployment was performed.
+
 ### October 7 continuation
 
 - Resumed from the uncommitted local launcher and UI audit additions. The launcher now uses dotenv's parser, handles duplicate token placeholders, pins displayed credentials into the child server environment, checks live mode before writing configuration, and enforces Node 22 and a valid port.
@@ -156,7 +165,7 @@ Live trading is considered only after Phases 0–6 pass. Require a signed-off ri
 
 ## Remaining operational work
 
-1. Build and deploy the image from a configured Docker/Kubernetes environment; resolve the frontend chunk-size advisory.
+1. Build and deploy the image from a configured Docker/Kubernetes environment; the frontend chunk-size advisory is resolved locally.
 2. Complete the Freqtrade virtualenv install and run its CLI/configuration smoke checks in an environment with working package access.
 3. Add exchange order-status recovery for accepted/pending orders and explicit operator resolution for durable uncertain intents. Existing adapters do not all provide confirmed full-fill semantics; live trading must stay disabled until supported adapters and recovery are validated.
 4. Validate migrations, backups, and restore against the intended PostgreSQL/Redis deployment; choose a concrete cluster/domain, generate secrets outside source control, and verify TLS/CORS/WebSocket ingress.

@@ -21,6 +21,7 @@
     "security:audit": "npm audit --omit=dev --audit-level=high",
     "audit:archive": "tsx scripts/archive-audit-logs.ts",
     "audit:ui": "node scripts/ui-audit.mjs",
+    "test:ui:isolated": "npm run build && playwright test tests/playwright/lazy-dashboard.spec.ts --reporter=list",
     "bot:launch": "node scripts/launch-bot.mjs",
     "trading-cli": "tsx cli/src/index.ts",
     "cli:status": "tsx cli/src/index.ts engine status",

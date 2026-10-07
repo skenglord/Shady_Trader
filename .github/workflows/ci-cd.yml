@@ -112,6 +112,12 @@ jobs:
     - name: Build application
       run: npm run build
 
+    - name: Install Chromium for isolated frontend checks
+      run: npx playwright install --with-deps chromium
+
+    - name: Verify production frontend lazy loading
+      run: npx playwright test tests/playwright/lazy-dashboard.spec.ts --reporter=list
+
     - name: Build Docker image
       run: docker build -t shady-trader:${{ github.sha }} .
 
@@ -166,7 +172,7 @@ jobs:
     - name: Deploy to staging
       run: |
         kubectl apply -f k8s/configmap.yaml
-        kubectl apply -f k8s/secret.yaml
+        kubectl get secret shady-trader-secrets -o name
         kubectl apply -f k8s/pvc.yaml
         kubectl apply -f k8s/service.yaml
         kubectl apply -f k8s/deployment.yaml
@@ -194,7 +200,7 @@ jobs:
     - name: Deploy to production
       run: |
         kubectl apply -f k8s/configmap.yaml
-        kubectl apply -f k8s/secret.yaml
+        kubectl get secret shady-trader-secrets -o name
         kubectl apply -f k8s/pvc.yaml
         kubectl apply -f k8s/service.yaml
         kubectl apply -f k8s/deployment.yaml
