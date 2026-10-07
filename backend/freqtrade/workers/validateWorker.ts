@@ -155,7 +155,11 @@ export async function processFreqtradeValidateJob(job: Job<FreqtradeValidateJobD
             dbCandles = [];
         }
 
-        // Run both backtests in parallel
+        if (dbCandles.length < 100) {
+            throw new Error(`Validation requires at least 100 real candles for ${req.symbol} (${dbCandles.length} available)`);
+        }
+
+        // Run both backtests against the same real historical window.
         const [freqtradeResult, inHouseResult] = await Promise.all([
             bridge.runBacktest({
                 strategy: req.strategy,
@@ -164,22 +168,7 @@ export async function processFreqtradeValidateJob(job: Job<FreqtradeValidateJobD
                 timeframe: req.timeframe,
                 dryRunWallet: req.dryRunWallet,
             }),
-            (async () => {
-                if (dbCandles.length < 100) {
-                    logger.info('[freqtrade-validate] insufficient candles for in-house backtest', {
-                        jobId,
-                        candleCount: dbCandles.length,
-                    });
-                    return runBacktestStandalone(
-                        dbCandles.length > 0 ? dbCandles : generateDummyCandles(200, endMs || Date.now()),
-                        req.mode,
-                        req.symbol,
-                        req.strategy,
-                        req.mode,
-                    );
-                }
-                return runBacktestStandalone(dbCandles, req.mode, req.symbol, req.strategy, req.mode);
-            })(),
+            Promise.resolve(runBacktestStandalone(dbCandles, req.mode, req.symbol, req.strategy, req.mode)),
         ]);
 
         // Extract comparison metrics from both results
@@ -230,48 +219,4 @@ export async function processFreqtradeValidateJob(job: Job<FreqtradeValidateJobD
         recordFreqtradeJob('validate', 'failed', durationSec);
         throw err;
     }
-}
-
-/**
- * Generate dummy candles for backtesting when the DB has no data.
- * Creates a simple sine-wave price series so the simulation can at least
- * process a strategy and return non-empty metrics.
- */
-function generateDummyCandles(count: number, endTime: number): Array<{
-    time: number;
-    open: number;
-    high: number;
-    low: number;
-    close: number;
-    volume: number;
-}> {
-    const candles: Array<{
-        time: number;
-        open: number;
-        high: number;
-        low: number;
-        close: number;
-        volume: number;
-    }> = [];
-    const intervalMs = 3600000; // 1h
-    const basePrice = 40000;
-    const amplitude = 500;
-
-    for (let i = count - 1; i >= 0; i--) {
-        const t = endTime - i * intervalMs;
-        const phase = (i / count) * Math.PI * 4;
-        const noise = (Math.random() - 0.5) * 100;
-        const close = basePrice + Math.sin(phase) * amplitude + noise;
-        const open = i > 0 ? basePrice + Math.sin((i - 1) / count * Math.PI * 4) * amplitude + (Math.random() - 0.5) * 100 : close;
-        candles.push({
-            time: t,
-            open,
-            high: Math.max(open, close) + Math.random() * 50,
-            low: Math.min(open, close) - Math.random() * 50,
-            close,
-            volume: 100 + Math.random() * 900,
-        });
-    }
-
-    return candles;
 }

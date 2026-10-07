@@ -14,6 +14,7 @@ import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Activity, TrendingUp, TrendingDown, Minus, AlertCircle, X, ExternalLink, Database as DatabaseIcon, Brain } from 'lucide-react';
 import { safeFetch, APP_URL, adminToken, traderToken, debug } from './api/client';
 import { setTokens, getTraderToken } from './auth/tokenStore';
+import { InstallAppButton } from './components/InstallAppButton';
 import { useTradingWebSocket } from './hooks/useTradingWebSocket';
 import ChartPanel, { IndicatorToggles } from './components/ChartPanel';
 import TradeTables from './components/TradeTables';
@@ -45,7 +46,8 @@ function TokenEntry({ onSubmit }: { onSubmit: (admin: string, trader: string) =>
     <div className="min-h-screen bg-[#121212] text-gray-100 p-6 font-sans flex items-center justify-center">
       <form onSubmit={(e) => { e.preventDefault(); if (!trader.trim()) { setError('Trader token is required.'); return; } onSubmit(admin.trim(), trader.trim()); }} className="w-full max-w-sm space-y-4">
         <h1 className="text-xl font-bold">Operator Authentication</h1>
-        <p className="text-sm text-gray-400">Enter API tokens to access the dashboard. Tokens are held in memory only and cleared on page reload.</p>
+        <p className="text-sm text-gray-400">Enter the admin and trader tokens printed in the app launcher terminal. Tokens are held in memory only and cleared on page reload.</p>
+        <InstallAppButton />
         <div><label className="block text-sm text-gray-400 mb-1">Admin token (optional)</label><input type="password" value={admin} onChange={e => setAdmin(e.target.value)} className="w-full px-3 py-2 rounded bg-gray-800 border border-gray-700 text-sm" autoComplete="off" /></div>
         <div><label className="block text-sm text-gray-400 mb-1">Trader token (required)</label><input type="password" value={trader} onChange={e => setTrader(e.target.value)} className="w-full px-3 py-2 rounded bg-gray-800 border border-gray-700 text-sm" autoComplete="off" /></div>
         {error && <p className="text-sm text-red-400">{error}</p>}
@@ -164,6 +166,8 @@ function App() {
   const [backtestRegimeChanges, setBacktestRegimeChanges] = useState<any[]>([]);
   const [liveRegimeChanges, setLiveRegimeChanges] = useState<any[]>([]);
   const [lastCallTime, setLastCallTime] = useState(0);
+  const [lastLiveTickAt, setLastLiveTickAt] = useState(0);
+  const [liveTickFresh, setLiveTickFresh] = useState(false);
   const [signalStatus, setSignalStatus] = useState<any>(null);
   const [closedTrades, setClosedTrades] = useState<any[]>([]);
   const [shadowTrades, setShadowTrades] = useState<any[]>([]);
@@ -200,7 +204,7 @@ function App() {
     onStatus: (data) => setStatus((p: any) => ({ ...p, ...data })),
     onRegime: (data) => { setStatus((p: any) => ({ ...p, currentRegime: data.regime })); setRegimeReasoning(data.reasoning || ''); setLiveRegimeChanges(prev => [...prev, { time: Date.now(), regime: data.regime }]); },
     onPerformance: (data) => setPerformance(data),
-    onCandle: (c: any) => { if (seriesRef.current && !showBacktestUI && c) { setCurrentPrice(c.close); const time = Math.floor(Number(c.time) / 1000); if (!isNaN(time) && time > 0) { const idx = candleDataRef.current.findIndex(cd => Number(cd.time) === time); if (idx >= 0) { seriesRef.current.update({ time: time as any, open: c.open, high: c.high, low: c.low, close: c.close }); } else { candleDataRef.current.push({ time, open: c.open, high: c.high, low: c.low, close: c.close }); seriesRef.current.update({ time: time as any, open: c.open, high: c.high, low: c.low, close: c.close }); } } } },
+    onCandle: (c: any) => { if (c?.source === 'live_tick') setLastLiveTickAt(Date.now()); if (seriesRef.current && !showBacktestUI && c) { setCurrentPrice(c.close); const time = Math.floor(Number(c.time) / 1000); if (!isNaN(time) && time > 0) { const idx = candleDataRef.current.findIndex(cd => Number(cd.time) === time); if (idx >= 0) { seriesRef.current.update({ time: time as any, open: c.open, high: c.high, low: c.low, close: c.close }); } else { candleDataRef.current.push({ time, open: c.open, high: c.high, low: c.low, close: c.close }); seriesRef.current.update({ time: time as any, open: c.open, high: c.high, low: c.low, close: c.close }); } } } },
     onSignal: () => fetchTrades(),
     onAiModeSwitch: (mode) => setActiveMode(mode),
     onBalances: (data) => updateBalances(data),
@@ -208,10 +212,13 @@ function App() {
     onSignalRecord: (data) => { setSignals(prev => [data, ...prev].slice(0, 500)); fetchClosedTrades(); fetchTrades(); fetchShadowTrades(); },
   });
 
+  useEffect(() => { const check = () => setLiveTickFresh(lastLiveTickAt > 0 && Date.now() - lastLiveTickAt < 15_000); check(); const t = setInterval(check, 1000); return () => clearInterval(t); }, [lastLiveTickAt]);
+
   useEffect(() => {
     fetchStatus(); fetchPerformance(); fetchTrades(); fetchClosedTrades(); fetchShadowTrades(); fetchSettings(); fetchRiskConfigs(); fetchBalances(); fetchOpenPositions(); fetchMarketData(); fetchMarketNews(); fetchSignals(); fetchBotTrades();
     const interval = setInterval(() => { fetchOpenPositions(); fetchBalances(); if (lastBalancesRef.current.botBalance !== balances.botBalance) { setBotBalanceFlash(true); setTimeout(() => setBotBalanceFlash(false), 600); } lastBalancesRef.current = balances; }, 5000);
-    return () => clearInterval(interval);
+    const marketDataInterval = setInterval(fetchMarketData, 60_000);
+    return () => { clearInterval(interval); clearInterval(marketDataInterval); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -229,7 +236,7 @@ function App() {
 
   const saveRiskConfigs = useCallback(async () => { try { mark(); await fetch(`${APP_URL}/api/risk-configs`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-token': adminToken() }, body: JSON.stringify(riskConfigs) }); setShowConfigModal(false); } catch (e) { debug.error(e); } }, [riskConfigs]);
   const resetRiskConfigs = useCallback(async () => { try { mark(); const res = await fetch(`${APP_URL}/api/risk-configs/reset`, { method: 'POST', headers: { 'x-api-token': adminToken() } }); const data = await res.json(); if (data.success) setRiskConfigs(data.configs); } catch (e) { debug.error(e); } }, []);
-  const getAiRecommendations = useCallback(async () => { try { mark(); const res = await fetch(`${APP_URL}/api/risk-configs/ai-recommend`, { method: 'POST', headers: { 'x-api-token': adminToken() } }); if (!res.ok) throw new Error(`API error: ${res.status}`); const data = await res.json(); if (data.success && data.configs) setRiskConfigs(prev => { const m = { ...prev }; for (const [mode, cfg] of Object.entries(data.configs)) m[mode] = { ...(m[mode] || {}), ...(cfg as any) }; return m; }); } catch (e) { debug.error('[AI] Recommend failed:', e); alert('AI recommendation failed. Using fallback logic.'); } }, []);
+  const getAiRecommendations = useCallback(async () => { try { mark(); const res = await fetch(`${APP_URL}/api/risk-configs/ai-recommend`, { method: 'POST', headers: { 'x-api-token': adminToken() } }); if (!res.ok) throw new Error(`API error: ${res.status}`); const data = await res.json(); if (data.success && data.configs) setRiskConfigs(prev => { const m = { ...prev }; for (const [mode, cfg] of Object.entries(data.configs)) m[mode] = { ...(m[mode] || {}), ...(cfg as any) }; return m; }); } catch (e) { debug.error('[AI] Recommend failed:', e); alert('AI recommendations are unavailable; no changes were made.'); } }, []);
   const saveSettings = useCallback(async () => { try { mark(); await fetch(`${APP_URL}/api/settings`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-token': adminToken() }, body: JSON.stringify(settings) }); setShowSettings(false); fetchStatus(); } catch (e) { debug.error(e); } }, [settings, fetchStatus]);
   const toggleEngine = useCallback(async () => { try { mark(); const ep = status.isRunning ? '/api/stop' : '/api/start'; const r = await safeFetch(`${APP_URL}${ep}`, { method: 'POST', headers: { 'x-api-token': adminToken() } }); if (r.ok) fetchStatus(); else debug.error('Engine toggle failed:', r.error); } catch (e) { debug.error(e); } }, [status.isRunning, fetchStatus]);
   const manualTrade = useCallback(async (side: 'buy' | 'sell') => { if (currentPrice === 0) { alert('No current price available. Wait for market data to load.'); return; } const sym = status.symbol || 'BTC/USDT'; const lev = riskConfigs[activeMode]?.leverage || 1; const ps = riskConfigs[activeMode]?.positionSize || 0.02; const amt = (balances.mainBalance * ps) / currentPrice; if (!window.confirm(`Confirm ${side.toUpperCase()} Trade\n  Symbol: ${sym}\n  Price: $${currentPrice.toFixed(2)}\n  Mode: ${activeMode.replace('_', ' ')}\n  Leverage: ${lev}x\n  Est. Size: ${amt.toFixed(4)} BTC\n  Est. Value: $${(amt * currentPrice).toFixed(2)}\n\nThis trade will be executed on the shadow portfolio.\nContinue?`)) return; if (!status.isRunning) { try { mark(); await fetch(`${APP_URL}/api/start`, { method: 'POST', headers: { 'x-api-token': adminToken() } }); setStatus(p => ({ ...p, isRunning: true })); } catch (e) { debug.error('Failed to auto-start engine for manual trade:', e); } } try { mark(); const resp = await fetch(`${APP_URL}/api/manual-trade`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-token': traderToken() }, body: JSON.stringify({ side, symbol: status.symbol, price: currentPrice, stopLoss: side === 'buy' ? currentPrice * 0.98 : currentPrice * 1.02, takeProfit: side === 'buy' ? currentPrice * 1.02 : currentPrice * 0.98 }) }); const result = await resp.json(); if (!result.success) alert(result.error); fetchTrades(); fetchOpenPositions(); } catch (e) { debug.error(e); alert('Failed to execute trade'); } }, [currentPrice, status, riskConfigs, activeMode, balances.mainBalance, fetchTrades, fetchOpenPositions]);
@@ -255,7 +262,7 @@ function App() {
             <div className="flex items-center gap-1.5 mt-2">{['BTC/USDT', 'ETH/USDT', 'SOL/USDT'].map(sym => <button key={sym} onClick={() => changeSymbol(sym)} className={`px-3 py-1 text-xs rounded-full transition-colors focus-visible:ring-2 focus-visible:ring-indigo-500/50 focus-visible:outline-none ${status.symbol === sym ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : 'bg-white/5 hover:bg-white/10 text-gray-400 border border-transparent'}`}>{sym}</button>)}</div>
           </div>
           <div className="flex items-center gap-4">
-            <StatusLight isLive={true} apiName={(status as any).exchange ? (status as any).exchange.charAt(0).toUpperCase() + (status as any).exchange.slice(1) : "CoinMarketCap"} isDataPassing={isDataPassing} lastCallTime={lastCallTime} />
+            <StatusLight isLive={liveTickFresh} apiName={(status as any).exchange ? (status as any).exchange.charAt(0).toUpperCase() + (status as any).exchange.slice(1) : "Market provider"} isDataPassing={isDataPassing} lastCallTime={lastCallTime} />
             <div className="flex flex-col items-end gap-1">
               <div className={`flex items-center gap-2 px-3 py-1.5 rounded-full border ${getRegimeColor(status.currentRegime)}`}>{getRegimeIcon(status.currentRegime)}
                 <select value={status.currentRegime} aria-label="Market regime selection" onChange={async (e) => { const val = e.target.value; await safeFetch('/api/regime/manual', { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-token': traderToken() }, body: JSON.stringify({ regime: val === 'auto' ? null : val }) }); if (val !== 'auto') { setStatus(p => ({ ...p, currentRegime: val })); setRegimeReasoning('Manually set by user'); } }} className="bg-[#1e1e1e] text-gray-300 text-sm font-medium uppercase tracking-wider cursor-pointer focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:outline-none">

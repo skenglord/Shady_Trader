@@ -31,11 +31,25 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: '22'
         cache: 'npm'
 
     - name: Install dependencies
       run: npm ci
+
+    - name: Setup Python for Freqtrade
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: pip
+        cache-dependency-path: backend/freqtrade/requirements.txt
+
+    - name: Install and validate Freqtrade runtime
+      run: |
+        python -m venv backend/freqtrade/venv
+        backend/freqtrade/venv/bin/python -m pip install --upgrade pip wheel setuptools
+        backend/freqtrade/venv/bin/python -m pip install --no-build-isolation -r backend/freqtrade/requirements.txt
+        npm run freqtrade:validate
 
     - name: Run linter
       run: npm run lint
@@ -89,7 +103,7 @@ jobs:
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '20'
+        node-version: '22'
         cache: 'npm'
 
     - name: Install dependencies

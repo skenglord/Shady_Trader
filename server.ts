@@ -285,13 +285,15 @@ async function startServer() {
      logger.warn('Migrations encountered an issue', { error: error?.message || 'unknown' });
    }
    
-   // Seed database with mock data (best-effort, do not crash startup)
-   try {
-     await seedDatabase();
-   } catch (error: any) {
-     logger.warn('Database seed skipped due to unavailable schema', {
-       error: error?.message || 'unknown'
-     });
+   // Mock trades and random candles are only for explicit development demos.
+   // Never insert them into a production database used for paper trading or
+   // historical evaluation.
+   if (process.env.NODE_ENV !== 'production' && process.env.SEED_MOCK_DATA === 'true') {
+     try {
+       await seedDatabase();
+     } catch (error: any) {
+       logger.warn('Development mock seed skipped', { error: error?.message || 'unknown' });
+     }
    }
 
   // Schedule daily backup
@@ -371,9 +373,15 @@ async function startServer() {
   // module). We stash it on the WebSocketServer instance.
   const wss = new WebSocketServer({
     server,
+    maxPayload: 4096,
     verifyClient: (_info, done) => {
       // Accept all HTTP upgrade requests. Auth happens after the WS handshake
       // via the first-message protocol in backend/api/websocket.ts.
+      const maxConnections = Number(process.env.WS_MAX_CONNECTIONS ?? 256);
+      if (!Number.isInteger(maxConnections) || maxConnections < 1 || wss.clients.size >= maxConnections) {
+        done(false, 503, 'WebSocket capacity reached');
+        return;
+      }
       done(true);
     }
   });

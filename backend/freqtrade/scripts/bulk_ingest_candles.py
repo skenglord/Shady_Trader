@@ -27,7 +27,7 @@ BACKEND_DIR = os.path.dirname(os.path.dirname(FREQTRADE_DIR))  # backend/
 PROJECT_ROOT = os.path.dirname(BACKEND_DIR)  # Shady_Trader/
 
 DEFAULT_DATA_DIR = os.path.join(FREQTRADE_DIR, 'user_data', 'data')
-DEFAULT_DB_PATH = os.path.join(PROJECT_ROOT, 'trading.db')
+DEFAULT_DB_PATH = os.path.abspath(os.environ.get('DB_PATH', os.path.join(PROJECT_ROOT, 'trading.db')))
 
 
 def find_data_dirs(data_dir: str):

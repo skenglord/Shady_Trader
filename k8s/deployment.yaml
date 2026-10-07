@@ -98,7 +98,9 @@ metadata:
     app: shady-trader
     component: backend
 spec:
-  replicas: 3
+  # Keep the stateful trading engine single-owner until engine execution is
+  # separated from horizontally-scaled API replicas.
+  replicas: 1
   selector:
     matchLabels:
       app: shady-trader
@@ -113,6 +115,8 @@ spec:
         prometheus.io/port: "3000"
         prometheus.io/path: "/metrics"
     spec:
+      securityContext:
+        fsGroup: 1001
       containers:
       - name: shady-trader
         image: shady-trader:latest
@@ -121,6 +125,53 @@ spec:
         env:
         - name: NODE_ENV
           value: production
+        - name: HOST
+          value: 0.0.0.0
+        - name: LIVE_TRADING_ENABLED
+          value: "false"
+        - name: FREQTRADE_ENABLED
+          value: "true"
+        - name: FREQTRADE_QUEUE_CONCURRENCY
+          value: "1"
+        - name: FREQTRADE_LISTEN_PORT
+          value: "8081"
+        - name: FREQTRADE_API_USER
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: FREQTRADE_API_USER
+        - name: FREQTRADE_API_PASS
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: FREQTRADE_API_PASS
+        - name: FREQTRADE_JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: FREQTRADE_JWT_SECRET_KEY
+        - name: FREQTRADE__EXCHANGE__NAME
+          value: binance
+        - name: FREQTRADE__EXCHANGE__KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: BINANCE_API_KEY
+        - name: FREQTRADE__EXCHANGE__SECRET
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: BINANCE_SECRET_KEY
+        - name: FREQTRADE__API_SERVER__USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: FREQTRADE_API_USER
+        - name: FREQTRADE__API_SERVER__PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: FREQTRADE_API_PASS
         - name: USE_POSTGRES
           value: "true"
         - name: POSTGRES_HOST
@@ -158,7 +209,17 @@ spec:
             secretKeyRef:
               name: shady-trader-secrets
               key: BINANCE_API_KEY
+        - name: EXCHANGE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: BINANCE_API_KEY
         - name: BINANCE_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: BINANCE_SECRET_KEY
+        - name: EXCHANGE_API_SECRET
           valueFrom:
             secretKeyRef:
               name: shady-trader-secrets
@@ -174,7 +235,7 @@ spec:
               name: shady-trader-secrets
               key: KRAKEN_PRIVATE_KEY
         - name: CORS_ORIGIN
-          value: "*"
+          value: "https://trading.example.com"
         - name: API_TRADER_TOKEN
           valueFrom:
             secretKeyRef:
@@ -194,16 +255,83 @@ spec:
             cpu: "1000m"
         livenessProbe:
           httpGet:
-            path: /api/health
+            path: /api/health/live
             port: 3000
           initialDelaySeconds: 30
           periodSeconds: 10
         readinessProbe:
           httpGet:
-            path: /api/health
+            path: /api/health/ready
             port: 3000
           initialDelaySeconds: 5
           periodSeconds: 5
+        volumeMounts:
+        - name: freqtrade-data
+          mountPath: /app/backend/freqtrade/user_data/data
+      - name: freqtrade-webserver
+        image: shady-trader:latest
+        command: ["bash", "backend/freqtrade/run_webserver.sh"]
+        ports:
+        - name: freqtrade-api
+          containerPort: 8081
+        env:
+        - name: FREQTRADE_VENV_DIR
+          value: /app/backend/freqtrade/venv
+        - name: FREQTRADE_LISTEN_PORT
+          value: "8081"
+        - name: FREQTRADE_API_USER
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: FREQTRADE_API_USER
+        - name: FREQTRADE_API_PASS
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: FREQTRADE_API_PASS
+        - name: FREQTRADE__API_SERVER__LISTEN_IP_ADDRESS
+          value: 0.0.0.0
+        - name: FREQTRADE__API_SERVER__LISTEN_PORT
+          value: "8081"
+        - name: FREQTRADE__API_SERVER__JWT_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: FREQTRADE_JWT_SECRET_KEY
+        - name: FREQTRADE__EXCHANGE__NAME
+          value: binance
+        - name: FREQTRADE__EXCHANGE__KEY
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: BINANCE_API_KEY
+        - name: FREQTRADE__EXCHANGE__SECRET
+          valueFrom:
+            secretKeyRef:
+              name: shady-trader-secrets
+              key: BINANCE_SECRET_KEY
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "1000m"
+        livenessProbe:
+          httpGet:
+            path: /api/v1/ping
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 15
+        readinessProbe:
+          httpGet:
+            path: /api/v1/ping
+            port: 8081
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        volumeMounts:
+        - name: freqtrade-data
+          mountPath: /app/backend/freqtrade/user_data/data
       - name: fluent-bit
         image: fluent/fluent-bit:2.2
         ports:
@@ -223,3 +351,7 @@ spec:
         # Session affinity for WebSocket sticky sessions
         # This helps maintain WebSocket connections on the same pod
         # Note: For true sticky sessions, configure at the ingress level
+      volumes:
+      - name: freqtrade-data
+        persistentVolumeClaim:
+          claimName: freqtrade-data-pvc

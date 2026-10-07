@@ -6,12 +6,13 @@ import { CostEstimator } from '../../backend/slippage/cost-estimator.js';
 import { ImpactSimulator } from '../../backend/slippage/impact-simulator.js';
 import { OrderRequest } from '../../backend/slippage/types.js';
 import { Decimal } from 'decimal.js';
+import { createSlippageTestEngine } from './book-fixture.js';
 
 describe('SlippageEngine', () => {
   let engine: SlippageEngine;
 
   beforeEach(() => {
-    engine = new SlippageEngine();
+    engine = createSlippageTestEngine();
   });
 
   it('should estimate slippage for market order', async () => {
@@ -89,7 +90,7 @@ describe('CostEstimator', () => {
   let estimator: CostEstimator;
 
   beforeEach(() => {
-    engine = new SlippageEngine();
+    engine = createSlippageTestEngine();
     estimator = new CostEstimator(engine);
   });
 
@@ -129,7 +130,7 @@ describe('ImpactSimulator', () => {
   let simulator: ImpactSimulator;
 
   beforeEach(() => {
-    engine = new SlippageEngine();
+    engine = createSlippageTestEngine();
     simulator = new ImpactSimulator(engine);
   });
 

@@ -5,6 +5,7 @@ import { ShadowTrader } from '../../backend/shadow/shadow_trader';
 import { RiskMode } from '../../backend/risk/manager';
 import { BalanceManager } from '../../backend/balance/manager';
 import { Decimal } from 'decimal.js';
+import { createPaperTradingTestService } from './book-fixture.js';
 
 describe('Paper Trading Integration', () => {
   let paperService: PaperTradingService;
@@ -12,7 +13,7 @@ describe('Paper Trading Integration', () => {
   let balanceManager: BalanceManager;
 
   beforeEach(() => {
-    paperService = new PaperTradingService();
+    paperService = createPaperTradingTestService();
     shadowTrader = new ShadowTrader();
     balanceManager = new BalanceManager();
   });
@@ -200,6 +201,7 @@ describe('Paper Trading Integration', () => {
   });
 
   it('should handle order book updates', async () => {
+    await paperService.createPaperTrade({ symbol: 'BTC/USDT', side: 'buy', type: 'limit', quantity: 0.01, price: 1, timeInForce: 'GTC' });
     const snapshot1 = paperService.getOrderBookSnapshot('BTC/USDT');
     assert(snapshot1 !== null);
     

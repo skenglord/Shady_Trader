@@ -14,16 +14,15 @@ describe('Freqtrade validation helpers', () => {
   afterEach(() => {
     process.env = { ...originalEnv };
   });
-  test('normalizes ISO and Freqtrade timeranges within the 365-day cap', () => {
+  test('normalizes ISO and long historical Freqtrade timeranges', () => {
     assert.deepStrictEqual(normalizeFreqtradeTimerange({ start: '2024-01-01', end: '20240102' }), {
       start: '20240101',
       end: '20240102',
     });
 
-    assert.throws(
-      () => normalizeFreqtradeTimerange({ start: '2024-01-01', end: '2026-01-02' }),
-      /cannot exceed/,
-    );
+    assert.deepStrictEqual(normalizeFreqtradeTimerange({ start: '2017-01-01', end: '2026-01-02' }), {
+      start: '20170101', end: '20260102',
+    });
     assert.throws(
       () => normalizeFreqtradeTimerange({ start: '2025-02-31', end: '2025-03-01' }),
       /YYYYMMDD/,
@@ -61,7 +60,7 @@ describe('Freqtrade validation helpers', () => {
     assert.strictEqual(env.FREQTRADE__API_SERVER__JWT_SECRET_KEY, 'fixed-secret');
   });
 
-  test('exports the shared max timerange constant', () => {
+  test('retains the legacy timerange constant for callers', () => {
     assert.strictEqual(FREQTRADE_MAX_TIMERANGE_DAYS, 365);
   });
 });

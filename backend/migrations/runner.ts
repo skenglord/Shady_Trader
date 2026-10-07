@@ -5,6 +5,7 @@ import { up as m0002 } from './0002_migrate_regime_strings.js';
 import { up as m0003 } from './0003_freqtrade_jobs.js';
 import { up as m0004 } from './0004_freqtrade_hyperopt_results.js';
 import { up as m0005 } from './0005_shadow_trades_close_reason_and_indexes.js';
+import { up as m0006 } from './0006_execution_intents.js';
 import { logger }       from '../logging/logger.js';
 import { runQuery }     from '../database.js';
 
@@ -50,6 +51,7 @@ export async function runMigrations(): Promise<void> {
     { id: '0003', name: 'freqtrade_jobs',              run: m0003 },
     { id: '0004', name: 'freqtrade_hyperopt_results',  run: m0004 },
     { id: '0005', name: 'shadow_trades_close_reason_and_indexes', run: m0005 },
+    { id: '0006', name: 'durable_execution_intents', run: m0006 },
   ];
 
   logger.info('Starting migration runner', { service: 'migrations' });

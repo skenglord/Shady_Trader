@@ -1,50 +1,51 @@
-# Use Node.js LTS version
-FROM node:20-alpine AS base
+# Node and Python are both required: the app's Freqtrade workers invoke the
+# pinned Freqtrade CLI, while the optional sidecar runs its authenticated API.
+FROM node:22-bookworm-slim AS base
 
-# Install dependencies only when needed
 FROM base AS deps
-RUN apk add --no-cache libc6-compat
 WORKDIR /app
-
-# Copy package files
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 python3-venv python3-dev build-essential libffi-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
 COPY package.json package-lock.json ./
-RUN npm ci --only=production && npm cache clean --force
+COPY backend/freqtrade/requirements.txt ./backend/freqtrade/requirements.txt
+RUN npm ci && npm cache clean --force
+RUN python3 -m venv /app/backend/freqtrade/venv \
+    && /app/backend/freqtrade/venv/bin/pip install --no-cache-dir --upgrade pip wheel setuptools \
+    && /app/backend/freqtrade/venv/bin/pip install --no-cache-dir -r backend/freqtrade/requirements.txt
 
-# Build the application
 FROM base AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-
-# Build the application
 RUN npm run build
 
-# Production image
 FROM base AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
 ENV PORT=3000
+ENV HOST=0.0.0.0
+ENV FREQTRADE_VENV_DIR=/app/backend/freqtrade/venv
 
-# Create a non-root user
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 shady-trader
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      python3 python3-venv libgomp1 libstdc++6 libffi8 libssl3 \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --system --gid 1001 nodejs \
+    && useradd --system --uid 1001 --gid nodejs --create-home shady-trader
 
-# Copy built application
 COPY --from=builder --chown=shady-trader:nodejs /app/dist ./dist
 COPY --from=deps --chown=shady-trader:nodejs /app/node_modules ./node_modules
+COPY --from=deps --chown=shady-trader:nodejs /app/backend/freqtrade/venv ./backend/freqtrade/venv
 COPY --from=builder --chown=shady-trader:nodejs /app/package.json ./
-
-# Copy backend source for runtime
 COPY --from=builder --chown=shady-trader:nodejs /app/backend ./backend
 COPY --from=builder --chown=shady-trader:nodejs /app/server.ts ./
 
 USER shady-trader
 
-EXPOSE 3000
+EXPOSE 3000 8081
 
-# Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD node -e "require('http').get('http://localhost:3000/api/health', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
+  CMD node -e "require('http').get('http://127.0.0.1:3000/api/health/live', (res) => { process.exit(res.statusCode === 200 ? 0 : 1) })"
 
 CMD ["npm", "start"]

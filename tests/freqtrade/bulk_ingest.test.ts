@@ -1,7 +1,7 @@
 import { describe, test, before, after } from 'node:test';
 import assert from 'node:assert';
-import { execSync } from 'node:child_process';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { execSync, spawnSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -9,7 +9,16 @@ import { tmpdir } from 'node:os';
 // instead of a hardcoded /home/creekz absolute path, so the test is portable.
 const REPO_ROOT = process.cwd();
 const scriptPath = join(REPO_ROOT, 'backend/freqtrade/scripts/bulk_ingest_candles.py');
-const venvPython = join(REPO_ROOT, 'backend/freqtrade/venv/bin/python3');
+const venvCandidate = join(REPO_ROOT, 'backend/freqtrade/venv/bin/python3');
+const pythonCandidates = [process.env.FREQTRADE_PYTHON, venvCandidate, 'python3'].filter(Boolean) as string[];
+const venvPython = pythonCandidates.find(candidate => {
+  if (candidate === venvCandidate && !existsSync(candidate)) return false;
+  const result = spawnSync(candidate, ['-c', 'import pandas, pyarrow'], { stdio: 'ignore' });
+  return result.status === 0;
+});
+const missingPythonDeps = venvPython
+  ? false
+  : 'requires Python with pandas and pyarrow; set FREQTRADE_PYTHON or run the Freqtrade setup first';
 
 /**
  * Helper: query the SQLite DB via Python and return a scalar result.
@@ -52,7 +61,7 @@ conn.close()
 `;
 }
 
-describe('bulk_ingest_candles.py', () => {
+describe('bulk_ingest_candles.py', { skip: missingPythonDeps }, () => {
   let tmpDir: string;
   let dbPath: string;
   let dataDir: string;

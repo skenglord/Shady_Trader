@@ -5,6 +5,7 @@ import { OrderBookSimulator, PaperOrder } from '../../backend/paper-trading/orde
 import { PaperPositionTracker, PaperPosition } from '../../backend/paper-trading/position-tracker';
 import { PaperTradingService, PaperTradeRequest } from '../../backend/paper-trading/paper-trading-service';
 import { Decimal } from 'decimal.js';
+import { createPaperTradingTestService } from './book-fixture.js';
 
 describe('Paper Trading State Machine', () => {
   let stateMachine: PaperTradingStateMachine;
@@ -211,9 +212,10 @@ describe('Order Book Simulator', () => {
 
   beforeEach(() => {
     orderBook = new OrderBookSimulator();
+    orderBook.updateOrderBook({ symbol: 'BTC/USDT', timestamp: Date.now(), bids: Array.from({ length: 10 }, (_, i) => [54999 - i, 1] as [number, number]), asks: Array.from({ length: 10 }, (_, i) => [55001 + i, 1] as [number, number]) });
   });
 
-  it('should initialize with order books for common symbols', () => {
+  it('starts empty and accepts a fresh exchange book', () => {
     const snapshot = orderBook.getOrderBook('BTC/USDT');
     assert(snapshot !== null);
     assert(snapshot!.bids.length > 0);
@@ -229,7 +231,7 @@ describe('Order Book Simulator', () => {
 
   it('should update order book with new price', () => {
     const before = orderBook.getOrderBook('BTC/USDT')!.midPrice;
-    orderBook.updateOrderBook('BTC/USDT', 55000);
+    orderBook.updateOrderBook({ symbol: 'BTC/USDT', timestamp: Date.now(), bids: [[55009, 1]], asks: [[55011, 1]] });
     const after = orderBook.getOrderBook('BTC/USDT')!.midPrice;
     assert(after.toNumber() > 0);
   });
@@ -504,7 +506,7 @@ describe('Paper Trading Service', () => {
   let service: PaperTradingService;
 
   beforeEach(() => {
-    service = new PaperTradingService();
+    service = createPaperTradingTestService();
   });
 
   afterEach(() => {
@@ -588,7 +590,8 @@ describe('Paper Trading Service', () => {
     assert(Array.isArray(summary.positions));
   });
 
-  it('should get order book snapshot', () => {
+  it('should get order book snapshot after obtaining a live-book fixture', async () => {
+    await service.createPaperTrade({ symbol: 'BTC/USDT', side: 'buy', type: 'limit', quantity: 1, price: 1, timeInForce: 'GTC' });
     const snapshot = service.getOrderBookSnapshot('BTC/USDT');
     
     assert(snapshot !== null);

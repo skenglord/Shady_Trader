@@ -1,7 +1,25 @@
 # AI Shadow Trading System Documentation
 
 ## Overview
+
 This system is an AI-augmented algorithmic trading platform that supports multiple risk modes running in parallel (Shadow Trading). It uses a local Ollama Gemma adapter for non-blocking signal confirmation, with rule-based fallback when the AI path is disabled or unavailable.
+
+## Freqtrade integration
+
+The Freqtrade CLI is used by the download, backtest, and validation workers. The
+reference strategy is for backtest validation only; its config remains in dry
+run mode and stopped. On a host, run `npm run freqtrade:install` followed by
+`npm run freqtrade:validate`. Set `FREQTRADE_ENABLED=true` and generate unique
+`FREQTRADE_API_USER`, `FREQTRADE_API_PASS`, and `FREQTRADE_JWT_SECRET_KEY`
+values before starting the authenticated webserver with `npm run freqtrade:up`.
+
+Docker builds include the pinned Python runtime and share its venv and candle
+data between the Node workers and the optional Freqtrade API sidecar. To enable
+both job processing and its API, set the Freqtrade environment values in `.env`
+and run `docker compose --profile freqtrade up -d`. The API is bound to
+localhost port 8081 by default; it is not published on a public interface.
+Kubernetes runs the API as an authenticated in-Pod sidecar and exposes it only
+through a ClusterIP service. Both deployments keep Freqtrade trading disabled.
 
 ## API Integrations
 
@@ -92,6 +110,7 @@ To configure these APIs and strategies:
 - In `production`, privileged routes fail closed (`503`) when no auth token is configured.
 - Mutating endpoints now enforce request validation (type/shape/range checks) before execution.
 - Validation schemas are implemented with **Zod** for consistent runtime type enforcement.
+- `LIVE_TRADING_ENABLED` defaults to `false`; exchange credentials alone never enable order submission. Current exchange adapters place spot orders and do not configure leverage, so live entries with a simulated leverage setting above `1x` are rejected.
 
 ### Frontend Security & Auth (operator-supplied tokens)
 - **No secrets in the bundle.** Auth tokens (`API_ADMIN_TOKEN`, `API_TRADER_TOKEN`) and `GEMINI_API_KEY` are **never** compiled into the SPA — they were removed from `vite.config.ts`'s `define`. An operator enters tokens at app start via a token-entry UI; they are held in **module-scoped memory only** (`src/auth/tokenStore.ts`) and never written to localStorage, sessionStorage, cookies, or the URL. They are lost on page reload by design.
@@ -107,13 +126,36 @@ To configure these APIs and strategies:
 - **MLDashboard** is reachable via a "ML Dashboard" toolbar button that opens a monitoring modal (`/api/ml/*` endpoints). It degrades gracefully when `ML_ENABLED=false`.
 
 ### Database Migrations
-- Migrations are tracked in a `schema_migrations` state table (`backend/migrations/runner.ts`): each of the 5 migrations runs exactly once and is skipped on subsequent boots. `listAppliedMigrations()` returns applied ids. Schema DDL is owned by application startup (`backend/database_postgres.ts` + `backend/migrations/`); `docker/postgres/init.sql` and the `k8s/configmap.yaml` init block are bootstrap+seed-only (idempotent default balance row).
+- Migrations are tracked in a `schema_migrations` state table (`backend/migrations/runner.ts`): each migration runs once and is skipped on subsequent boots. The migrations include durable execution intents for cross-replica duplicate prevention. `listAppliedMigrations()` returns applied ids. Schema DDL is owned by application startup (`backend/database_postgres.ts` + `backend/migrations/`); `docker/postgres/init.sql` and the `k8s/configmap.yaml` init block are bootstrap+seed-only (idempotent default balance row).
+
+### Runtime and deployment
+
+- Use Node.js 22 for local development and CI (`.nvmrc`); the production image uses the same Node major. `tsx` is a production dependency because the server entry point is TypeScript.
+- Kubernetes manifests contain no default credentials. Create `shady-trader-secrets` and the TLS Secret before deployment; see [k8s/README.md](k8s/README.md).
+- The Kubernetes trading engine runs as one replica. Scale API and engine workloads separately only after a dedicated single-owner execution service is deployed.
+
+#### Run the installable local app
+
+The dashboard can be installed from a local browser as a Progressive Web App. This mode uses the production build, binds only to `127.0.0.1`, and keeps real exchange orders and Freqtrade disabled.
+
+```bash
+npm ci
+npm run app
+```
+
+Run `nvm use` first to select Node 22 and match the SQLite native runtime. The launcher builds the frontend, creates a private `.env` with local admin/trader tokens when needed, opens `http://127.0.0.1:3000`, and prints the tokens for the sign-in screen. Those `.env` tokens are also explicitly passed to the server, overriding shell tokens so the displayed credentials match. The launcher refuses live mode enabled in either `.env` or the shell before changing configuration. Keep that terminal open while using the app; press Ctrl+C to stop it. Use the **Install Shady Trader app** button on the sign-in screen (or the browser's install menu) to add it to the desktop. The app requires a network connection to its local server; it does not cache market data or work offline. Do not change `LIVE_TRADING_ENABLED` to `true` for local desktop use.
 
 ### Diagnostics
 - `GET /api/diagnostics/startup`: public startup configuration status (non-secret), exchange readiness, mode/timeframe context.
 - `GET /api/diagnostics/health`: public runtime heartbeat including uptime, request-level API telemetry, market-data cache status, Redis status, and ML health.
 - `GET /api/diagnostics/metrics`: public Prometheus-style plaintext metrics for API, market-data, and Freqtrade counters/latencies.
 - Startup diagnostics now also include `exchangeCapabilities` (provider support flags for live trading/account/public data).
+
+### CLI paper trading and backtesting
+
+- `npm run trading-cli -- engine status|start|stop` controls the server's shadow trader. It consumes public exchange market data; with `LIVE_TRADING_ENABLED=false`, it cannot send live orders.
+- `npm run trading-cli -- backtest --symbol BTC/USDT --fees-enabled --slippage-enabled` runs the in-house backtest over candles in SQLite.
+- Freqtrade download, ingestion, and full-history backtest examples are in [cli/README.md](cli/README.md). Use the `--local` Freqtrade mode when Redis workers are unavailable.
 
 ### Structured Logging & Correlation IDs
 - Backend logging now emits structured JSON records (`ts`, `level`, `message`, contextual fields).

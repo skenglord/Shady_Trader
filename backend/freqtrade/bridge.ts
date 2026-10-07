@@ -430,7 +430,9 @@ export class FreqtradeBridge {
       '--exchange', parsed.exchange,
       '--pairs', parsed.pairs,
       '--timeframes', parsed.timeframes,
-      '--timerange', timerange.start === timerange.end ? undefined : `${timerange.start}-${timerange.end}`,
+      // Freqtrade's default is only the last 30 days. Start at the default
+      // history floor and let the exchange return data from each pair's listing.
+      '--timerange', timerange ? `${timerange.start}-${timerange.end || ''}` : `${process.env.FREQTRADE_HISTORY_START || '20170101'}-`,
       '--trading-mode', parsed.tradingMode,
       '--data-format-ohlcv', parsed.dataFormat,
       '-c', this.configPath,
@@ -468,7 +470,7 @@ export class FreqtradeBridge {
     const args = buildArgs([
       'backtesting',
       '--strategy', parsed.strategy,
-      '--timerange', `${timerange.start}-${timerange.end}`,
+      '--timerange', timerange ? `${timerange.start}-${timerange.end || ''}` : undefined,
       '--timeframe', parsed.timeframe,
       '--pairs', parsed.pairs,
       '--dry-run-wallet', String(parsed.dryRunWallet),

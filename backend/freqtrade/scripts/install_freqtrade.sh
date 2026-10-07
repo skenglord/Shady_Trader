@@ -28,11 +28,21 @@ else
   exit 1
 fi
 echo "Using Python: $($PY_BIN --version)"
+"$PY_BIN" -c 'import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] < (3, 14) else 1)' || {
+  echo "ERROR: Freqtrade requires Python 3.11, 3.12, or 3.13." >&2
+  exit 1
+}
 
-# --- 2. Create venv if missing ----------------------------------------------
-if [ ! -d "${VENV_DIR}" ]; then
+# --- 2. Create/repair venv ---------------------------------------------------
+if [ ! -x "${VENV_DIR}/bin/python" ] || ! "${VENV_DIR}/bin/python" -m pip --version >/dev/null 2>&1; then
   echo "Creating venv at ${VENV_DIR} ..."
-  "${PY_BIN}" -m venv "${VENV_DIR}"
+  if command -v uv >/dev/null 2>&1; then
+    # Some minimal Linux images omit ensurepip/python3-venv. uv seeds pip
+    # without requiring that OS package and repairs partial venvs safely.
+    uv venv --clear --seed --python "${PY_BIN}" "${VENV_DIR}"
+  else
+    "${PY_BIN}" -m venv "${VENV_DIR}"
+  fi
 else
   echo "Venv already exists at ${VENV_DIR}"
 fi
@@ -41,17 +51,20 @@ fi
 source "${VENV_DIR}/bin/activate"
 
 # --- 3. Install requirements (skip if freqtrade already importable) ---------
-if "${VENV_DIR}/bin/freqtrade" --version >/dev/null 2>&1; then
+if "${VENV_DIR}/bin/python" -c "import freqtrade, pandas_ta, pandas, numpy" >/dev/null 2>&1; then
   echo "freqtrade already installed: $(${VENV_DIR}/bin/freqtrade --version)"
 else
   echo "Installing requirements from ${REQ_FILE} ..."
-  pip install --upgrade pip wheel setuptools
+  "${VENV_DIR}/bin/python" -m pip install --upgrade pip wheel setuptools
   # 3.13 sometimes needs --no-build-isolation for older sdists (e.g. pandas-ta)
-  pip install --no-build-isolation -r "${REQ_FILE}" || {
+  "${VENV_DIR}/bin/python" -m pip install --no-build-isolation -r "${REQ_FILE}" || {
     echo "WARN: pip install failed with --no-build-isolation; retrying without it"
-    pip install -r "${REQ_FILE}"
+    "${VENV_DIR}/bin/python" -m pip install -r "${REQ_FILE}"
   }
 fi
+
+"${VENV_DIR}/bin/python" -m pip check
+"${VENV_DIR}/bin/freqtrade" --version
 
 # --- 4. Optional: detect TA-Lib C library and warn if missing ---------------
 if "${VENV_DIR}/bin/python" -c "import talib" >/dev/null 2>&1; then

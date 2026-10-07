@@ -4,6 +4,7 @@ import { IndicatorEngine } from './indicators/engine.js';
 import { RegimeDetector, RegimeType } from './regime/detector.js';
 import { SignalGenerator, Signal } from './strategy/signal_generator.js';
 import { ShadowTrader } from './shadow/shadow_trader.js';
+import { calculateTradePnl } from './shadow/pnl.js';
 import { validateModeForLive } from './risk/manager.js';
 import { BalanceManager } from './balance/manager.js';
 import { MarketDataService } from './api/marketDataService.js';
@@ -110,6 +111,7 @@ export class TradingEngine {
   private _strategy: string = 'regime';
   private _aiStrategySwitching: boolean = false;
   private _lastBroadcastCandleTime: number = 0;
+  private liveCandle: { symbol: string; time: number; open: number; high: number; low: number; close: number; volume: number } | null = null;
 
   static aiStrategySwitchingEnabled = true;
 
@@ -189,6 +191,12 @@ export class TradingEngine {
 
   get activeMode(): string {
     return this._activeMode;
+  }
+
+  hasLiveOpenPositions(): boolean {
+    return Object.values(this.shadowTrader.portfolios).some(portfolio =>
+      portfolio.openTrades.some((trade: any) => Boolean(trade.exchangeOrderId))
+    );
   }
 
   set activeMode(value: string) {
@@ -290,7 +298,7 @@ export class TradingEngine {
     this.monteCarloEngine = new MonteCarloEngine();
 
     // Initialize paper trading components
-    this.paperTradingService = new PaperTradingService();
+    this.paperTradingService = new PaperTradingService(() => this.exchange);
     this.paperTradingWebSocketHandler = new PaperTradingWebSocketHandler(this.paperTradingService);
 
     // Setup WebSocket handler for paper trading
@@ -298,8 +306,8 @@ export class TradingEngine {
 
     // Initialize slippage engine components
     try {
-      const slippageEngine = new SlippageEngine();
-      const liquidityAnalyzer = new LiquidityAnalyzer(this.exchange);
+      const slippageEngine = new SlippageEngine(() => this.exchange);
+      const liquidityAnalyzer = new LiquidityAnalyzer(() => this.exchange);
       const costEstimator = new CostEstimator(slippageEngine);
 
       this.slippageEngine = {
@@ -434,7 +442,7 @@ export class TradingEngine {
     // Initialize workers with service dependencies
     initializeWorkers(this.marketDataService, this.optimizationEngine);
 
-    // Schedule market data jobs (every hour)
+    // Schedule market data jobs every 15 minutes when Redis queues are available.
     const mdQueue = getMarketDataQueue();
     if (mdQueue) {
       mdQueue.add('fetch-market-data', {
@@ -442,7 +450,7 @@ export class TradingEngine {
         timeframe: this.timeframe
       }, {
         repeat: {
-          every: 60 * 60 * 1000, // 1 hour
+          every: 15 * 60 * 1000,
         },
         attempts: 3,
         backoff: {
@@ -450,6 +458,14 @@ export class TradingEngine {
           delay: 5000,
         },
       });
+    } else {
+      // Keep the local/single-process app fresh when Redis is not installed.
+      this.marketPollInterval = setInterval(() => {
+        this.marketDataService.fetchMarketData().catch((err) =>
+          logger.error('Market data refresh failed', { error: String(err), service: 'trading-engine' })
+        );
+      }, 15 * 60 * 1000);
+      this.marketPollInterval.unref?.();
     }
 
     // Schedule optimization jobs (every 6 hours)
@@ -552,11 +568,13 @@ export class TradingEngine {
     }
     await this.loadSettings();
     // ── v6.0 Block 6: degen live-mode safety guard ──
-    try {
-      validateModeForLive(process.env.RISK_MODE_DEFAULT ?? 'conservative');
-    } catch (err: any) {
-      logger.error('Live mode validation failed', { error: err.message });
-      throw err;
+    if (process.env.LIVE_TRADING_ENABLED === 'true') {
+      try {
+        validateModeForLive(this.activeMode);
+      } catch (err: any) {
+        logger.error('Live mode validation failed', { mode: this.activeMode, error: err.message });
+        throw err;
+      }
     }
     // Initialize sub-components that need DB access
     try {
@@ -569,7 +587,7 @@ export class TradingEngine {
 
   backupDatabase() {
     try {
-      const dbPath = path.join(process.cwd(), 'trading.db');
+      const dbPath = path.resolve(process.cwd(), process.env.DB_PATH || 'trading.db');
       const backupPath = path.join(process.cwd(), `trading_backup_${Date.now()}.db`);
       if (fs.existsSync(dbPath)) {
         fs.copyFileSync(dbPath, backupPath);
@@ -664,6 +682,7 @@ export class TradingEngine {
           useTestnet
         );
         this.exchange.setActiveSymbol(this.symbol);
+        this.exchange.setTickHandler((tick) => this.broadcastLiveTick(tick));
         this.startupDiagnostics.exchangeConfigured = Boolean(exchangeApiKey);
         this.startupDiagnostics.exchangeReason = exchangeApiKey ? 'ok' : 'no_api_key_live_calls_disabled';
       } else {
@@ -689,8 +708,10 @@ export class TradingEngine {
     // Initialize job queues (only if Redis is available)
     this.startSchedulers();
     this.isRunning = true;
-    this.shadowTrader.reset();
-    logger.info('Trading engine started and reset', { service: 'TradingEngine' });
+    // ShadowTrader.init() already restored balances and open trades from the
+    // database. Resetting here silently erased that in-memory state on every
+    // restart, so startup must preserve the restored paper portfolio.
+    logger.info('Trading engine started with persisted portfolio state', { service: 'TradingEngine' });
     this.broadcast({ type: 'status', data: { isRunning: true } });
 
     // Auto-allocate main balance to bot balance if not yet allocated
@@ -824,34 +845,41 @@ export class TradingEngine {
     // Close all shadow positions
     for (const mode of Object.keys(this.shadowTrader.portfolios)) {
       const portfolio = this.shadowTrader.portfolios[mode as any];
+      const remainingTrades: any[] = [];
       
       for (const trade of portfolio.openTrades) {
         const exitPrice = currentPrice || trade.price;
-        const leverage = trade.leverage || 1;
-        const marginUsed = trade.amount * trade.price / leverage;
-        const currentNotional = trade.amount * exitPrice;
-        const currentMargin = currentNotional / leverage;
-        let pnl = 0;
-        if (trade.side === 'buy') {
-          pnl = currentMargin - marginUsed;
-        } else {
-          pnl = marginUsed - currentMargin;
+        if (trade.exchangeOrderId) {
+          if (!this.exchange?.hasExecutionCredentials) {
+            logger.error('Kill switch cannot close live position: exchange credentials are incomplete', { service: 'main', tradeId: trade.id });
+            remainingTrades.push(trade);
+            continue;
+          }
+          try {
+            const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
+            const order = await this.exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
+            const filled = Number(order?.filled);
+            const status = String(order?.status || '').toLowerCase();
+            if (!order?.id || !['filled', 'closed'].includes(status) || !Number.isFinite(filled) || filled + Math.max(1e-12, trade.amount * 1e-8) < trade.amount) {
+              throw new Error(`Exchange did not confirm full close fill (${status || 'unknown'})`);
+            }
+          } catch (error: any) {
+            logger.error('Kill switch close failed; position remains open for recovery', {
+              service: 'main', tradeId: trade.id, error: error?.message || String(error)
+            });
+            remainingTrades.push(trade);
+            continue;
+          }
         }
+        const leverage = trade.leverage || 1;
+        const pnl = calculateTradePnl(trade, exitPrice);
         
         portfolio.balance += pnl;
 
         if (mode === this.activeMode) {
-          const tradeCost = trade.amount * trade.price / trade.leverage;
+          const tradeCost = trade.amount * trade.price / (trade.exchangeOrderId ? 1 : trade.leverage);
           await this.balanceManager.recordTradeResult(pnl, tradeCost);
           
-          if (this.exchange && this.exchange.apiKey) {
-            try {
-              const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
-              await this.exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
-            } catch (e: any) {
-              logger.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`, { service: 'main' });
-            }
-          }
         }
 
         await runQuery(`
@@ -860,7 +888,7 @@ export class TradingEngine {
           WHERE id = ?
         `, [pnl, exitPrice, Date.now(), trade.id]);
       }
-      portfolio.openTrades = [];
+      portfolio.openTrades = remainingTrades;
     }
     
     // Return all bot funds to main balance
@@ -1077,6 +1105,10 @@ export class TradingEngine {
         const newMode = text.trim().toLowerCase().replace(/[^a-z_]/g, '');
         const validModes = ["ultra_conservative", "conservative", "moderate", "aggressive", "degen"];
         if (validModes.includes(newMode)) {
+          if (newMode !== ctx.activeMode && this.hasLiveOpenPositions()) {
+            logger.warn('AI risk-mode change rejected while a live position is open', { service: 'main', requestedMode: newMode });
+            return;
+          }
           this.activeMode = newMode;
           ctx.activeMode = newMode;
           await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', newMode]);
@@ -1093,6 +1125,10 @@ export class TradingEngine {
         newMode = 'aggressive';
       } else if (this.currentRegime === 'sideways') {
         newMode = 'conservative';
+      }
+      if (newMode !== ctx.activeMode && this.hasLiveOpenPositions()) {
+        logger.warn('Fallback risk-mode change rejected while a live position is open', { service: 'main', requestedMode: newMode });
+        return;
       }
       this.activeMode = newMode;
       ctx.activeMode = newMode;
@@ -1235,18 +1271,19 @@ export class TradingEngine {
       // 5. Execute shadow trades — guarded by Redis execution lock (Block 8)
       const currentPrice = df[df.length - 1].close;
       const lockToken = await acquireTradeLock(ctx.symbol, ctx.redisClient);
-      if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_trade_lock')) return false;
       if (!lockToken) {
         logger.warn('Trade lock held — skipping execution', { service: 'TradingEngine', symbol: ctx.symbol });
       } else {
         try {
+          if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_trade_lock')) return false;
           await this.shadowTrader.processSignal(
             signal,
             currentPrice,
             ctx.activeMode,
             this.balanceManager,
             this.exchange,
-            ctx.currentRegime
+            ctx.currentRegime,
+            indicators.df[indicators.df.length - 1]?.time
           );
           if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_process_signal')) return false;
         } finally {
@@ -1264,6 +1301,27 @@ export class TradingEngine {
   }
 
   // ── Stage 7: Broadcast cycle results (performance, balances, candle) ──
+  private broadcastLiveTick(tick: { symbol: string; price: number; time: number }) {
+    if (tick.symbol !== this.symbol || !Number.isFinite(tick.price) || tick.price <= 0) return;
+    const timeframeMs: Record<string, number> = {
+      '1m': 60_000, '5m': 300_000, '15m': 900_000, '30m': 1_800_000,
+      '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000,
+    };
+    const interval = timeframeMs[this.timeframe] ?? 900_000;
+    const candleTime = Math.floor(tick.time / interval) * interval;
+    const previous = this.liveCandle;
+    const candle = previous?.symbol === tick.symbol && previous.time === candleTime
+      ? {
+          ...previous,
+          high: Math.max(previous.high, tick.price),
+          low: Math.min(previous.low, tick.price),
+          close: tick.price,
+        }
+      : { symbol: tick.symbol, time: candleTime, open: tick.price, high: tick.price, low: tick.price, close: tick.price, volume: 0 };
+    this.liveCandle = candle;
+    this.broadcast({ type: 'candle', data: { ...candle, source: 'live_tick' } });
+  }
+
   private async broadcastCycleStage(
     ctx: CycleContext,
     indicators: IndicatorSet
@@ -1291,6 +1349,7 @@ export class TradingEngine {
     // Broadcast latest candle for chart - always, so frontend can update current candle price
     const latestCandle = indicators.df[indicators.df.length - 1];
     if (latestCandle) {
+      this.liveCandle = { symbol: ctx.symbol, ...latestCandle };
       this.broadcast({ type: 'candle', data: latestCandle });
     }
     return true;

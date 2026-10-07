@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { ShadowTrader } from '../../backend/shadow/shadow_trader.js';
 import { RiskMode, RiskManager } from '../../backend/risk/manager.js';
 import { setMockRunQuery, clearMockRunQuery } from '../../backend/database.js';
+import { calculateTradePnl } from '../../backend/shadow/pnl.js';
 
 // ---------------------------------------------------------------------------
 // Helpers – construct realistic trade + ExitContext objects matching the
@@ -476,12 +477,12 @@ describe('ShadowTrader.executeTradeClosure fee/slippage [T5]', () => {
     await trader.updatePositions(51000, undefined, undefined, undefined, { time: Date.now() });
 
     assert.equal(trader.portfolios[RiskMode.MODERATE].openTrades.length, 0, 'trade should be closed');
-    // pnl = currentMargin - marginUsed = (51000/1) - (50000/1) = 1000
-    assert.equal(trader.portfolios[RiskMode.MODERATE].balance, initialBalance + 1000);
+    const expectedPnl = calculateTradePnl(trade, 51000);
+    assert.equal(trader.portfolios[RiskMode.MODERATE].balance, initialBalance + expectedPnl);
 
     const updateCall = dbCalls.find(c => c.sql.includes('UPDATE shadow_trades'));
     assert.ok(updateCall);
-    assert.equal(updateCall.params[0], 1000, 'pnl should be 1000 (51000-50000)');
+    assert.equal(updateCall.params[0], expectedPnl, 'pnl includes the adverse exit fill and both trading fees');
     assert.equal(updateCall.params[1], 51000, 'exit_price should be 51000');
   });
 });

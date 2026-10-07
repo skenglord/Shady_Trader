@@ -293,9 +293,9 @@ export async function registerFreqtradeWorkers(): Promise<void> {
         {
           jobId: 'cron-weekly',
           exchange: process.env.EXCHANGE_NAME || 'binance',
-          pairs: (process.env.FREQTRADE_DEFAULT_PAIRS || 'BTC/USDT,ETH/USDT').split(','),
+          pairs: (process.env.FREQTRADE_DEFAULT_PAIRS || 'BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT').split(','),
           timeframes: ['1h', '4h', '1d'],
-          tradingMode: (process.env.FREQTRADE_TRADING_MODE || 'spot') as 'spot' | 'futures' | 'margin',
+          tradingMode: (process.env.FREQTRADE_TRADING_MODE || 'futures') as 'spot' | 'futures' | 'margin',
           dataFormat: 'parquet' as const
         },
         {

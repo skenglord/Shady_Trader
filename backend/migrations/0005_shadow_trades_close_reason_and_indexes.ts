@@ -4,7 +4,7 @@
  * Adds the close_reason column to existing SQLite databases and creates the
  * missing status/symbol indexes used by common trade and signal lookups.
  */
-import { runQuery } from '../database.js';
+import { getTableColumnNames, runQuery } from '../database.js';
 
 const INDEXES = [
   { name: 'idx_shadow_trades_status', table: 'shadow_trades', columns: 'status' },
@@ -13,8 +13,8 @@ const INDEXES = [
 ] as const;
 
 export async function up(): Promise<void> {
-  const columns = await runQuery('PRAGMA table_info(shadow_trades)', [], 'all') as Array<{ name: string }>;
-  const hasCloseReason = columns.some(column => column.name === 'close_reason');
+  const columns = await getTableColumnNames('shadow_trades');
+  const hasCloseReason = columns.includes('close_reason');
 
   if (!hasCloseReason) {
     await runQuery('ALTER TABLE shadow_trades ADD COLUMN close_reason TEXT DEFAULT NULL', [], 'run');
@@ -34,8 +34,8 @@ export async function down(): Promise<void> {
     await runQuery(`DROP INDEX IF EXISTS ${index.name}`, [], 'run');
   }
 
-  const columns = await runQuery('PRAGMA table_info(shadow_trades)', [], 'all') as Array<{ name: string }>;
-  if (!columns.some(column => column.name === 'close_reason')) {
+  const columns = await getTableColumnNames('shadow_trades');
+  if (!columns.includes('close_reason')) {
     return;
   }
 

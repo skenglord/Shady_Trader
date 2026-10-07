@@ -45,6 +45,17 @@ services:
       dockerfile: Dockerfile
     environment:
       NODE_ENV: development
+      HOST: 0.0.0.0
+      LIVE_TRADING_ENABLED: 'false'
+      FREQTRADE_ENABLED: ${FREQTRADE_ENABLED:-false}
+      FREQTRADE_QUEUE_CONCURRENCY: ${FREQTRADE_QUEUE_CONCURRENCY:-1}
+      FREQTRADE_API_USER: ${FREQTRADE_API_USER:-}
+      FREQTRADE_API_PASS: ${FREQTRADE_API_PASS:-}
+      FREQTRADE__API_SERVER__JWT_SECRET_KEY: ${FREQTRADE_JWT_SECRET_KEY:-}
+      EXCHANGE_NAME: ${EXCHANGE_NAME:-binance}
+      EXCHANGE_API_KEY: ${EXCHANGE_API_KEY:-${BINANCE_API_KEY:-}}
+      EXCHANGE_API_SECRET: ${EXCHANGE_API_SECRET:-${BINANCE_SECRET_KEY:-}}
+      EXCHANGE_API_PASSWORD: ${EXCHANGE_API_PASSWORD:-}
       USE_POSTGRES: 'true'
       POSTGRES_HOST: postgres
       POSTGRES_PORT: 5432
@@ -74,16 +85,28 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
+      - freqtrade_venv:/app/backend/freqtrade/venv
+      - freqtrade_data:/app/backend/freqtrade/user_data/data
     command: npm run dev
 
   freqtrade:
+    profiles: ["freqtrade"]
     build:
       context: .
       dockerfile: Dockerfile
     environment:
       NODE_ENV: development
-      FREQTRADE_ENABLED: 'true'
-      FREQTRADE_QUEUE_CONCURRENCY: '1'
+      HOST: 0.0.0.0
+      LIVE_TRADING_ENABLED: 'false'
+      FREQTRADE_API_USER: ${FREQTRADE_API_USER:-}
+      FREQTRADE_API_PASS: ${FREQTRADE_API_PASS:-}
+      FREQTRADE__API_SERVER__JWT_SECRET_KEY: ${FREQTRADE_JWT_SECRET_KEY:-}
+      FREQTRADE__API_SERVER__LISTEN_IP_ADDRESS: 0.0.0.0
+      FREQTRADE__API_SERVER__LISTEN_PORT: '8081'
+      FREQTRADE__EXCHANGE__NAME: ${FREQTRADE__EXCHANGE__NAME:-${EXCHANGE_NAME:-binance}}
+      FREQTRADE__EXCHANGE__KEY: ${FREQTRADE__EXCHANGE__KEY:-${EXCHANGE_API_KEY:-${BINANCE_API_KEY:-}}}
+      FREQTRADE__EXCHANGE__SECRET: ${FREQTRADE__EXCHANGE__SECRET:-${EXCHANGE_API_SECRET:-${BINANCE_SECRET_KEY:-}}}
+      FREQTRADE__EXCHANGE__PASSWORD: ${FREQTRADE__EXCHANGE__PASSWORD:-${EXCHANGE_API_PASSWORD:-}}
       REDIS_HOST: redis
       REDIS_PORT: 6379
       BINANCE_API_KEY: ${BINANCE_API_KEY}
@@ -91,20 +114,34 @@ services:
     depends_on:
       redis:
         condition: service_healthy
-      postgres:
-        condition: service_healthy
     networks:
       - shady-trader
     volumes:
       - .:/app
       - /app/node_modules
+      - freqtrade_venv:/app/backend/freqtrade/venv
       - freqtrade_data:/app/backend/freqtrade/user_data/data
-    command: npm run dev
+      - freqtrade_logs:/app/backend/freqtrade/user_data/logs
+    command: bash backend/freqtrade/run_webserver.sh
+    ports:
+      - "127.0.0.1:${FREQTRADE_LISTEN_PORT:-8081}:8081"
+    healthcheck:
+      test:
+        - CMD
+        - /app/backend/freqtrade/venv/bin/python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/api/v1/ping', timeout=3)"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
 volumes:
   postgres_data:
   redis_data:
   freqtrade_data:
+  freqtrade_venv:
+  freqtrade_logs:
 
 networks:
   shady-trader:

@@ -14,6 +14,7 @@ const upload = multer({ dest: 'uploads/' });
 import { z } from 'zod';
 import { getRequestId, logger } from '../logging/logger.js';
 import axios from 'axios';
+import { Decimal } from 'decimal.js';
 import paperTradingRouter from '../paper-trading/paper-trading.controller.js';
 import { recordApiRequest, getApiMetricsSnapshot, toPrometheusMetrics } from '../observability/requestMetrics.js';
 import { getMLHealth } from '../ml/index.js';
@@ -23,6 +24,7 @@ import {
   getFreqtradeValidateQueue 
 } from '../job_queues.js';
 import { FreqtradeBridge } from '../freqtrade/bridge.js';
+import { canRunFreqtradeLocally, enqueueFreqtradeLocalJob } from '../freqtrade/local-jobs.js';
 import { normalizeFreqtradeTimerange, normalizeValidateTolerance } from '../freqtrade/validation.js';
 import { spawn } from 'child_process';
 import path from 'path';
@@ -316,6 +318,7 @@ const traderRoutes = [
   '/news',
   '/slippage',
   '/health',
+  '/health/providers',
   // Diagnostics: protected behind trader auth because the full health/startup
   // response leaks exchange config, slowest routes with latencies, and other
   // internal performance data. Liveness probes should use /api/health/quick or
@@ -418,15 +421,6 @@ apiRouter.get('/health/ready', async (req, res) => {
   }
 });
 
-apiRouter.get('/health/providers', async (req, res) => {
-  const engine = getTradingEngine();
-  if (!engine?.exchange) {
-    return res.status(503).json({ error: 'Exchange not initialized' });
-  }
-  const summary = engine.exchange.providerRotator.getSummary();
-  res.status(200).json(summary);
-});
-
 apiRouter.use((req, res, next) => {
   const start = process.hrtime.bigint();
   req.requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
@@ -490,6 +484,15 @@ for (const route of traderRoutes) {
   apiRouter.use(route, requireRole('trader'));
   protectedRoutes.add(route);
 }
+
+apiRouter.get('/health/providers', async (_req, res) => {
+  const engine = getTradingEngine();
+  if (!engine?.exchange) {
+    return res.status(503).json({ error: 'Exchange not initialized' });
+  }
+  const summary = engine.exchange.providerRotator.getSummary();
+  res.status(200).json(summary);
+});
 
 // WFA route ownership: retired public deprecation notice.
 apiRouter.use('/wfa', wfaDeprecatedRouter);
@@ -598,7 +601,7 @@ const validateFreqtradeDownloadBody = validateBody(z.object({
   exchange: z.string().min(1),
   pairs: z.array(z.string().min(1)).min(1),
   timeframes: z.array(z.string().min(1)).min(1),
-  timerange: z.object({ start: z.string().min(1), end: z.string().min(1) }),
+  timerange: z.object({ start: z.string().min(1), end: z.string().min(1) }).optional(),
   tradingMode: z.enum(['spot', 'futures', 'margin']),
   dataFormat: z.enum(['json', 'feather', 'parquet']),
 }).transform((body) => ({
@@ -608,7 +611,7 @@ const validateFreqtradeDownloadBody = validateBody(z.object({
 
 const validateFreqtradeBacktestBody = validateBody(z.object({
   strategy: z.string().min(1),
-  timerange: z.object({ start: z.string().min(1), end: z.string().min(1) }),
+  timerange: z.object({ start: z.string().min(1), end: z.string().min(1) }).optional(),
   pairs: z.array(z.string().min(1)).min(1),
   timeframe: z.string().min(1),
   dryRunWallet: z.number().positive(),
@@ -715,7 +718,9 @@ apiRouter.get('/ml/status', async (req, res) => {
             trained_at, last_drift_check, is_active
      FROM ml_models
      WHERE is_active = 1
-     ORDER BY symbol, regime`
+     ORDER BY symbol, regime`,
+    [],
+    'all'
   );
   res.json({
     ml_enabled: process.env.ML_ENABLED === 'true',
@@ -740,7 +745,8 @@ apiRouter.get('/ml/accuracy', async (req, res) => {
        AND actual_direction IS NOT NULL
        AND created_at > datetime('now', ? || ' days')
      GROUP BY regime`,
-    [symbol, `-${days}`]
+    [symbol, `-${days}`],
+    'all'
   );
   res.json(accuracy);
 });
@@ -753,7 +759,8 @@ apiRouter.get('/ml/predictions', async (req, res) => {
      WHERE symbol = ?
      ORDER BY created_at DESC
      LIMIT ?`,
-    [symbol, limit]
+    [symbol, limit],
+    'all'
   );
   res.json(predictions);
 });
@@ -968,7 +975,7 @@ apiRouter.get('/trades', async (req, res) => {
   const limit = Math.max(1, Math.min(requestedLimit, 200));
   
   const trades = await runQuery(`
-    SELECT id, timestamp, symbol, strategy, side, entry_price, exit_price, amount, pnl, status, risk_mode, close_reason
+    SELECT id, timestamp, symbol, NULL AS strategy, side, price AS entry_price, exit_price, amount, pnl, status, risk_mode, close_reason
     FROM shadow_trades
     ORDER BY timestamp DESC
     LIMIT ?
@@ -982,7 +989,7 @@ apiRouter.get('/shadow-trades/closed', async (req, res) => {
   const limit = Math.max(1, Math.min(requestedLimit, 500));
   
   const trades = await runQuery(`
-    SELECT id, timestamp, symbol, strategy, side, entry_price, exit_price, amount, pnl, status, risk_mode, close_reason
+    SELECT id, timestamp, symbol, NULL AS strategy, side, price AS entry_price, exit_price, amount, pnl, status, risk_mode, close_reason
     FROM shadow_trades
     WHERE status = 'closed'
     ORDER BY timestamp DESC
@@ -997,7 +1004,7 @@ apiRouter.get('/shadow-trades/all', async (req, res) => {
   const limit = Math.max(1, Math.min(requestedLimit, 1000));
   
   const trades = await runQuery(`
-    SELECT id, timestamp, symbol, strategy, side, entry_price, exit_price, amount, pnl, status, risk_mode, close_reason
+    SELECT id, timestamp, symbol, NULL AS strategy, side, price AS entry_price, exit_price, amount, pnl, status, risk_mode, close_reason
     FROM shadow_trades
     ORDER BY timestamp DESC
     LIMIT ?
@@ -1167,8 +1174,6 @@ apiRouter.post('/risk-configs/reset', (req, res) => {
 
 import OpenAI from 'openai';
 
-let aiRecommendationsEnabled = true;
-
 apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
   const engine = getTradingEngine();
   if (!engine) {
@@ -1178,20 +1183,6 @@ apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
   const currentRegime = engine.currentRegime;
   const currentConfigs = JSON.parse(JSON.stringify(engine.shadowTrader.riskManager.RISK_CONFIGS));
   
-  if (!aiRecommendationsEnabled) {
-    // Fallback immediately
-    for (const mode of Object.values(RiskMode)) {
-      if (currentRegime === 'strongbull' || currentRegime === 'bear') {
-        currentConfigs[mode].tpMultiplier = Math.max(1.5, currentConfigs[mode].tpMultiplier * 1.2);
-        currentConfigs[mode].slMultiplier = Math.max(0.5, currentConfigs[mode].slMultiplier * 0.8);
-      } else if (currentRegime === 'sideways') {
-        currentConfigs[mode].tpMultiplier = Math.max(1.0, currentConfigs[mode].tpMultiplier * 0.8);
-        currentConfigs[mode].slMultiplier = Math.max(0.5, currentConfigs[mode].slMultiplier * 1.2);
-      }
-    }
-    return res.json({ success: true, configs: currentConfigs });
-  }
-
   try {
     const openai = new OpenAI({
       baseURL: process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1',
@@ -1228,27 +1219,8 @@ apiRouter.post('/risk-configs/ai-recommend', async (req, res) => {
     }
   } catch (error: any) {
     console.error("AI Risk Recommendation failed:", error.message);
-    if (error.message && error.message.includes("fetch failed")) {
-       aiRecommendationsEnabled = false;
-    }
-    // Fallback to simple logic — always produce non-zero values
-    for (const mode of Object.values(RiskMode)) {
-      if (currentRegime === 'strongbull' || currentRegime === 'bear') {
-        currentConfigs[mode].takeProfit = Math.max(1.5, (currentConfigs[mode].takeProfit || 1.8) * 1.2);
-        currentConfigs[mode].stopLoss = Math.min(5.0, (currentConfigs[mode].stopLoss || 2.5) * 0.8);
-        currentConfigs[mode].positionSize = Math.min(0.15, (currentConfigs[mode].positionSize || 0.05) * 1.2);
-      } else if (currentRegime === 'sideways') {
-        currentConfigs[mode].takeProfit = Math.max(1.0, (currentConfigs[mode].takeProfit || 1.8) * 0.8);
-        currentConfigs[mode].stopLoss = Math.min(5.0, (currentConfigs[mode].stopLoss || 2.5) * 1.2);
-        currentConfigs[mode].positionSize = Math.min(0.1, (currentConfigs[mode].positionSize || 0.05) * 0.8);
-      } else {
-        // weak_bull or uncertain — moderate adjustments
-        currentConfigs[mode].takeProfit = currentConfigs[mode].takeProfit || 1.8;
-        currentConfigs[mode].stopLoss = currentConfigs[mode].stopLoss || 2.5;
-        currentConfigs[mode].positionSize = currentConfigs[mode].positionSize || 0.05;
-      }
-    }
-    res.json({ success: true, configs: currentConfigs });
+    logger.error('AI risk recommendation failed', { requestId: req.requestId, error: error.message });
+    res.status(503).json({ error: 'AI recommendation service unavailable; no configuration was changed.' });
   }
 });
 
@@ -1400,6 +1372,9 @@ apiRouter.post('/active-mode', validateActiveModeBody, async (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     const { mode } = req.body;
+    if (mode !== engine.activeMode && engine.hasLiveOpenPositions()) {
+      return res.status(409).json({ error: 'Close live positions before changing risk mode' });
+    }
     engine.activeMode = mode;
     await runQuery(`INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)`, ['activeMode', mode]);
     res.json({ success: true });
@@ -1482,7 +1457,7 @@ apiRouter.post('/manual-trade', validateManualTradeBody, async (req, res) => {
 
     try {
       // Execute trade
-      await engine.shadowTrader.processSignal(
+      const opened = await engine.shadowTrader.processSignal(
         signal,
         price,
         engine.activeMode,
@@ -1490,6 +1465,9 @@ apiRouter.post('/manual-trade', validateManualTradeBody, async (req, res) => {
         engine.exchange,
         engine.currentRegime
       );
+      if (!opened) {
+        return res.status(409).json({ error: 'Manual trade was not opened in the active mode' });
+      }
       res.json({ success: true, message: 'Manual trade opened' });
     } catch (e: any) {
       res.status(400).json({ error: e.message });
@@ -1593,28 +1571,15 @@ apiRouter.post('/slippage/backtest', validateBacktestBody, async (req, res) => {
       return res.status(503).json({ error: 'Slippage engine not available' });
     }
 
-    const { symbol, startDate, endDate, orderSize, scenarios = ['expected'] } = req.body;
-
-    // Simplified backtest - in production this would run comprehensive analysis
-    const mockResults = {
-      symbol,
-      period: { start: startDate, end: endDate },
-      orderSize,
-      scenarios: scenarios.map(scenario => ({
-        scenario,
-        expectedSlippage: 0.005, // 0.5%
-        worstCaseSlippage: 0.015, // 1.5%
-        rmse: 0.003,
-        directionalAccuracy: 0.85
-      }))
-    };
-
+    const { symbol, orderSize } = req.body;
+    const scenarios = Array.isArray(req.body.scenarios) ? req.body.scenarios : ['expected'];
+    const profiles = await Promise.all(scenarios.map(async (scenario: string) => ({
+      scenario,
+      buy: await engine.slippageEngine!.liquidityAnalyzer.analyzeDepth(symbol, new Decimal(Number(orderSize)), 'buy'),
+      sell: await engine.slippageEngine!.liquidityAnalyzer.analyzeDepth(symbol, new Decimal(Number(orderSize)), 'sell'),
+    })));
     recordApiRequest('/slippage/backtest', 'POST', 200, Date.now() - startTime);
-
-    res.json({
-      requestId,
-      backtest: mockResults
-    });
+    res.json({ requestId, symbol, orderSize, scenarios: profiles, source: 'live-order-book' });
   } catch (error: any) {
     recordApiRequest('/slippage/backtest', 'POST', 500, Date.now() - startTime);
     logger.error('Backtest failed', { requestId, error: error.message });
@@ -1673,17 +1638,31 @@ apiRouter.get('/slippage/history', async (req, res) => {
 // Freqtrade API Routes (Phase 4)
 // ──────────────────────────────────────────────────────────────────────
 
+async function dispatchFreqtradeJob(
+  queue: ReturnType<typeof getFreqtradeDataQueue>,
+  type: 'download' | 'backtest' | 'validate',
+  name: string,
+  payload: Record<string, unknown>,
+  jobId: string,
+): Promise<boolean> {
+  if (queue) {
+    await queue.add(name, payload, { jobId });
+    return true;
+  }
+  return enqueueFreqtradeLocalJob(type, payload);
+}
+
 apiRouter.post('/freqtrade/download-data', validateFreqtradeDownloadBody, async (req, res) => {
   const requestId = getRequestId(req.headers['x-request-id'] as string | string[] | undefined);
   const startTime = Date.now();
 
   try {
     const queue = getFreqtradeDataQueue();
-    if (!queue) {
-      return res.status(503).json({ error: 'Freqtrade data queue not available. Ensure Redis is running and FREQTRADE_ENABLED=true.' });
+    if (!queue && !canRunFreqtradeLocally()) {
+      return res.status(503).json({ error: 'Freqtrade is unavailable. Enable FREQTRADE_LOCAL_JOBS and install the Freqtrade environment, or enable Redis workers.' });
     }
 
-    let timerange: { start: string; end: string };
+    let timerange: { start: string; end?: string } | undefined;
     try {
       timerange = normalizeFreqtradeTimerange(req.body.timerange, 'download-data timerange');
     } catch (error: any) {
@@ -1701,7 +1680,9 @@ apiRouter.post('/freqtrade/download-data', validateFreqtradeDownloadBody, async 
       'run'
     );
 
-    await queue.add('download-data', payload, { jobId });
+    if (!await dispatchFreqtradeJob(queue, 'download', 'download-data', payload, jobId)) {
+      return res.status(503).json({ error: 'Freqtrade job could not be dispatched', requestId });
+    }
 
     recordApiRequest('/freqtrade/download-data', 'POST', 202, Date.now() - startTime);
     res.status(202).json({ requestId, jobId, message: 'Download job queued' });
@@ -1718,11 +1699,11 @@ apiRouter.post('/freqtrade/backtest', validateFreqtradeBacktestBody, async (req,
 
   try {
     const queue = getFreqtradeBacktestQueue();
-    if (!queue) {
-      return res.status(503).json({ error: 'Freqtrade backtest queue not available. Ensure Redis is running and FREQTRADE_ENABLED=true.' });
+    if (!queue && !canRunFreqtradeLocally()) {
+      return res.status(503).json({ error: 'Freqtrade is unavailable. Enable FREQTRADE_LOCAL_JOBS and install the Freqtrade environment, or enable Redis workers.' });
     }
 
-    let timerange: { start: string; end: string };
+    let timerange: { start: string; end?: string } | undefined;
     try {
       timerange = normalizeFreqtradeTimerange(req.body.timerange, 'backtest timerange');
     } catch (error: any) {
@@ -1740,7 +1721,9 @@ apiRouter.post('/freqtrade/backtest', validateFreqtradeBacktestBody, async (req,
       'run'
     );
 
-    await queue.add('backtest', payload, { jobId });
+    if (!await dispatchFreqtradeJob(queue, 'backtest', 'backtest', payload, jobId)) {
+      return res.status(503).json({ error: 'Freqtrade job could not be dispatched', requestId });
+    }
 
     recordApiRequest('/freqtrade/backtest', 'POST', 202, Date.now() - startTime);
     res.status(202).json({ requestId, jobId, message: 'Backtest job queued' });
@@ -1757,8 +1740,8 @@ apiRouter.post('/freqtrade/validate', validateFreqtradeValidateBody, async (req,
 
   try {
     const queue = getFreqtradeValidateQueue();
-    if (!queue) {
-      return res.status(503).json({ error: 'Freqtrade validate queue not available. Ensure Redis is running and FREQTRADE_ENABLED=true.' });
+    if (!queue && !canRunFreqtradeLocally()) {
+      return res.status(503).json({ error: 'Freqtrade is unavailable. Enable FREQTRADE_LOCAL_JOBS and install the Freqtrade environment, or enable Redis workers.' });
     }
 
     const jobId = crypto.randomUUID();
@@ -1771,7 +1754,9 @@ apiRouter.post('/freqtrade/validate', validateFreqtradeValidateBody, async (req,
       'run'
     );
 
-    await queue.add('validate', payload, { jobId });
+    if (!await dispatchFreqtradeJob(queue, 'validate', 'validate', payload, jobId)) {
+      return res.status(503).json({ error: 'Freqtrade job could not be dispatched', requestId });
+    }
 
     recordApiRequest('/freqtrade/validate', 'POST', 202, Date.now() - startTime);
     res.status(202).json({ requestId, jobId, message: 'Validation job queued' });
@@ -1983,9 +1968,10 @@ apiRouter.post('/freqtrade/ingest', async (req, res) => {
     // We'll spawn the python script directly for now. 
     // In a more robust setup, this would be a BullMQ job.
     const scriptPath = path.join(process.cwd(), 'backend/freqtrade/scripts/bulk_ingest_candles.py');
-    const dbPath = path.join(process.cwd(), 'trading.db');
+    const dbPath = path.resolve(process.cwd(), process.env.DB_PATH || 'trading.db');
     
-    const child = spawn('python3', [scriptPath, '--db', dbPath, '--data-dir', dataDir], {
+    const venvPython = path.join(process.cwd(), 'backend/freqtrade/venv/bin/python');
+    const child = spawn(fs.existsSync(venvPython) ? venvPython : 'python3', [scriptPath, '--db', dbPath, '--data-dir', dataDir], {
       stdio: 'pipe',
       cwd: process.cwd()
     });

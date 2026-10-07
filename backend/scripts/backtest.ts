@@ -91,7 +91,7 @@ function parseArgs(argv: string[]): Record<string, string | boolean> {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  const symbol = String(args.symbol ?? 'BTCUSDT');
+  const symbol = String(args.symbol ?? 'BTC/USDT');
   const mode = String(args.mode ?? 'conservative');
   const start = args.start ? new Date(String(args.start)).getTime() : undefined;
   const end = args.end ? new Date(String(args.end)).getTime() : undefined;

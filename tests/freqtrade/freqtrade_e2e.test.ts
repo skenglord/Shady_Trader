@@ -642,7 +642,7 @@ describe('Freqtrade API Routes', () => {
     assert.equal(res.status, 400);
   });
 
-  test('POST /api/freqtrade/download-data rejects unbounded timeranges', async () => {
+  test('POST /api/freqtrade/download-data accepts multi-year history when queue is unavailable', async () => {
     const res = await request(app)
       .post('/api/freqtrade/download-data')
       .set('x-api-token', TEST_ADMIN_TOKEN)
@@ -655,8 +655,8 @@ describe('Freqtrade API Routes', () => {
         timerange: { start: '20200101', end: '20220102' },
       });
 
-    assert.equal(res.status, 400);
-    assert.ok(res.body.error);
+    assert.ok([202, 503].includes(res.status));
+    assert.doesNotMatch(res.body.error || '', /timerange|365|exceed/i);
   });
 
   test('POST /api/freqtrade/download-data returns 403 for trader (needs admin)', async () => {
@@ -713,7 +713,7 @@ describe('Freqtrade API Routes', () => {
     assert.equal(res.status, 400);
   });
 
-  test('POST /api/freqtrade/backtest rejects unbounded timeranges', async () => {
+  test('POST /api/freqtrade/backtest accepts multi-year history when queue is unavailable', async () => {
     const res = await request(app)
       .post('/api/freqtrade/backtest')
       .set('x-api-token', TEST_ADMIN_TOKEN)
@@ -725,8 +725,8 @@ describe('Freqtrade API Routes', () => {
         dryRunWallet: 10000,
       });
 
-    assert.equal(res.status, 400);
-    assert.ok(res.body.error);
+    assert.ok([202, 503].includes(res.status));
+    assert.doesNotMatch(res.body.error || '', /timerange|365|exceed/i);
   });
 
   // ── POST /api/freqtrade/validate ──────────────────────────────────────
@@ -833,7 +833,7 @@ describe('Freqtrade API Routes', () => {
 
   // ── POST /api/freqtrade/ingest ────────────────────────────────────────
 
-  test('POST /api/freqtrade/ingest spawns Python and returns 500 if pandas not installed', async () => {
+  test('POST /api/freqtrade/ingest uses the installed Freqtrade Python when available', async () => {
     // This route spawns a real Python process, so results vary by env.
     // In CI/dev, it returns 500 because pandas isn't in the system Python.
     const res = await request(app)

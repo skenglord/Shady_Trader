@@ -44,7 +44,9 @@ export class MarketDataService {
   }
 
   private getUrl(endpoint: string) {
-    return `${this.baseUrl}${endpoint}${endpoint.includes('?') ? '&' : '?'}x_cg_demo_api_key=${this.cgApiKey}`;
+    const url = `${this.baseUrl}${endpoint}`;
+    if (!this.cgApiKey) return url;
+    return `${url}${endpoint.includes('?') ? '&' : '?'}x_cg_demo_api_key=${encodeURIComponent(this.cgApiKey)}`;
   }
 
   async fetchMarketData(): Promise<MarketData | null> {

@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "Shady Trader",
+  "short_name": "Shady Trader",
+  "description": "Local market dashboard and paper trading controls.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    {
+      "src": "/app-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

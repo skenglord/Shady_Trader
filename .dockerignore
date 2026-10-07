@@ -1,0 +1,15 @@
+.git
+.github
+node_modules
+dist
+coverage
+trading.db*
+*.log
+.env
+.env.*
+!.env.example
+backend/freqtrade/venv
+backend/freqtrade/user_data/data
+backend/freqtrade/user_data/logs
+__pycache__
+*.py[cod]

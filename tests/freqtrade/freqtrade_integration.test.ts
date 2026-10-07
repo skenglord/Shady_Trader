@@ -445,56 +445,6 @@ describe('Freqtrade validate worker helpers', () => {
     assert.equal(r3.profit_factor, 1);
   });
 
-  test('generateDummyCandles creates correct number of candles', async () => {
-    // The function is private, so we test the algorithm directly
-    function generateDummyCandles(count: number, endTime: number): Array<{
-      time: number; open: number; high: number; low: number; close: number; volume: number;
-    }> {
-      const candles: Array<{
-        time: number; open: number; high: number; low: number; close: number; volume: number;
-      }> = [];
-      const intervalMs = 3600000;
-      const basePrice = 40000;
-      const amplitude = 500;
-
-      for (let i = count - 1; i >= 0; i--) {
-        const t = endTime - i * intervalMs;
-        const phase = (i / count) * Math.PI * 4;
-        const noise = (Math.random() - 0.5) * 100;
-        const close = basePrice + Math.sin(phase) * amplitude + noise;
-        const openNum = i > 0
-          ? basePrice + Math.sin((i - 1) / count * Math.PI * 4) * amplitude + (Math.random() - 0.5) * 100
-          : close;
-        candles.push({
-          time: t,
-          open: openNum,
-          high: Math.max(openNum, close) + Math.random() * 50,
-          low: Math.min(openNum, close) - Math.random() * 50,
-          close,
-          volume: 100 + Math.random() * 900,
-        });
-      }
-      return candles;
-    }
-
-    const endTime = Date.now();
-    const candles = generateDummyCandles(200, endTime);
-
-    assert.equal(candles.length, 200);
-    assert.ok(candles[0].time < candles[1].time, 'Should be ascending (oldest first)');
-
-    // Verify each candle has all fields
-    for (const c of candles) {
-      assert.ok(typeof c.time === 'number');
-      assert.ok(typeof c.open === 'number');
-      assert.ok(typeof c.high === 'number');
-      assert.ok(typeof c.low === 'number');
-      assert.ok(typeof c.close === 'number');
-      assert.ok(typeof c.volume === 'number');
-      assert.ok(c.high >= c.low, 'high >= low');
-    }
-  });
-
   test('validate worker result creation with mock data', async () => {
     // Extract metrics like the worker does
     function extractMetrics(metrics: {

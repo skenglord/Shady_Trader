@@ -1,9 +1,11 @@
-import { RiskMode, RiskManager } from '../risk/manager.js';
+import { enforceDegenDollarCap, enforceRiskCap, getDailyRealizedLoss, RiskMode, RiskManager, validateModeForLive } from '../risk/manager.js';
 import { runQuery } from '../database.js';
 import { randomUUID } from 'crypto';
 import { CostEstimator, OrderRequest, SlippageCircuitBreaker } from '../slippage/index.js';
 import { computeFill } from '../slippage/fillCalculator.js';
 import { Decimal } from 'decimal.js';
+import { logger } from '../logging/logger.js';
+import { calculateTradePnl } from './pnl.js';
 
 type ExitDecision = { exitPrice: number; reason: string; pnlOverride?: number };
 type RatchetUpdate = { trailingStopApplied: boolean; runnerTriggered: boolean } | null;
@@ -20,6 +22,70 @@ type ExitContext = {
   balanceManager?: any;
   portfolio: { balance: number; initialBalance: number; openTrades: any[] };
 };
+
+function requireFilledOrder(order: any, expectedAmount: number): void {
+  const status = String(order?.status || '').toLowerCase();
+  const filled = Number(order?.filled);
+  const tolerance = Math.max(1e-12, expectedAmount * 1e-8);
+  if (!order?.id || !['filled', 'closed'].includes(status) || !Number.isFinite(filled) || filled + tolerance < expectedAmount) {
+    throw new Error(`Exchange did not confirm a full market fill${status ? ` (${status}, filled ${Number.isFinite(filled) ? filled : 'unknown'})` : ''}`);
+  }
+}
+
+async function canOpenNewTrade({
+  riskManager, mode, activeMode, portfolio, currentPrice, exchange
+}: {
+  riskManager: RiskManager;
+  mode: RiskMode;
+  activeMode?: string;
+  portfolio: { balance: number; initialBalance: number; openTrades: any[] };
+  currentPrice: number;
+  exchange?: any;
+}): Promise<boolean> {
+  const unresolved = await runQuery(
+    `SELECT idempotency_key FROM execution_intents
+     WHERE status IN ('pending', 'submitted', 'uncertain') LIMIT 1`,
+    [], 'all'
+  );
+  if (Array.isArray(unresolved) && unresolved.length > 0) {
+    logger.error('Entry blocked by unresolved execution intent', { service: 'ShadowTrader', mode });
+    return false;
+  }
+
+  let dailyLoss: number;
+  try {
+    dailyLoss = await getDailyRealizedLoss(mode, Date.now(), currentPrice);
+  } catch (error) {
+    logger.error('Entry blocked: daily realized loss could not be read', {
+      service: 'ShadowTrader', mode, error: error instanceof Error ? error.message : String(error)
+    });
+    return false;
+  }
+
+  if (mode === activeMode && process.env.LIVE_TRADING_ENABLED === 'true') {
+    try {
+      validateModeForLive(mode);
+    } catch (error) {
+      logger.error('Live entry blocked by risk mode guard', {
+        service: 'ShadowTrader', mode, error: error instanceof Error ? error.message : String(error)
+      });
+      return false;
+    }
+    if (!(exchange?.hasExecutionCredentials ?? Boolean(exchange?.apiKey && exchange?.apiSecret))) {
+      logger.error('Live entry blocked: exchange credentials are incomplete', { service: 'ShadowTrader', mode });
+      return false;
+    }
+  }
+
+  const haltReason = riskManager.checkCircuitBreakers(
+    portfolio.balance, portfolio.initialBalance, dailyLoss, mode
+  );
+  if (haltReason) {
+    console.log(`Shadow Trader [${mode}]: Halted - ${haltReason}. Effective Balance: ${portfolio.balance}, Initial: ${portfolio.initialBalance}`);
+    return false;
+  }
+  return true;
+}
 
 export class ShadowTrader {
   portfolios: Record<RiskMode, { balance: number, initialBalance: number, openTrades: any[] }>;
@@ -81,6 +147,18 @@ export class ShadowTrader {
   }
 
   async loadState() {
+    let liveOrderIds = new Map<string, string>();
+    try {
+      const intents = await runQuery(
+        `SELECT trade_id, exchange_order_id FROM execution_intents WHERE status = 'complete' AND exchange_order_id IS NOT NULL`,
+        [], 'all'
+      );
+      liveOrderIds = new Map((intents || []).map((intent: any) => [String(intent.trade_id), String(intent.exchange_order_id)]));
+    } catch (error) {
+      logger.error('Failed to load persisted live order ids', {
+        service: 'ShadowTrader', error: error instanceof Error ? error.message : String(error)
+      });
+    }
     for (const mode of Object.values(RiskMode)) {
       let openTrades: any[] = [];
       try {
@@ -95,7 +173,8 @@ export class ShadowTrader {
       this.portfolios[mode].openTrades = openTrades.map((t: any) => ({
         ...t,
         stopLoss: t.stop_loss,
-        takeProfit: t.take_profit
+        takeProfit: t.take_profit,
+        exchangeOrderId: liveOrderIds.get(String(t.id)) || t.exchange_order_id || null
       }));
 
       let result: any[] = [];
@@ -119,11 +198,18 @@ export class ShadowTrader {
     activeMode?: string,
     balanceManager?: any,
     exchange?: any,
-    regime: string = 'uncertain'
-  ) {
+    regime: string = 'uncertain',
+    candleTime?: number
+  ): Promise<boolean> {
+    let activeModeTradeOpened = false;
     for (const mode of Object.values(RiskMode)) {
       const portfolio = this.portfolios[mode];
-      
+      const liveOrderEnabled = mode === activeMode && process.env.LIVE_TRADING_ENABLED === 'true';
+
+      if (!await canOpenNewTrade({
+        riskManager: this.riskManager, mode, activeMode, portfolio, currentPrice, exchange
+      })) continue;
+
       const balances = balanceManager ? await balanceManager.getBalances() : null;
       // Use portfolio's own balance for state checks, botBalance for position sizing only
       const effectiveBalance = portfolio.balance;
@@ -133,13 +219,6 @@ export class ShadowTrader {
       }
 
       // Check circuit breakers
-      const dailyLoss = 0; // Calculate daily loss from DB
-      const haltReason = this.riskManager.checkCircuitBreakers(effectiveBalance, portfolio.initialBalance, dailyLoss, mode);
-      if (haltReason) {
-        console.log(`Shadow Trader [${mode}]: Halted - ${haltReason}. Effective Balance: ${effectiveBalance}, Initial: ${portfolio.initialBalance}`);
-        continue;
-      }
-
       // Validate trade
       if (!this.riskManager.validateTrade(signal, mode, portfolio.openTrades.length, regime)) {
         continue;
@@ -199,6 +278,15 @@ export class ShadowTrader {
 
       // Adjust TP/SL based on mode config
       const config = this.riskManager.getConfig(mode as RiskMode);
+      // All current authenticated exchange adapters submit spot orders and do
+      // not configure exchange leverage. Never send a simulated leveraged size
+      // to those spot endpoints.
+      if (liveOrderEnabled && Number(config.leverage || 1) !== 1) {
+        logger.error('Live entry blocked: current exchange adapters support spot sizing only', {
+          service: 'ShadowTrader', mode, configuredLeverage: config.leverage
+        });
+        continue;
+      }
 
       // Part 5.2: Dynamic Stops (ATR-based)
       // Since we have ATR in candles, let's use it if available
@@ -213,6 +301,27 @@ export class ShadowTrader {
         ? signal.entryPrice * (1 + tpPct)
         : signal.entryPrice * (1 - tpPct);
 
+      // Convert the calculated quantity back to an equity fraction, apply the
+      // configured effective-risk ceiling (including estimated entry/exit
+      // costs), then convert the capped fraction back to exchange base units.
+      try {
+        const leverage = Number(config.leverage || 1);
+        const stopFrac = Math.abs(signal.entryPrice - adjustedStopLoss) / signal.entryPrice;
+        const feeRate = Number(process.env.TAKER_FEE_RATE ?? '0.0006');
+        if (!Number.isFinite(feeRate) || feeRate < 0 || feeRate > 0.1) throw new Error('Invalid TAKER_FEE_RATE');
+        const allInStopFrac = stopFrac + (2 * Math.max(0, estSlippageFrac)) + (2 * feeRate);
+        const equityFraction = positionSize * signal.entryPrice / (effectiveBalance * leverage);
+        let cappedFraction = enforceRiskCap(equityFraction, leverage, allInStopFrac);
+        cappedFraction = enforceDegenDollarCap(mode, cappedFraction, effectiveBalance, allInStopFrac, leverage);
+        positionSize = (cappedFraction * effectiveBalance * leverage) / signal.entryPrice;
+        if (!Number.isFinite(positionSize) || positionSize <= 0) continue;
+      } catch (error) {
+        logger.error('Entry blocked: risk cap could not be applied', {
+          service: 'ShadowTrader', mode, error: error instanceof Error ? error.message : String(error)
+        });
+        continue;
+      }
+
       // Block 7: realistic slippage-adjusted fill (fractions only)
       const fill = computeFill(signal.side as 'buy' | 'sell', currentPrice, tpPct, estSlippageFrac);
       if (fill.skipped) {
@@ -222,12 +331,12 @@ export class ShadowTrader {
 
       // Execute shadow trade
       const trade = {
-        id: `shadow-${mode}-${Date.now()}`,
+        id: `shadow-${mode}-${Date.now()}-${randomUUID()}`,
         symbol: signal.symbol,
         side: signal.side,
         amount: positionSize,
         price: fill.fillPrice,
-        status: 'open',
+        status: liveOrderEnabled ? 'pending' : 'open',
         timestamp: Date.now(),
         risk_mode: mode,
         stopLoss: adjustedStopLoss,
@@ -242,35 +351,61 @@ export class ShadowTrader {
       };
 
       // Check if trade cost exceeds bot balance for active mode
-      const tradeCost = trade.amount * trade.price / trade.leverage;
+      const tradeCost = trade.amount * trade.price / (liveOrderEnabled ? 1 : trade.leverage);
       if (mode === activeMode && balances && tradeCost > balances.botBalance) {
         console.log(`Shadow Trader [${mode}]: Trade rejected - Insufficient bot balance. Cost: ${tradeCost}, Bot: ${balances.botBalance}`);
         continue;
       }
 
-      if (mode === activeMode && exchange && exchange.apiKey) {
+      const intentCandleTime = Number.isFinite(candleTime) ? Number(candleTime) : trade.timestamp;
+      const idempotencyKey = `${mode}:${trade.symbol}:${trade.side}:${intentCandleTime}`;
+      const intentResult = await runQuery(`
+        INSERT INTO execution_intents
+          (idempotency_key, trade_id, symbol, risk_mode, side, candle_time, status, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT DO NOTHING
+      `, [idempotencyKey, trade.id, trade.symbol, mode, trade.side, intentCandleTime,
+        liveOrderEnabled ? 'pending' : 'simulated', trade.timestamp, trade.timestamp], 'run');
+      if (intentResult?.changes === 0 || intentResult?.rowCount === 0) continue;
+
+      // Persist the pending position before contacting the exchange. If the
+      // process dies or times out, the durable intent blocks another entry.
+      await runQuery(`
+        INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage, stop_loss, take_profit, entry_slippage_frac, total_fee_frac)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit, trade.entrySlippageFrac, trade.totalFeeFrac]);
+
+      if (liveOrderEnabled) {
         try {
-           const order = await exchange.placeOrder(trade.symbol, trade.side, trade.amount, 'market');
-           trade.exchangeOrderId = order.id;
-           console.log(`Live order executed for ${trade.symbol} (${trade.side}): ${order.id}`);
-        } catch (e: any) {
-           console.error(`Failed to execute live order for ${trade.symbol}: ${e.message}`);
-           // If live execution fails, we might still want to record the shadow trade, or skip.
-           // For now, we'll continue with the shadow trade.
+          const order = await exchange.placeOrder(trade.symbol, trade.side, trade.amount, 'market');
+          requireFilledOrder(order, trade.amount);
+          trade.exchangeOrderId = order.id;
+          await runQuery(`UPDATE execution_intents SET status = 'submitted', exchange_order_id = ?, updated_at = ? WHERE idempotency_key = ?`,
+            [order.id, Date.now(), idempotencyKey]);
+          await runQuery(`UPDATE shadow_trades SET status = 'open' WHERE id = ?`, [trade.id]);
+          await runQuery(`UPDATE execution_intents SET status = 'complete', updated_at = ? WHERE idempotency_key = ?`,
+            [Date.now(), idempotencyKey]);
+          trade.status = 'open';
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await runQuery(`UPDATE execution_intents SET status = 'uncertain', last_error = ?, updated_at = ? WHERE idempotency_key = ?`,
+            [message.slice(0, 1000), Date.now(), idempotencyKey]);
+          logger.error('Live order outcome is uncertain; entry remains blocked pending reconciliation', {
+            service: 'ShadowTrader', tradeId: trade.id, idempotencyKey, error: message
+          });
+          continue;
         }
+      } else {
+        await runQuery(`UPDATE execution_intents SET status = 'complete', updated_at = ? WHERE idempotency_key = ?`,
+          [Date.now(), idempotencyKey]);
       }
 
       portfolio.openTrades.push(trade);
+      if (mode === activeMode) activeModeTradeOpened = true;
 
       if (mode === activeMode && balanceManager) {
-        balanceManager.addActiveTrade(trade.amount * trade.price / trade.leverage);
+        await balanceManager.addActiveTrade(trade.amount * trade.price / (liveOrderEnabled ? 1 : trade.leverage));
       }
-
-       // Save to DB
-       await runQuery(`
-         INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage, stop_loss, take_profit, entry_slippage_frac, total_fee_frac)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-       `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit, trade.entrySlippageFrac, trade.totalFeeFrac]);
 
        // Audit log: trade open
        await this.logAuditTrade(
@@ -287,6 +422,7 @@ export class ShadowTrader {
          { stopLoss: trade.stopLoss, takeProfit: trade.takeProfit, confidence: signal.confidence, regime }
        );
     }
+    return activeModeTradeOpened;
   }
 
   private async evaluateRatchet(trade: any, ctx: ExitContext): Promise<RatchetUpdate> {
@@ -306,7 +442,7 @@ export class ShadowTrader {
         console.log(`[ShadowTrader] [${ctx.mode}] Runner triggered for ${trade.id}`);
         const exitFactor = ctx.config.runnerConditions?.partialExit || 0.6;
         const closeAmount = trade.amount * exitFactor;
-        const partialPnl = (ctx.currentMargin - ctx.marginUsed) * (closeAmount / trade.amount);
+        const partialPnl = calculateTradePnl({ ...trade, amount: closeAmount }, ctx.currentPrice);
 
         ctx.portfolio.balance += partialPnl;
         trade.amount -= closeAmount;
@@ -401,7 +537,24 @@ export class ShadowTrader {
     pnlRef: { value: number },
     ctx: ExitContext,
     exchange?: any
-  ): Promise<void> {
+  ): Promise<boolean> {
+    if (trade.exchangeOrderId) {
+      if (!(exchange?.hasExecutionCredentials ?? Boolean(exchange?.apiKey && exchange?.apiSecret))) {
+        logger.error('Live close blocked: exchange credentials are incomplete', { service: 'ShadowTrader', tradeId: trade.id });
+        return false;
+      }
+      try {
+        const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
+        const order = await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
+        requireFilledOrder(order, trade.amount);
+        trade.exchangeCloseOrderId = order.id;
+      } catch (error) {
+        logger.error('Live close failed; position remains open for recovery', {
+          service: 'ShadowTrader', tradeId: trade.id, error: error instanceof Error ? error.message : String(error)
+        });
+        return false;
+      }
+    }
     if (exitDecision.pnlOverride !== undefined) {
       pnlRef.value = exitDecision.pnlOverride;
     }
@@ -419,15 +572,6 @@ export class ShadowTrader {
       const tradeCost = trade.amount * trade.price / trade.leverage;
       ctx.balanceManager.recordTradeResult(pnl, tradeCost);
 
-      if (exchange && exchange.apiKey) {
-        try {
-          const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
-          const order = await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
-          console.log(`Live close order executed for ${trade.symbol} (${closeSide}): ${order.id}`);
-        } catch (e: any) {
-          console.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`);
-        }
-      }
     }
 
     await runQuery(`
@@ -451,6 +595,7 @@ export class ShadowTrader {
     );
 
     console.log(`Shadow Trader [${ctx.mode}]: Trade ${trade.id} closed due to ${exitDecision.reason}. PnL: ${pnl.toFixed(2)}`);
+    return true;
   }
 
   async updatePositions(currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any, lastCandle: any = null) {
@@ -467,20 +612,14 @@ export class ShadowTrader {
         }
 
         console.log(`[ShadowTrader] Checking trade ${trade.id} for ${mode}. Price: ${currentPrice}, SL: ${trade.stopLoss}, TP: ${trade.takeProfit}`);
-        let pnl = 0;
         const leverage = trade.leverage || config.leverage || 1;
         const marginUsed = trade.amount * trade.price / leverage;
         const currentNotional = trade.amount * currentPrice;
         const currentMargin = currentNotional / leverage;
+        const pnl = calculateTradePnl(trade, currentPrice);
         const profitPct = trade.side === 'buy'
           ? (currentPrice - trade.price) / trade.price
           : (trade.price - currentPrice) / trade.price;
-
-        if (trade.side === 'buy') {
-          pnl = currentMargin - marginUsed;
-        } else {
-          pnl = marginUsed - currentMargin;
-        }
 
         const ctx: ExitContext = {
           currentPrice, config, mode: mode as RiskMode, leverage, marginUsed, currentMargin,
@@ -507,7 +646,8 @@ export class ShadowTrader {
 
         if (exitDecision) {
           const pnlRef = { value: pnl };
-          await this.executeTradeClosure(trade, exitDecision, pnlRef, ctx, exchange);
+          const closed = await this.executeTradeClosure(trade, exitDecision, pnlRef, ctx, exchange);
+          if (!closed) newOpenTrades.push(trade);
         } else {
           newOpenTrades.push(trade);
         }
@@ -524,16 +664,27 @@ export class ShadowTrader {
        
        if (tradeIndex !== -1) {
          const trade = portfolio.openTrades[tradeIndex];
+         if (trade.exchangeOrderId) {
+           if (!(exchange?.hasExecutionCredentials ?? Boolean(exchange?.apiKey && exchange?.apiSecret))) {
+             logger.error('Live close blocked: exchange credentials are incomplete', { service: 'ShadowTrader', tradeId });
+             return false;
+           }
+           try {
+             const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
+             const order = await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
+             requireFilledOrder(order, trade.amount);
+           } catch (error) {
+             logger.error('Live close failed; position remains open for recovery', {
+               service: 'ShadowTrader', tradeId, error: error instanceof Error ? error.message : String(error)
+             });
+             return false;
+           }
+         }
          const leverage = trade.leverage || 1;
          const marginUsed = trade.amount * trade.price / leverage;
          const currentNotional = trade.amount * currentPrice;
          const currentMargin = currentNotional / leverage;
-         let pnl = 0;
-         if (trade.side === 'buy') {
-           pnl = currentMargin - marginUsed;
-         } else {
-           pnl = marginUsed - currentMargin;
-         }
+         const pnl = calculateTradePnl(trade, currentPrice);
 
          portfolio.balance += pnl;
          
@@ -548,14 +699,6 @@ export class ShadowTrader {
            const tradeCost = trade.amount * trade.price / trade.leverage;
            balanceManager.recordTradeResult(pnl, tradeCost);
            
-           if (exchange && exchange.apiKey) {
-             try {
-               const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
-               await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
-             } catch (e: any) {
-               console.error(`Failed to execute live close order for ${trade.symbol}: ${e.message}`);
-             }
-           }
          }
 
           const result = await runQuery(`

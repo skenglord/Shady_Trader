@@ -1,11 +1,6 @@
 import { runQuery } from '../database.js';
 import { RiskMode, RiskManager } from '../risk/manager.js';
 import OpenAI from 'openai';
-import { exec } from 'child_process';
-import { promisify } from 'util';
-import path from 'path';
-
-const execAsync = promisify(exec);
 
 type QueryFn = (query: string, params?: any[], mode?: 'all' | 'get' | 'run') => Promise<any>;
 export type AiClientFactory = (apiKey: string) => OpenAI;
@@ -32,34 +27,25 @@ export class OptimizationEngine {
     }));
   }
 
-  async bayesianOptimize(regime: string): Promise<any> {
-    const pythonScript = path.resolve(process.cwd(), 'backend/optimization/bayesian_optimizer.py');
-    
-    // Fetch recent optimization history to feed as warm-start
-    const recentTrials = await this.queryFn(`
+  async bayesianOptimize(regime: string, mode: string): Promise<{ params: Record<string, unknown>; score: number }> {
+    const trials = await this.queryFn(`
       SELECT params, score FROM optimization_trials
-      WHERE regime = ? ORDER BY timestamp DESC LIMIT 50
-    `, [regime], 'all');
-
-    try {
-      const execPromise = execAsync(`python3 ${pythonScript}`, {
-        timeout: 10000
-      });
-      execPromise.child.stdin?.end(JSON.stringify(recentTrials));
-      const { stdout } = await execPromise;
-      
-      const bestParams = JSON.parse(stdout);
-      return bestParams;
-    } catch (error) {
-      console.error("Python optimization failed:", error);
-      // Fallback defaults
-      return {
-        stopLoss: 0.02,
-        takeProfit: 0.05,
-        confidenceThreshold: 0.75,
-        leverage: 2.0
-      };
+      WHERE regime = ? AND mode = ? AND score IS NOT NULL AND score != 0
+      ORDER BY score DESC, timestamp DESC LIMIT 50
+    `, [regime, mode], 'all');
+    const observed = (Array.isArray(trials) ? trials : []).flatMap((trial: any) => {
+      const score = Number(trial.score);
+      try {
+        const params = typeof trial.params === 'string' ? JSON.parse(trial.params) : trial.params;
+        return Number.isFinite(score) && params && typeof params === 'object' ? [{ params, score }] : [];
+      } catch {
+        return [];
+      }
+    });
+    if (!observed.length) {
+      throw new Error(`No real scored optimization trials are available for ${regime}/${mode}`);
     }
+    return observed[0];
   }
 
   private async evaluateParameters(regime: string, params: number[]): Promise<number> {
@@ -106,7 +92,7 @@ export class OptimizationEngine {
 
       for (const mode of Object.keys(currentConfigs)) {
         console.log(`Optimizing parameters for ${mode} mode...`);
-        const optimalParams = await this.bayesianOptimize(regime);
+        const { params: optimalParams, score } = await this.bayesianOptimize(regime, mode);
 
         // Apply Bayesian optimization results with smoothing
         for (const [key, val] of Object.entries(optimalParams)) {
@@ -117,7 +103,7 @@ export class OptimizationEngine {
         }
 
         // Store optimization trial in database
-        await this.storeOptimizationTrial(regime, mode, optimalParams, 0); // score placeholder
+        await this.storeOptimizationTrial(regime, mode, optimalParams, score);
       }
 
       await this.riskManager.saveConfigs(optimizedConfigs);
@@ -141,7 +127,7 @@ export class OptimizationEngine {
   }
 
   private async validateWithMonteCarlo(regime: string, configs: any) {
-    // Placeholder for Monte Carlo validation - implement in next step
-    console.log("Running Monte Carlo validation on optimized configs...");
+    if (!configs || !Object.keys(configs).length) throw new Error(`No optimized configs to validate for ${regime}`);
+    console.log(`Monte Carlo validation requested for ${regime}; use the Monte Carlo panel to run the configured portfolio scenario.`);
   }
 }

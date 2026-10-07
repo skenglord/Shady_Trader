@@ -2,7 +2,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { logger } from './logging/logger.js';
 
-const DB_PATH = path.join(process.cwd(), 'trading.db');
+const DB_PATH = path.resolve(process.cwd(), process.env.DB_PATH || 'trading.db');
 const BACKUP_DIR = path.join(process.cwd(), 'backups');
 const MAX_BACKUPS = 5;
 
@@ -10,7 +10,7 @@ export async function performBackup() {
   try {
     await fs.mkdir(BACKUP_DIR, { recursive: true });
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const backupPath = path.join(BACKUP_DIR, `trading.db.${timestamp}`);
+    const backupPath = path.join(BACKUP_DIR, `${path.basename(DB_PATH)}.${timestamp}`);
     await fs.copyFile(DB_PATH, backupPath);
     logger.info('Backup created', { backupPath, service: 'backup' });
     await cleanupOldBackups();
@@ -23,7 +23,7 @@ async function cleanupOldBackups() {
   try {
     const files = await fs.readdir(BACKUP_DIR);
     const backups = files
-      .filter(file => file.startsWith('trading.db.'))
+      .filter(file => file.startsWith(`${path.basename(DB_PATH)}.`))
       .map(file => ({ name: file, path: path.join(BACKUP_DIR, file) }));
 
     // Sort by name (which contains timestamp) descending

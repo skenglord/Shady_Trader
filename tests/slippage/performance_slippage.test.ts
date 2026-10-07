@@ -2,6 +2,7 @@ import { describe, test, beforeEach } from 'node:test';
 import assert from 'node:assert';
 import { SlippageEngine, CostEstimator, LiquidityAnalyzer, SlippageCircuitBreaker } from '../../backend/slippage/index.js';
 import { Decimal } from 'decimal.js';
+import { createSlippageTestEngine } from './book-fixture.js';
 
 describe.skip('Performance Regression Benchmarks - Slippage Engine (<1ms latency) [LEGACY-QUARANTINED]', () => {
   let slippageEngine: SlippageEngine;
@@ -9,7 +10,7 @@ describe.skip('Performance Regression Benchmarks - Slippage Engine (<1ms latency
   let liquidityAnalyzer: LiquidityAnalyzer;
 
   beforeEach(() => {
-    slippageEngine = new SlippageEngine();
+    slippageEngine = createSlippageTestEngine();
     liquidityAnalyzer = new LiquidityAnalyzer(undefined as any);
     costEstimator = new CostEstimator(slippageEngine);
   });
@@ -221,7 +222,7 @@ describe.skip('Performance Benchmarks - Edge Cases [LEGACY-QUARANTINED]', () => 
   let slippageEngine: SlippageEngine;
 
   beforeEach(() => {
-    slippageEngine = new SlippageEngine();
+    slippageEngine = createSlippageTestEngine();
   });
 
   test('Large order size estimate performs well', async () => {

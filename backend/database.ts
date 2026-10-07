@@ -14,7 +14,7 @@ export async function initDatabase() {
     // Setup mockRunQuery to use SQLite directly in main thread to avoid worker thread issues
     try {
       const Database = await import('better-sqlite3');
-      const dbPath = path.join(process.cwd(), 'trading.db');
+      const dbPath = path.resolve(process.cwd(), process.env.DB_PATH || 'trading.db');
       const db = new Database.default(dbPath);
       // Apply pragmas for better performance and concurrency
       db.pragma('journal_mode = WAL');
@@ -223,6 +223,58 @@ export async function initDatabase() {
         CREATE INDEX IF NOT EXISTS idx_audit_system_events_event_type
         ON audit_system_events(event_type);
 
+        CREATE TABLE IF NOT EXISTS audit_trades (
+          id TEXT PRIMARY KEY,
+          trade_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          timestamp INTEGER NOT NULL,
+          risk_mode TEXT,
+          leverage REAL,
+          symbol TEXT,
+          side TEXT,
+          amount REAL,
+          price REAL,
+          exit_reason TEXT,
+          pnl REAL,
+          metadata TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_trades_trade_id ON audit_trades(trade_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_trades_timestamp ON audit_trades(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_audit_trades_event_type ON audit_trades(event_type);
+
+        CREATE TABLE IF NOT EXISTS audit_balances (
+          id TEXT PRIMARY KEY,
+          balance_id TEXT NOT NULL,
+          event_type TEXT NOT NULL,
+          timestamp INTEGER NOT NULL,
+          before_main_balance REAL,
+          before_bot_balance REAL,
+          before_active_balance REAL,
+          after_main_balance REAL,
+          after_bot_balance REAL,
+          after_active_balance REAL,
+          change_amount REAL,
+          reason TEXT,
+          metadata TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_balances_balance_id ON audit_balances(balance_id);
+        CREATE INDEX IF NOT EXISTS idx_audit_balances_timestamp ON audit_balances(timestamp);
+        CREATE INDEX IF NOT EXISTS idx_audit_balances_event_type ON audit_balances(event_type);
+
+        CREATE TABLE IF NOT EXISTS audit_user_actions (
+          id TEXT PRIMARY KEY,
+          user_role TEXT,
+          ip_address TEXT,
+          endpoint TEXT NOT NULL,
+          method TEXT NOT NULL,
+          request_body TEXT,
+          response_status INTEGER,
+          timestamp INTEGER NOT NULL,
+          error_message TEXT,
+          metadata TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_audit_user_actions_timestamp ON audit_user_actions(timestamp);
+
         CREATE TABLE IF NOT EXISTS signals (
           id TEXT PRIMARY KEY,
           timestamp INTEGER NOT NULL,
@@ -277,6 +329,22 @@ export function setMockRunQuery(fn: typeof mockRunQuery) {
  */
 export function clearMockRunQuery(): void {
   mockRunQuery = null;
+}
+
+/** Return table columns using the active database's catalog syntax. */
+export async function getTableColumnNames(tableName: string): Promise<string[]> {
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(tableName)) {
+    throw new Error(`Invalid table name: ${tableName}`);
+  }
+  if (USE_POSTGRES) {
+    const rows = await runQuery(
+      `SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?`,
+      [tableName], 'all'
+    );
+    return (rows || []).map((row: any) => row.name);
+  }
+  const rows = await runQuery(`PRAGMA table_info(${tableName})`, [], 'all');
+  return (rows || []).map((row: any) => row.name);
 }
 
 export async function runQuery(sql: string, params: any[] = [], type: 'run' | 'all' = 'run'): Promise<any> {

@@ -25,7 +25,12 @@ export function validateModeForLive(riskMode: string): void {
  * effective risk = size × leverage × stopDistanceFrac. Hard backstop after Kelly.
  */
 export function enforceRiskCap(size: number, leverage: number, stopFrac: number): number {
-  const MAX_RISK_FRAC = parseFloat(process.env.MAX_EFFECTIVE_RISK_FRACTION ?? '0.005');
+  const MAX_RISK_FRAC = Number(process.env.MAX_EFFECTIVE_RISK_FRACTION ?? '0.005');
+  if (!Number.isFinite(size) || size < 0 || !Number.isFinite(leverage) || leverage <= 0 ||
+      !Number.isFinite(stopFrac) || stopFrac <= 0 || !Number.isFinite(MAX_RISK_FRAC) ||
+      MAX_RISK_FRAC <= 0 || MAX_RISK_FRAC > 1) {
+    throw new Error('Invalid inputs or MAX_EFFECTIVE_RISK_FRACTION configuration');
+  }
   const effective = size * leverage * stopFrac;
   if (effective <= MAX_RISK_FRAC) return size;
   const capped = MAX_RISK_FRAC / (leverage * stopFrac);
@@ -37,17 +42,56 @@ export function enforceRiskCap(size: number, leverage: number, stopFrac: number)
  * Absolute dollar cap for degen positions.
  */
 export function enforceDegenDollarCap(
-  riskMode: string, finalSize: number, equity: number, stopDistanceFrac: number
+  riskMode: string, finalSize: number, equity: number, stopDistanceFrac: number, leverage = 1
 ): number {
   if (riskMode !== 'degen') return finalSize;
-  const DEGEN_MAX_USD = parseFloat(process.env.DEGEN_MAX_RISK_DOLLARS ?? '500');
-  const dollarRisk = equity * finalSize * stopDistanceFrac;
-  if (dollarRisk > DEGEN_MAX_USD && equity * stopDistanceFrac > 0) {
-    const capped = DEGEN_MAX_USD / (equity * stopDistanceFrac);
+  const DEGEN_MAX_USD = Number(process.env.DEGEN_MAX_RISK_DOLLARS ?? '500');
+  if (!Number.isFinite(finalSize) || finalSize < 0 || !Number.isFinite(equity) || equity <= 0 ||
+      !Number.isFinite(stopDistanceFrac) || stopDistanceFrac <= 0 || !Number.isFinite(leverage) || leverage <= 0 ||
+      !Number.isFinite(DEGEN_MAX_USD) || DEGEN_MAX_USD <= 0) {
+    throw new Error('Invalid inputs or DEGEN_MAX_RISK_DOLLARS configuration');
+  }
+  const dollarRisk = equity * finalSize * leverage * stopDistanceFrac;
+  if (dollarRisk > DEGEN_MAX_USD) {
+    const capped = DEGEN_MAX_USD / (equity * leverage * stopDistanceFrac);
     logger.warn('degen_dollar_cap', { service: 'riskManager', dollarRisk, cap: DEGEN_MAX_USD });
     return capped;
   }
   return finalSize;
+}
+
+/** Net realized loss for the current UTC day; positive means losses exceed gains. */
+export async function getDailyRealizedLoss(riskMode: string, now = Date.now(), currentPrice?: number): Promise<number> {
+  const utc = new Date(now);
+  const dayStart = Date.UTC(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
+  const rows = await runQuery(
+    `SELECT COALESCE(SUM(pnl), 0) AS netPnl
+     FROM shadow_trades
+     WHERE risk_mode = ? AND status = 'closed' AND exit_timestamp >= ?`,
+    [riskMode, dayStart],
+    'all'
+  );
+  const realizedNetPnl = Number(rows?.[0]?.netPnl ?? 0);
+  if (!Number.isFinite(realizedNetPnl)) throw new Error('Daily realized P&L is invalid');
+  let unrealizedPnl = 0;
+  if (currentPrice !== undefined) {
+    if (!Number.isFinite(currentPrice) || currentPrice <= 0) throw new Error('Current price for unrealized P&L is invalid');
+    const openTrades = await runQuery(
+      `SELECT side, amount, price FROM shadow_trades WHERE risk_mode = ? AND status = 'open'`,
+      [riskMode], 'all'
+    );
+    for (const trade of openTrades || []) {
+      const amount = Number(trade.amount);
+      const entryPrice = Number(trade.price);
+      if (!Number.isFinite(amount) || amount < 0 || !Number.isFinite(entryPrice) || entryPrice <= 0) {
+        throw new Error('Open trade contains invalid values for unrealized P&L');
+      }
+      unrealizedPnl += trade.side === 'buy'
+        ? amount * (currentPrice - entryPrice)
+        : amount * (entryPrice - currentPrice);
+    }
+  }
+  return Math.max(0, -(realizedNetPnl + unrealizedPnl));
 }
 
 export enum RiskMode {

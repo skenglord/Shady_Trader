@@ -43,4 +43,21 @@ spec:
   ports:
   - port: 3000
     targetPort: 3000
-  type: LoadBalancer
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: shady-trader-freqtrade
+  labels:
+    app: shady-trader
+    component: freqtrade
+spec:
+  selector:
+    app: shady-trader
+    component: backend
+  ports:
+  - name: freqtrade-api
+    port: 8081
+    targetPort: 8081
+  type: ClusterIP

@@ -35,7 +35,9 @@ export async function acquireTradeLock(symbol: string, redis?: Redis | null): Pr
     logger.warn('Redis unavailable — in-memory trade lock (dev only)', { service: 'executionLock', symbol });
     if (memLocks.has(symbol)) return null;
     memLocks.set(symbol, token);
-    setTimeout(() => memLocks.delete(symbol), TTL_MS).unref?.();
+    setTimeout(() => {
+      if (memLocks.get(symbol) === token) memLocks.delete(symbol);
+    }, TTL_MS).unref?.();
     return token;
   }
 

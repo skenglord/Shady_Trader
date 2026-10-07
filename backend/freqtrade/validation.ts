@@ -2,28 +2,22 @@ import { randomBytes } from 'crypto';
 
 export const FREQTRADE_MAX_TIMERANGE_DAYS = 365;
 
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-
-export function normalizeFreqtradeTimerange(timerange: { start?: string; end?: string } | undefined, label = 'Freqtrade timerange'): { start: string; end: string } {
+export function normalizeFreqtradeTimerange(timerange: { start?: string; end?: string } | undefined, label = 'Freqtrade timerange'): { start: string; end?: string } | undefined {
+  if (!timerange) return undefined;
   const start = normalizeTimerangePart(timerange?.start, `${label}.start`);
-  const end = normalizeTimerangePart(timerange?.end, `${label}.end`);
+  const end = timerange.end ? normalizeTimerangePart(timerange.end, `${label}.end`) : undefined;
   const startMs = parseTimerangePart(start);
-  const endMs = parseTimerangePart(end);
+  const endMs = end ? parseTimerangePart(end) : undefined;
 
-  if (!startMs || !endMs) {
+  if (!startMs || (end && !endMs)) {
     throw new Error(`${label} must use YYYYMMDD or YYYY-MM-DD dates`);
   }
 
-  if (endMs <= startMs) {
+  if (endMs !== undefined && endMs <= startMs) {
     throw new Error(`${label}.end must be after ${label}.start`);
   }
 
-  const days = Math.ceil((endMs - startMs) / MS_PER_DAY);
-  if (days > FREQTRADE_MAX_TIMERANGE_DAYS) {
-    throw new Error(`${label} cannot exceed ${FREQTRADE_MAX_TIMERANGE_DAYS} days`);
-  }
-
-  return { start, end };
+  return end ? { start, end } : { start };
 }
 
 export function normalizeValidateTolerance(value: unknown): number {

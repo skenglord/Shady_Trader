@@ -102,6 +102,7 @@ describe('Paper trading component behavior', () => {
 
   test('order book initializes, updates, and matches market orders with slippage', () => {
     const book = new OrderBookSimulator();
+    book.updateOrderBook({ symbol: 'BTC/USDT', timestamp: Date.now(), bids: Array.from({ length: 10 }, (_, i) => [49999 - i, 1] as [number, number]), asks: Array.from({ length: 10 }, (_, i) => [50001 + i, 1] as [number, number]) });
     const snapshot = book.getOrderBook('BTC/USDT');
     assert.ok(snapshot);
     assert.strictEqual(snapshot?.symbol, 'BTC/USDT');
@@ -114,7 +115,7 @@ describe('Paper trading component behavior', () => {
     assert.strictEqual(levels?.bids.length, 3);
     assert.strictEqual(levels?.asks.length, 3);
 
-    book.updateOrderBook('ETH/USDT', 2000);
+    book.updateOrderBook({ symbol: 'ETH/USDT', timestamp: Date.now(), bids: [[1999, 1]], asks: [[2001, 1]] });
     assert.ok(book.getOrderBook('ETH/USDT'));
     assert.strictEqual(book.getOrderBook('missing'), null);
 

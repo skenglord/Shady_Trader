@@ -63,9 +63,8 @@ function parseTimerange(start: string, end: string) {
   }
   const startMs = Date.parse(start.replace(/-/g, '/'));
   const endMs = Date.parse(end.replace(/-/g, '/'));
-  const days = Math.ceil((endMs - startMs) / (24 * 60 * 60 * 1000));
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || days > 365) {
-    throw new Error('Timerange cannot exceed 365 days');
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
+    throw new Error('Valid start and end dates are required');
   }
   return {
     start: start.replace(/-/g, ''),
@@ -109,7 +108,7 @@ export default function FreqtradePanel() {
   const [selectedPair, setSelectedPair] = useState('BTC/USDT');
   const [selectedTimeframe, setSelectedTimeframe] = useState('1h');
   const [downloadTimerangeStart, setDownloadTimerangeStart] = useState(() => {
-    const d = new Date(Date.now() - 30 * 86400000);
+    const d = new Date('2017-01-01T00:00:00Z');
     return d.toISOString().split('T')[0];
   });
   const [downloadTimerangeEnd, setDownloadTimerangeEnd] = useState(() => new Date().toISOString().split('T')[0]);
@@ -124,7 +123,7 @@ export default function FreqtradePanel() {
   const [btResult, setBtResult] = useState<BacktestResult | null>(null);
   const [btLoading, setBtLoading] = useState(false);
   const [btTimerangeStart, setBtTimerangeStart] = useState(() => {
-    const d = new Date(Date.now() - 30 * 86400000);
+    const d = new Date('2017-01-01T00:00:00Z');
     return d.toISOString().split('T')[0];
   });
   const [btTimerangeEnd, setBtTimerangeEnd] = useState(() => new Date().toISOString().split('T')[0]);
@@ -137,7 +136,7 @@ export default function FreqtradePanel() {
   const [valTimeframe, setValTimeframe] = useState('1h');
   const [valTolerance, setValTolerance] = useState('0.05');
   const [valTimerangeStart, setValTimerangeStart] = useState(() => {
-    const d = new Date(Date.now() - 30 * 86400000);
+    const d = new Date('2017-01-01T00:00:00Z');
     return d.toISOString().split('T')[0];
   });
   const [valTimerangeEnd, setValTimerangeEnd] = useState(() => new Date().toISOString().split('T')[0]);

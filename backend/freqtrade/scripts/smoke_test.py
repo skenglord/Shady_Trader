@@ -4,13 +4,13 @@ Smoke test for freqtrade webserver.
 Asserts that the /api/v1/ping endpoint returns 'pong'.
 """
 import sys
+import os
 import urllib.request
 import urllib.error
-import json
 
 def main():
     host = "127.0.0.1"
-    port = 8081  # default, can be overridden by env
+    port = int(os.environ.get("FREQTRADE_LISTEN_PORT", "8081"))
     url = f"http://{host}:{port}/api/v1/ping"
     try:
         with urllib.request.urlopen(url, timeout=5) as resp:

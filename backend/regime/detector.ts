@@ -136,10 +136,7 @@ export class RegimeDetector {
           apiKey: 'ollama', // required but ignored by ollama
         });
         
-        // Use provided market context or default to mock
-        const context = marketContext || {
-          major_news: "Market awaiting key economic data",
-        };
+        const context = marketContext ?? null;
 
         const prompt = `Market regime: ${regime}
 Technical metrics: ${JSON.stringify(metrics)}

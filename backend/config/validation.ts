@@ -9,12 +9,14 @@ export const envSchema = z.object({
   COINAPI_API_KEY: z.string().optional(),
   COINGECKO_API_KEY: z.string().optional(),
   CRYPTOCOMPARE_API_KEY: z.string().optional(),
-  EXCHANGE_USE_TESTNET: z.string().transform(v => v === 'true').default('true'),
+  EXCHANGE_USE_TESTNET: z.enum(['true', 'false']).default('true').transform(v => v === 'true'),
   API_ADMIN_TOKEN: z.string().optional(),
   API_TRADER_TOKEN: z.string().optional(),
+  // Real exchange orders are disabled unless explicitly enabled by an operator.
+  LIVE_TRADING_ENABLED: z.enum(['true', 'false']).default('false').transform(v => v === 'true'),
   GEMINI_API_KEY: z.string().optional(),
   LOG_LEVEL: z.enum(['debug', 'info', 'warn', 'error']).default('info'),
-  PORT: z.string().transform(v => parseInt(v, 10)).default('3000'),
+  PORT: z.string().regex(/^\d+$/, 'PORT must be an integer').transform(Number).refine(v => v > 0 && v <= 65535, 'PORT must be between 1 and 65535').default('3000'),
   DB_PATH: z.string().default('trading.db'),
   CORS_ORIGIN: z.string().optional(),
 
@@ -35,8 +37,8 @@ export const envSchema = z.object({
 
   // ── v6.0 Phase 1: Risk Safety ──
   DEGEN_LIVE_OVERRIDE: z.string().transform(v => v === 'true').default('false'),
-  MAX_EFFECTIVE_RISK_FRACTION: z.string().transform(Number).default('0.005'),
-  DEGEN_MAX_RISK_DOLLARS: z.string().transform(Number).default('500'),
+  MAX_EFFECTIVE_RISK_FRACTION: z.string().transform(Number).pipe(z.number().finite().positive().max(1)).default('0.005'),
+  DEGEN_MAX_RISK_DOLLARS: z.string().transform(Number).pipe(z.number().finite().positive()).default('500'),
   RISK_MODE_DEFAULT: z.string().default('conservative'),
 
   // ── v6.0 Phase 1: Slippage (ALL FRACTIONS) ──

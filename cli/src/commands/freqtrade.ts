@@ -2,8 +2,60 @@
 // Each subcommand calls the running bot's REST API (no logic duplication).
 import { Command } from 'commander';
 import chalk from 'chalk';
+import { randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { apiGet, apiPost } from '../utils/api.js';
 import { normalizeFreqtradeTimerange, normalizeValidateTolerance } from '../../../backend/freqtrade/validation.js';
+import { FreqtradeBridge } from '../../../backend/freqtrade/bridge.js';
+
+const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
+const defaultPairs = process.env.FREQTRADE_DEFAULT_PAIRS || 'BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT';
+const defaultTimeframes = process.env.FREQTRADE_DEFAULT_TIMEFRAMES || '1m,5m,15m,1h,4h,1d';
+
+function prepareLocalFreqtradeConfig() {
+  // Freqtrade interpolates API settings from config.json even for one-shot CLI
+  // jobs. These ephemeral credentials only satisfy config parsing; no server
+  // is started and no credential is persisted.
+  process.env.FREQTRADE__API_SERVER__USERNAME ||= process.env.FREQTRADE_API_USER || `cli-${randomBytes(8).toString('hex')}`;
+  process.env.FREQTRADE__API_SERVER__PASSWORD ||= process.env.FREQTRADE_API_PASS || randomBytes(32).toString('hex');
+  process.env.FREQTRADE__API_SERVER__JWT_SECRET_KEY ||= process.env.FREQTRADE_JWT_SECRET_KEY || randomBytes(32).toString('hex');
+}
+
+async function runLocalDownload(request: Parameters<FreqtradeBridge['downloadData']>[0]) {
+  prepareLocalFreqtradeConfig();
+  const bridge = new FreqtradeBridge({ downloadTimeoutMs: 0 });
+  const events = await bridge.downloadData(request);
+  let failed = false;
+  for await (const event of events) {
+    if (event.type === 'error') failed = true;
+    console.log(event.line);
+  }
+  if (failed) process.exitCode = 1;
+}
+
+async function runLocalBacktest(request: Parameters<FreqtradeBridge['runBacktest']>[0]) {
+  prepareLocalFreqtradeConfig();
+  const result = await new FreqtradeBridge({ backtestTimeoutMs: 0 }).runBacktest(request);
+  console.log(JSON.stringify(result, null, 2));
+  if (!result.metadata.success) process.exitCode = 1;
+}
+
+function runLocalIngest() {
+  const python = path.join(projectRoot, 'backend/freqtrade/venv/bin/python');
+  const script = path.join(projectRoot, 'backend/freqtrade/scripts/bulk_ingest_candles.py');
+  if (!fs.existsSync(python)) throw new Error('Freqtrade Python runtime is missing; run npm run freqtrade:install first.');
+  return new Promise<void>((resolve, reject) => {
+    const child = spawn(python, [script], { cwd: projectRoot, stdio: 'inherit' });
+    child.once('error', reject);
+    child.once('exit', (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`Local Freqtrade ingest exited with code ${code}`));
+    });
+  });
+}
 
 export const freqtradeCmd = new Command('freqtrade').description('Freqtrade sidecar operations');
 
@@ -107,23 +159,28 @@ freqtradeCmd
 freqtradeCmd
   .command('download')
   .description('Download historical data via Freqtrade')
-  .requiredOption('--exchange <name>', 'exchange name', 'binance')
-  .option('--pairs <list>', 'comma-separated pairs', 'BTC/USDT:USDT,ETH/USDT:USDT')
-  .option('--timeframes <list>', 'comma-separated timeframes', '1h,4h,1d')
-  .option('--trading-mode <mode>', 'spot|futures|margin', 'futures')
+  .option('--exchange <name>', 'exchange name', process.env.FREQTRADE__EXCHANGE__NAME || 'binance')
+  .option('--pairs <list>', 'comma-separated pairs', defaultPairs)
+  .option('--timeframes <list>', 'comma-separated candle timeframes', defaultTimeframes)
+  .option('--trading-mode <mode>', 'spot|futures|margin', process.env.FREQTRADE_TRADING_MODE || 'futures')
   .option('--data-format <format>', 'json|feather|parquet', 'parquet')
   .option('--timerange <range>', 'e.g. 20240101-20241231')
-  .action(async (opts: Record<string, string>) => {
+  .option('--local', 'run directly on this machine; does not require Redis or FREQTRADE_ENABLED')
+  .action(async (opts: Record<string, string | boolean>) => {
     try {
       const body: any = {
-        exchange: opts.exchange,
-        pairs: opts.pairs.split(',').map((s: string) => s.trim()),
-        timeframes: opts.timeframes.split(',').map((s: string) => s.trim()),
-        tradingMode: opts.tradingMode,
-        dataFormat: opts.dataFormat,
+        exchange: String(opts.exchange),
+        pairs: String(opts.pairs).split(',').map((s: string) => s.trim()),
+        timeframes: String(opts.timeframes).split(',').map((s: string) => s.trim()),
+        tradingMode: String(opts.tradingMode),
+        dataFormat: String(opts.dataFormat),
       };
-      const timerange = parseTimerange(opts.timerange || '');
+      const timerange = parseTimerange(String(opts.timerange || ''));
       if (timerange) body.timerange = timerange;
+      if (opts.local) {
+        await runLocalDownload(body);
+        return;
+      }
       const result = await apiPost('/freqtrade/download-data', body);
       console.log(chalk.green(`Download queued: ${result.jobId}`));
     } catch (e: any) {
@@ -138,19 +195,24 @@ freqtradeCmd
   .description('Run a Freqtrade backtest')
   .requiredOption('--strategy <name>', 'strategy class name')
   .option('--timerange <range>', 'e.g. 20240101-20241231')
-  .option('--pairs <list>', 'comma-separated pairs', 'BTC/USDT:USDT')
+  .option('--pairs <list>', 'comma-separated pairs', defaultPairs)
   .option('--timeframe <tf>', 'candle timeframe', '1h')
   .option('--wallet <n>', 'dry-run wallet USDT', '10000')
-  .action(async (opts: Record<string, string>) => {
+  .option('--local', 'run directly on this machine; does not require Redis or FREQTRADE_ENABLED')
+  .action(async (opts: Record<string, string | boolean>) => {
     try {
       const body: any = {
-        strategy: opts.strategy,
-        pairs: opts.pairs.split(',').map((s: string) => s.trim()),
-        timeframe: opts.timeframe || '1h',
-        dryRunWallet: parseFloat(opts.wallet) || 10000,
+        strategy: String(opts.strategy),
+        pairs: String(opts.pairs).split(',').map((s: string) => s.trim()),
+        timeframe: String(opts.timeframe || '1h'),
+        dryRunWallet: parseFloat(String(opts.wallet)) || 10000,
       };
-      const timerange = parseTimerange(opts.timerange || '');
+      const timerange = parseTimerange(String(opts.timerange || ''));
       if (timerange) body.timerange = timerange;
+      if (opts.local) {
+        await runLocalBacktest(body);
+        return;
+      }
       const result = await apiPost('/freqtrade/backtest', body);
       console.log(chalk.green(`Backtest queued: ${result.jobId}`));
     } catch (e: any) {
@@ -196,8 +258,13 @@ freqtradeCmd
 freqtradeCmd
   .command('ingest')
   .description('Bulk-ingest Freqtrade data into the trading DB')
-  .action(async () => {
+  .option('--local', 'run directly on this machine; does not require Redis or FREQTRADE_ENABLED')
+  .action(async (opts: { local?: boolean }) => {
     try {
+      if (opts.local) {
+        await runLocalIngest();
+        return;
+      }
       const result = await apiPost('/freqtrade/ingest');
       console.log(chalk.green('Ingest result:'), result.message || 'OK');
     } catch (e: any) {

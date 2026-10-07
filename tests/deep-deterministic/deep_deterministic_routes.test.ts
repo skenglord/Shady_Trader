@@ -69,10 +69,9 @@ describe('Deep Deterministic Tests - API Routes', { concurrency: false }, () => 
       assert.ok([200, 503].includes(response.status));
     });
 
-    test('GET /api/health/providers returns 503 when engine not initialized', async () => {
+    test('GET /api/health/providers requires trader authentication', async () => {
       const response = await request(app).get('/api/health/providers');
-      assert.strictEqual(response.status, 503);
-      assert.ok(response.body.error);
+      assert.strictEqual(response.status, 401);
     });
   });
 

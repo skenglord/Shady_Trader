@@ -33,6 +33,18 @@ describe('v6.0 Migrations', () => {
     assert.equal((rows as any[]).length, 1, 'freqtrade_hyperopt_results table should exist');
   });
 
+  test('execution_intents table supports durable trade de-duplication', async () => {
+    const tables = await runQuery(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='execution_intents'`, [], 'all'
+    );
+    assert.equal((tables as any[]).length, 1);
+    const columns = await runQuery(`PRAGMA table_info(execution_intents)`, [], 'all');
+    const names = (columns as any[]).map(column => column.name);
+    for (const name of ['idempotency_key', 'trade_id', 'status', 'exchange_order_id', 'last_error']) {
+      assert.ok(names.includes(name), `column ${name} should exist`);
+    }
+  });
+
   test('freqtrade_hyperopt_results has all 13 required columns', async () => {
     const cols = await runQuery(`PRAGMA table_info(freqtrade_hyperopt_results)`, [], 'all');
     const names = (cols as any[]).map(c => c.name);

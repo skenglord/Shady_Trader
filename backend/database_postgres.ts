@@ -17,6 +17,66 @@ const pool = new Pool({
   connectionTimeoutMillis: 2000,
 });
 
+const REPLACE_KEYS: Record<string, string> = {
+  settings: 'key',
+  balances: 'id',
+  market_data: 'id',
+};
+
+/** Translate the SQLite-compatible SQL emitted by the shared backend layer. */
+export function toPostgresSql(input: string): string {
+  let sql = input.trim().replace(/;\s*$/, '');
+  let ignoreConflict = false;
+  let replaceConflict: { table: string; columns: string[] } | null = null;
+
+  const insertMatch = sql.match(/^INSERT\s+OR\s+(IGNORE|REPLACE)\s+INTO\s+([a-zA-Z_][\w]*)\s*\(([^)]*)\)/i);
+  if (insertMatch) {
+    const mode = insertMatch[1].toUpperCase();
+    const table = insertMatch[2].toLowerCase();
+    const columns = insertMatch[3].split(',').map(column => column.trim().replace(/^["`]|["`]$/g, '').toLowerCase());
+    sql = sql.replace(/^INSERT\s+OR\s+(?:IGNORE|REPLACE)\s+INTO/i, 'INSERT INTO');
+    if (mode === 'IGNORE') ignoreConflict = true;
+    else replaceConflict = { table, columns };
+  }
+
+  sql = sql.replace(/INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT/gi, 'BIGSERIAL PRIMARY KEY');
+  sql = sql.replace(/DATETIME/gi, 'TIMESTAMP');
+  sql = sql.replace(/strftime\('%s',\s*'now'\)\s*\*\s*1000/gi, '((EXTRACT(EPOCH FROM NOW()) * 1000)::BIGINT)');
+
+  // `?` bind markers are outside quoted SQL literals in this codebase. Scan
+  // quotes so a literal question mark is not accidentally treated as a bind.
+  let converted = '';
+  let bindIndex = 0;
+  let inSingle = false;
+  let inDouble = false;
+  for (let i = 0; i < sql.length; i++) {
+    const char = sql[i];
+    if (char === "'" && !inDouble) {
+      converted += char;
+      if (inSingle && sql[i + 1] === "'") converted += sql[++i];
+      else inSingle = !inSingle;
+      continue;
+    }
+    if (char === '"' && !inSingle) inDouble = !inDouble;
+    if (char === '?' && !inSingle && !inDouble) converted += `$${++bindIndex}`;
+    else converted += char;
+  }
+  sql = converted;
+
+  if (ignoreConflict) sql += ' ON CONFLICT DO NOTHING';
+  if (replaceConflict) {
+    const key = REPLACE_KEYS[replaceConflict.table];
+    if (!key || !replaceConflict.columns.includes(key)) {
+      throw new Error(`No PostgreSQL conflict key configured for INSERT OR REPLACE on ${replaceConflict.table}`);
+    }
+    const updates = replaceConflict.columns.filter(column => column !== key);
+    sql += updates.length
+      ? ` ON CONFLICT (${key}) DO UPDATE SET ${updates.map(column => `${column} = EXCLUDED.${column}`).join(', ')}`
+      : ` ON CONFLICT (${key}) DO NOTHING`;
+  }
+  return sql;
+}
+
 // Initialize database schema
 export async function initPostgresDatabase() {
   let client;
@@ -554,10 +614,10 @@ export async function runPostgresQuery(sql: string, params: any[] = [], type: 'r
     client = await pool.connect();
     await client.query(`SET statement_timeout = ${QUERY_TIMEOUT_MS}`);
     if (type === 'all') {
-      const result = await client.query(sql, params);
+      const result = await client.query(toPostgresSql(sql), params);
       return result.rows;
     } else {
-      const result = await client.query(sql, params);
+      const result = await client.query(toPostgresSql(sql), params);
       return {
         changes: result.rowCount || 0,
         lastInsertRowid: result.rows?.[0]?.id || undefined

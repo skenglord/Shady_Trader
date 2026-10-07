@@ -101,7 +101,7 @@ export class PositionReconciliationEngine {
         reconciliationResults.push(reconciliation);
 
         // Attempt auto-resolution
-        await this.attemptAutoResolution(exchangeName, reconciliation, adapter);
+        await this.recordResolutionRecommendation(exchangeName, reconciliation);
       }
     }
 
@@ -114,10 +114,11 @@ export class PositionReconciliationEngine {
   private async getLocalPositions(exchangeName: string): Promise<any[]> {
     // Query shadow_trades for open positions on this exchange
     const rows = await runQuery(`
-      SELECT symbol, SUM(CASE WHEN side = 'buy' THEN amount ELSE -amount END) as net_quantity
-      FROM shadow_trades
-      WHERE status = 'open'
-      GROUP BY symbol
+      SELECT st.symbol, SUM(CASE WHEN st.side = 'buy' THEN st.amount ELSE -st.amount END) as net_quantity
+      FROM shadow_trades st
+      INNER JOIN execution_intents ei ON ei.trade_id = st.id
+      WHERE st.status = 'open' AND ei.status = 'complete' AND ei.exchange_order_id IS NOT NULL
+      GROUP BY st.symbol
       HAVING net_quantity != 0
     `, [], 'all');
 
@@ -127,34 +128,21 @@ export class PositionReconciliationEngine {
     }));
   }
 
-  private async attemptAutoResolution(
+  private async recordResolutionRecommendation(
     exchangeName: string,
-    reconciliation: PositionReconciliation,
-    adapter: BaseExchangeAdapter
+    reconciliation: PositionReconciliation
   ) {
     try {
       if (Math.abs(reconciliation.discrepancy) > 0.01) { // Significant discrepancy
-        // Close the phantom position on exchange if local shows zero
+        // Never send a compensating live order automatically. Discrepancies can
+        // reflect delayed fills, partial fills, or stale local state.
         if (reconciliation.localQuantity === 0 && Math.abs(reconciliation.exchangeQuantity) > 0) {
-          logger.warn('Detected ghost position on exchange, attempting to close', {
+          logger.error('Detected exchange position with no matching live local position; manual reconciliation required', {
             exchange: exchangeName,
             symbol: reconciliation.symbol,
             quantity: reconciliation.exchangeQuantity
           });
-
-          // Place market order to close position
-          const side = reconciliation.exchangeQuantity > 0 ? 'sell' : 'buy';
-          const quantity = Math.abs(reconciliation.exchangeQuantity);
-
-          await adapter.placeOrder({
-            symbol: reconciliation.symbol,
-            side,
-            type: 'market',
-            quantity
-          });
-
-          reconciliation.resolved = true;
-          reconciliation.resolutionAction = `Closed ghost position: ${side} ${quantity}`;
+          reconciliation.resolutionAction = 'Manual review required - exchange position has no matching local live trade';
         }
         // If exchange shows zero but local shows position, this is a sync issue
         else if (reconciliation.exchangeQuantity === 0 && Math.abs(reconciliation.localQuantity) > 0) {

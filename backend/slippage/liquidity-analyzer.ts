@@ -20,17 +20,10 @@ export class LiquidityAnalyzer implements ILiquidityAnalyzer {
   }
 
   async analyzeLiquidity(symbol: string, timestamp: number): Promise<any> {
-    // Simplified implementation - would analyze real order book data
-    return {
-      effectiveDepth: new Decimal(75),
-      resiliencyScore: 4.5,
-      slippageProfile: [{
-        size: new Decimal(1),
-        expectedSlippage: new Decimal(0.003),
-        confidence: 0.85
-      }],
-      tier: 'medium' as const
-    };
+    const book = await this.getLatestBook(symbol);
+    if (!book) throw new Error(`No live order book available for ${symbol}`);
+    const profile = await this.analyzeDepth(symbol, new Decimal(1), 'buy');
+    return { ...profile, timestamp: book.timestamp, symbol };
   }
 
   async analyzeDepth(
@@ -41,7 +34,7 @@ export class LiquidityAnalyzer implements ILiquidityAnalyzer {
     const book = await this.getLatestBook(symbol);
     if (!book) {
       logger.warn('No order book data available', { service: 'LiquidityAnalyzer', symbol });
-      return this.getDefaultProfile(orderSize);
+      throw new Error(`No live order book available for ${symbol}`);
     }
 
     const effectiveDepth = this.calculateEffectiveDepth(book, orderSize, side);
@@ -63,9 +56,10 @@ export class LiquidityAnalyzer implements ILiquidityAnalyzer {
       return cached;
     }
 
-    if (this.exchangeConnector) {
+    const connector = typeof this.exchangeConnector === 'function' ? this.exchangeConnector() : this.exchangeConnector;
+    if (connector) {
       try {
-        const orderBookData = await this.exchangeConnector.getOrderBook(symbol);
+        const orderBookData = await connector.getOrderBook(symbol);
         const snapshot = this.convertToSnapshot(orderBookData);
         this.orderBookCache.set(symbol, snapshot);
         return snapshot;
@@ -78,8 +72,7 @@ export class LiquidityAnalyzer implements ILiquidityAnalyzer {
       }
     }
 
-    // Fallback to mock data
-    return this.getMockOrderBook(symbol);
+    return null;
   }
 
   private calculateEffectiveDepth(
@@ -113,7 +106,8 @@ export class LiquidityAnalyzer implements ILiquidityAnalyzer {
     const resiliency = Math.min(1 / relativeSize, 10);
 
     // Factor in spread stability (placeholder)
-    const spreadFactor = Math.max(0, 1 - avgSpread / 0.01); // Penalize wide spreads
+    const relativeSpread = avgSpread / Math.max(Number(book.midPrice), Number.EPSILON);
+    const spreadFactor = Math.max(0, 1 - relativeSpread);
 
     return resiliency * spreadFactor;
   }
@@ -132,7 +126,7 @@ export class LiquidityAnalyzer implements ILiquidityAnalyzer {
       profile.push({
         size: testSize,
         expectedSlippage: slippage,
-        confidence: 0.8 // Placeholder
+        confidence: Math.max(0, 1 - (Date.now() - book.timestamp) / 15_000)
       });
     }
 
@@ -157,12 +151,12 @@ export class LiquidityAnalyzer implements ILiquidityAnalyzer {
       cumulativeVolume = cumulativeVolume.plus(fillSize);
     }
 
-    if (cumulativeVolume.gt(0)) {
+    if (cumulativeVolume.gte(size)) {
       const avgExecutionPrice = weightedPrice.div(cumulativeVolume);
       return avgExecutionPrice.minus(midPrice).abs().div(midPrice);
     }
 
-    return new Decimal(0.01); // Default 1% slippage if no depth
+    throw new Error('Insufficient live order book depth to estimate slippage');
   }
 
   private classifyLiquidityTier(effectiveDepth: Decimal, resiliency: number): LiquidityTier {
@@ -171,51 +165,6 @@ export class LiquidityAnalyzer implements ILiquidityAnalyzer {
     if (depthScore > 80 && resiliency > 5) return 'high';
     if (depthScore > 50 && resiliency > 2) return 'medium';
     return 'low';
-  }
-
-  private getDefaultProfile(orderSize: Decimal): LiquidityProfile {
-    return {
-      effectiveDepth: new Decimal(50),
-      resiliencyScore: 2,
-      slippageProfile: [{
-        size: orderSize,
-        expectedSlippage: new Decimal(0.005),
-        confidence: 0.3
-      }],
-      tier: 'low'
-    };
-  }
-
-  private getMockOrderBook(symbol: string): OrderBookSnapshot {
-    // Mock order book for development
-    const midPrice = new Decimal(50000);
-    const spread = new Decimal(1);
-
-    const bids: Array<[Decimal, Decimal, number]> = [];
-    const asks: Array<[Decimal, Decimal, number]> = [];
-
-    // Generate 10 levels
-    for (let i = 0; i < 10; i++) {
-      const bidPrice = midPrice.minus(spread.mul(i + 1));
-      const askPrice = midPrice.plus(spread.mul(i + 1));
-      const size = new Decimal(1 + Math.random() * 5);
-
-      bids.push([bidPrice, size, 1]);
-      asks.push([askPrice, size, 1]);
-    }
-
-    return {
-      symbol,
-      timestamp: Date.now(),
-      bids,
-      asks,
-      spread,
-      midPrice,
-      totalBidDepth: new Decimal(50),
-      totalAskDepth: new Decimal(50),
-      updateId: Date.now(),
-      exchange: 'mock'
-    };
   }
 
   private convertToSnapshot(orderBookData: any): OrderBookSnapshot {

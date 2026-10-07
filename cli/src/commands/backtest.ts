@@ -7,7 +7,7 @@ import { spawn } from 'child_process';
 export const backtestCmd = new Command('backtest').description('Run a historical backtest');
 
 backtestCmd
-  .option('--symbol <sym>', 'symbol', 'BTCUSDT')
+  .option('--symbol <sym>', 'symbol', 'BTC/USDT')
   .option('--mode <mode>', 'risk mode', 'conservative')
   .option('--start <date>', 'start date')
   .option('--end <date>', 'end date')

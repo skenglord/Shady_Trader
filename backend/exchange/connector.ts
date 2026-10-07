@@ -41,6 +41,8 @@ export class ExchangeConnector {
   private currentPrice = 0;
   private lastUpdate = 0;
   private updateInterval: NodeJS.Timeout | null = null;
+  private updatingPrice = false;
+  private tickHandler: ((tick: { symbol: string; price: number; time: number }) => void) | null = null;
   private executionAdapter: ExecutionAdapter;
   private exchangeAdapter: BaseExchangeAdapter;
   private reconciliationEngine: PositionReconciliationEngine;
@@ -138,10 +140,16 @@ export class ExchangeConnector {
     this.activeSymbol = symbol;
   }
 
+  setTickHandler(handler: (tick: { symbol: string; price: number; time: number }) => void) {
+    this.tickHandler = handler;
+  }
+
   private startLiveUpdates() {
     if (this.updateInterval) clearInterval(this.updateInterval);
 
     this.updateInterval = setInterval(async () => {
+      if (this.updatingPrice) return;
+      this.updatingPrice = true;
       try {
         await this.fetchLatestPrice(this.activeSymbol);
       } catch (error) {
@@ -150,6 +158,8 @@ export class ExchangeConnector {
           exchangeName: this.exchangeName,
           error: (error as Error).message
         });
+      } finally {
+        this.updatingPrice = false;
       }
     }, 5000);
     this.updateInterval.unref?.();
@@ -169,6 +179,10 @@ export class ExchangeConnector {
 
   getCapabilities() {
     return this.executionAdapter?.capabilities || { provider: this.exchangeName, supportsLiveTrading: false, supportsAccountReads: false, supportsPublicMarketData: true };
+  }
+
+  get hasExecutionCredentials(): boolean {
+    return Boolean(this.apiKey && this.apiSecret);
   }
 
   private getBinanceBaseUrl(): string {
@@ -529,6 +543,7 @@ export class ExchangeConnector {
       `,
         [symbol, candleTime, price, price, price, price, volume]
       );
+      this.tickHandler?.({ symbol, price, time: now });
     } catch (error) {
       logger.error('Failed to save tick to DB', { service: 'ExchangeConnector', error: (error as Error).message });
     }
@@ -579,62 +594,22 @@ export class ExchangeConnector {
           return coinApiRows;
         }
       }
-      // Fallback: generate simulated historical candles
-      const basePrice = this.currentPrice || 50000;
-      const msPerCandle = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '1d': 86400000 }[timeframe] || 3600000;
-      const now = Math.floor(Date.now() / msPerCandle) * msPerCandle;
-      const count = Math.min(limit, 200);
-
-      let price = basePrice;
-      let trend = 0;
-      let momentum = 0;
-
-      rows = Array.from({ length: count }).map((_, i) => {
-        const time = now - (count - 1 - i) * msPerCandle;
-        const phase = (i % 30) / 30;
-        const clusterVol = phase < 0.15 ? 0.008 : 0;
-        const currentVol = 0.002 + clusterVol + Math.random() * 0.002;
-        if (i % 20 === 0) momentum = (Math.random() - 0.45) * 0.003;
-        trend += momentum + (Math.random() - 0.5) * 0.0005;
-        if (trend > 0.01) trend = 0.01;
-        if (trend < -0.01) trend = -0.01;
-        const meanReversion = (50000 - price) / price * 0.002;
-        const noise = (Math.random() - 0.5) * currentVol;
-        const change = price * (trend * 0.1 + noise + meanReversion);
-        const open = price;
-        let close = price + change;
-        if (close < 5000) close = 5000 + Math.random() * 1000;
-        if (close > 500000) close = 500000 - Math.random() * 10000;
-        if (close < open * 0.1) close = open * 0.1 + Math.random() * open * 0.05;
-        let halfRange = Math.abs(close - open) + open * currentVol;
-        let high = Math.max(open, close) + Math.random() * Math.min(halfRange, open * 0.05);
-        let low = Math.min(open, close) - Math.random() * Math.min(halfRange, open * 0.05);
-        if (high > 500000) high = 500000 - Math.random() * 5000;
-        if (low < 5000) low = 5000 + Math.random() * 500;
-        price = close;
-        const volume = (50 + Math.random() * 50) * (1 + clusterVol * 50);
-
-        // Persist to DB
-        runQuery(`INSERT OR IGNORE INTO candles (symbol, timeframe, time, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [symbol, timeframe, time, open, high, low, close, volume]).catch(() => {});
-        return { time, open, high, low, close, volume };
-      });
+      // Keep historical backtests grounded in observed data. Return only real
+      // exchange/API candles or rows already stored in the database.
     }
 
     return rows;
   }
 
   async getCandles(symbol: string, timeframe: string, limit: number = 100) {
-    // 1. Try provider rotator (CoinGecko → Binance → CoinMarketCap → CoinAPI)
-    //    with 5s timeout per provider and auto-rotate on failure.
+    // Prefer live exchange OHLCV; provider rotation only returns exchange data.
     try {
       const rotated = await this.providerRotator.getCandles(symbol, timeframe, limit);
       if (rotated.length >= 20) {
-        // Persist fetched candles to DB for offline resilience
-        for (const c of rotated) {
+        for (const candle of rotated) {
           runQuery(
             `INSERT OR IGNORE INTO candles (symbol, timeframe, time, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [symbol, timeframe, c.time, c.open, c.high, c.low, c.close, c.volume]
+            [symbol, timeframe, candle.time, candle.open, candle.high, candle.low, candle.close, candle.volume]
           ).catch(() => {});
         }
         return rotated;
@@ -643,112 +618,34 @@ export class ExchangeConnector {
       logger.warn(`[ExchangeConnector] Provider rotator failed: ${err.message}`, { service: 'connector' });
     }
 
-    // 2. Fall back to local DB
     let rows = await runQuery(
-      `
-      SELECT time, open, high, low, close, volume
-      FROM candles
-      WHERE symbol = ? AND timeframe = ?
-      ORDER BY time DESC
-      LIMIT ?
-    `,
+      `SELECT time, open, high, low, close, volume
+       FROM candles
+       WHERE symbol = ? AND timeframe = ?
+       ORDER BY time DESC
+       LIMIT ?`,
       [symbol, timeframe, limit],
       'all'
     );
 
-      if (rows.length < 20) {
-        // Try CoinAPI for historical data when provider is coinapi
-        if (this.exchangeName === 'coinapi' && this.apiKey) {
-          const coinApiRows = await this.fetchCoinAPIHistorical(symbol, timeframe, limit);
-          if (coinApiRows.length >= 20) {
-            // Persist fetched candles to DB
-            const msPerCandle = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '1d': 86400000 }[timeframe] || 3600000;
-            for (const c of coinApiRows) {
-              runQuery(`INSERT OR IGNORE INTO candles (symbol, timeframe, time, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-                [symbol, timeframe, c.time, c.open, c.high, c.low, c.close, c.volume]).catch(() => {});
-            }
-            return coinApiRows;
-          }
+    if (rows.length < 20 && this.exchangeName === 'coinapi' && this.apiKey) {
+      const coinApiRows = await this.fetchCoinAPIHistorical(symbol, timeframe, limit);
+      if (coinApiRows.length >= 20) {
+        for (const candle of coinApiRows) {
+          runQuery(`INSERT OR IGNORE INTO candles (symbol, timeframe, time, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [symbol, timeframe, candle.time, candle.open, candle.high, candle.low, candle.close, candle.volume]).catch(() => {});
         }
-
-        // Never synthesize fake data — return what we have
-        if (this.exchangeName === 'coingecko' || rows.length === 0) {
-          // Try to aggregate from a finer-grained timeframe that we DO have
-          // (e.g., 1m candles → 5m candles). This keeps the engine running when
-          // the configured timeframe has no direct data but 1m data exists.
-          const aggregated = await this.aggregateFromBaseTimeframe(symbol, timeframe, limit);
-          if (aggregated.length >= 20) {
-            return aggregated;
-          }
-          logger.warn(`[ExchangeConnector] Only ${rows.length} candles available for ${symbol} ${timeframe}. Returning partial data.`, { service: 'connector' });
-          return rows;
-        }
-
-        if (this.currentPrice === 0) {
-          await this.fetchLatestPrice(symbol);
-        }
-
-      const basePrice = this.currentPrice || 50000;
-      // Use a consistent epoch aligned to timeframe boundaries to prevent new candles every cycle
-      const msPerCandle = { '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '1d': 86400000 }[timeframe] || 3600000;
-      const now = Math.floor(Date.now() / msPerCandle) * msPerCandle;
-
-      // Generate realistic synthetic candles with trends, volatility clusters, and momentum
-      let price = basePrice;
-      let trend = 0; // cumulative trend drift
-      let volatility = 0.002; // base volatility (0.2%)
-      let momentum = 0;
-
-      rows = Array.from({ length: limit }).map((_, i) => {
-        const time = now - (limit - 1 - i) * msPerCandle;
-
-        // Phase-based volatility: clusters of high volatility every ~30 candles
-        const phase = (i % 30) / 30;
-        const clusterVol = phase < 0.15 ? 0.008 : 0; // volatility spike in first 15% of each phase
-        const currentVol = volatility + clusterVol + Math.random() * 0.002;
-
-        // Trend: slow drift with occasional momentum shifts
-        if (i % 20 === 0) {
-          momentum = (Math.random() - 0.45) * 0.003; // slight bullish bias
-        }
-        trend += momentum + (Math.random() - 0.5) * 0.0005;
-        // Clamp trend to prevent exponential price explosion
-        if (trend > 0.01) trend = 0.01;
-        if (trend < -0.01) trend = -0.01;
-
-        // Price change with mean reversion (fractional, ~0.2% pull toward 50K)
-        const meanReversion = (50000 - price) / price * 0.002;
-        const noise = (Math.random() - 0.5) * currentVol;
-        const change = price * (trend * 0.1 + noise + meanReversion);
-        const open = price;
-        let close = price + change;
-        // Clamp price to realistic range with proportional limits
-        if (close < 5000) close = 5000 + Math.random() * 1000;
-        if (close > 500000) close = 500000 - Math.random() * 10000;
-        // Also prevent >90% single-candle drop (keeps OHLC gap manageable)
-        if (close < open * 0.1) close = open * 0.1 + Math.random() * open * 0.05;
-        const halfRange = Math.abs(close - open) + open * currentVol;
-        let high = Math.max(open, close) + Math.random() * Math.min(halfRange, open * 0.05);
-        let low = Math.min(open, close) - Math.random() * Math.min(halfRange, open * 0.05);
-        // Clamp high/low to realistic range
-        if (high > 500000) high = 500000 - Math.random() * 5000;
-        if (low < 5000) low = 5000 + Math.random() * 500;
-        price = close;
-
-        // Volume: higher during volatility clusters
-        const volume = (50 + Math.random() * 50) * (1 + clusterVol * 50);
-
-        // Persist to DB so data survives restart
-        runQuery(`INSERT OR IGNORE INTO candles (symbol, timeframe, time, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [symbol, timeframe, time, open, high, low, close, volume]).catch(() => {});
-
-        return { time, open, high, low, close, volume };
-      });
-    } else {
-      rows = rows.reverse();
+        return coinApiRows;
+      }
     }
 
-    return rows;
+    if (rows.length < 20) {
+      const aggregated = await this.aggregateFromBaseTimeframe(symbol, timeframe, limit);
+      if (aggregated.length >= 20) return aggregated;
+      logger.warn(`[ExchangeConnector] Only ${rows.length} real candles available for ${symbol} ${timeframe}; no synthetic fallback will be used.`, { service: 'connector' });
+    }
+
+    return rows.reverse();
   }
 
   private signBinanceQuery(query: string): string {
@@ -1233,8 +1130,15 @@ export class ExchangeConnector {
         error: error.message
       });
 
-      // Return mock data for development
-      return this.getMockOrderBook(symbol);
+      // Public spot depth is available without API credentials; use it when the
+      // configured adapter (for example CoinGecko) has no order-book endpoint.
+      const response = await axios.get('https://api.binance.com/api/v3/depth', {
+        params: { symbol: symbol.replace('/', ''), limit }, timeout: 10_000,
+      });
+      const bids = Array.isArray(response.data?.bids) ? response.data.bids.map(([p, q]: [string, string]) => [Number(p), Number(q)] as [number, number]) : [];
+      const asks = Array.isArray(response.data?.asks) ? response.data.asks.map(([p, q]: [string, string]) => [Number(p), Number(q)] as [number, number]) : [];
+      if (!bids.length || !asks.length || [...bids, ...asks].some(([p, q]) => !Number.isFinite(p) || !Number.isFinite(q))) throw new Error('Binance returned an invalid order book');
+      return { symbol, timestamp: Date.now(), bids, asks, exchange: 'binance' };
     }
   }
 
@@ -1294,27 +1198,6 @@ export class ExchangeConnector {
       bids,
       asks,
       exchange: this.exchangeName
-    };
-  }
-
-  private getMockOrderBook(symbol: string): OrderBookData {
-    const midPrice = 50000;
-    const spread = 1;
-
-    const bids: [number, number][] = [];
-    const asks: [number, number][] = [];
-
-    for (let i = 0; i < 20; i++) {
-      bids.push([midPrice - spread * (i + 1), 1 + Math.random() * 5]);
-      asks.push([midPrice + spread * (i + 1), 1 + Math.random() * 5]);
-    }
-
-    return {
-      symbol,
-      timestamp: Date.now(),
-      bids,
-      asks,
-      exchange: 'mock'
     };
   }
 

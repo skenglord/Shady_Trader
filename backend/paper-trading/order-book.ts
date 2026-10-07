@@ -40,88 +40,21 @@ export class OrderBookSimulator {
   private pendingOrders: Map<string, PaperOrder> = new Map();
   private readonly MAX_LEVELS = 10;
 
-  constructor() {
-    this.initializeOrderBooks();
-  }
+  constructor() {}
 
-  private initializeOrderBooks(): void {
-    // Initialize with common trading pairs
-    const symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT'];
-    
-    for (const symbol of symbols) {
-      this.orderBooks.set(symbol, {
-        bids: this.generateInitialLevels(100000, true),
-        asks: this.generateInitialLevels(100000, false),
-        lastUpdateTime: Date.now(),
-      });
-    }
-  }
-
-  private generateInitialLevels(midPrice: number, isBid: boolean): OrderBookLevel[] {
-    const levels: OrderBookLevel[] = [];
-    const baseQuantity = new Decimal(10);
-    
-    for (let i = 0; i < this.MAX_LEVELS; i++) {
-      const priceOffset = (i + 1) * 0.001 * midPrice; // 0.1% per level
-      const price = isBid 
-        ? new Decimal(midPrice - priceOffset)
-        : new Decimal(midPrice + priceOffset);
-      
-      const quantityMultiplier = Math.max(0.1, 1 - i * 0.1);
-      const quantity = baseQuantity.mul(new Decimal(quantityMultiplier));
-      
-      levels.push({
-        price,
-        quantity,
-      });
-    }
-    
-    return levels;
-  }
-
-  public updateOrderBook(symbol: string, currentPrice: number, volatility: number = 0.02): void {
-    const orderBook = this.orderBooks.get(symbol);
-    if (!orderBook) {
-      // Initialize new symbol
-      const newBook = {
-        bids: this.generateInitialLevels(currentPrice, true),
-        asks: this.generateInitialLevels(currentPrice, false),
-        lastUpdateTime: Date.now(),
-      };
-      this.orderBooks.set(symbol, newBook);
-      return;
-    }
-
-    // Simulate market movement
-    const priceChange = currentPrice * volatility * (Math.random() - 0.5) * 0.1;
-    const newMidPrice = currentPrice + priceChange;
-
-    // Update bid levels
-    orderBook.bids = orderBook.bids.map((level, index) => {
-      const newPrice = new Decimal(newMidPrice - (index + 1) * 0.001 * newMidPrice);
-      const quantityChange = 1 + (Math.random() - 0.5) * 0.2;
-      return {
-        price: newPrice,
-        quantity: level.quantity.mul(new Decimal(Math.max(0.1, quantityChange))),
-      };
+  public updateOrderBook(snapshot: { symbol: string; timestamp: number; bids: [number, number][]; asks: [number, number][] }): void {
+    const toLevels = (rows: [number, number][]) => rows.slice(0, this.MAX_LEVELS).map(([price, quantity]) => {
+      if (!Number.isFinite(price) || !Number.isFinite(quantity) || price <= 0 || quantity <= 0) throw new Error('Invalid live order book level');
+      return { price: new Decimal(price), quantity: new Decimal(quantity) };
     });
-
-    // Update ask levels
-    orderBook.asks = orderBook.asks.map((level, index) => {
-      const newPrice = new Decimal(newMidPrice + (index + 1) * 0.001 * newMidPrice);
-      const quantityChange = 1 + (Math.random() - 0.5) * 0.2;
-      return {
-        price: newPrice,
-        quantity: level.quantity.mul(new Decimal(Math.max(0.1, quantityChange))),
-      };
-    });
-
-    orderBook.lastUpdateTime = Date.now();
+    const bids = toLevels(snapshot.bids), asks = toLevels(snapshot.asks);
+    if (!bids.length || !asks.length || bids[0].price.gte(asks[0].price)) throw new Error('Live order book is empty or crossed');
+    this.orderBooks.set(snapshot.symbol, { bids, asks, lastUpdateTime: snapshot.timestamp });
   }
 
   public getOrderBook(symbol: string): OrderBookSnapshot | null {
     const orderBook = this.orderBooks.get(symbol);
-    if (!orderBook) {
+    if (!orderBook || Date.now() - orderBook.lastUpdateTime > 15_000) {
       return null;
     }
 
@@ -145,7 +78,7 @@ export class OrderBookSimulator {
     asks: OrderBookLevel[];
   } | null {
     const orderBook = this.orderBooks.get(symbol);
-    if (!orderBook) {
+    if (!orderBook || Date.now() - orderBook.lastUpdateTime > 15_000) {
       return null;
     }
 

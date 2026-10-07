@@ -4,6 +4,7 @@
  */
 
 import { PaperTradingService } from '../backend/paper-trading/paper-trading-service.js';
+import { createPaperTradingTestService } from './paper-trading/book-fixture.js';
 import { performance } from 'perf_hooks';
 
 const NUM_TRADERS = 1000;
@@ -23,7 +24,7 @@ class LoadTester {
   private results: LoadTestResult[] = [];
 
   constructor() {
-    this.service = new PaperTradingService();
+    this.service = createPaperTradingTestService();
   }
 
   private generateRandomTrade(traderId: number) {

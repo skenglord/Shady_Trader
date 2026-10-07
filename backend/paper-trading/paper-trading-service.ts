@@ -82,11 +82,11 @@ export class PaperTradingService {
   private priceUpdateInterval: NodeJS.Timeout | null = null;
   private idempotencyCleanupInterval: NodeJS.Timeout | null = null;
 
-  constructor() {
+  constructor(private readonly getExchange?: () => { getOrderBook(symbol: string, limit?: number): Promise<{ symbol: string; timestamp: number; bids: [number, number][]; asks: [number, number][] }> | null }) {
     this.orderBook = new OrderBookSimulator();
     this.positionTracker = new PaperPositionTracker();
     this.startOrderMatching();
-    this.startPriceUpdates();
+    this.startLiveBookUpdates();
     this.startIdempotencyCleanup();
   }
 
@@ -124,24 +124,19 @@ export class PaperTradingService {
     this.orderMatchingInterval.unref();
   }
 
-  private startPriceUpdates(): void {
-    this.priceUpdateInterval = setInterval(() => {
-      // Update prices for all symbols
+  private startLiveBookUpdates(): void {
+    const refresh = async () => {
+      const exchange = this.getExchange?.();
+      if (!exchange) return;
       const symbols = ['BTC/USDT', 'ETH/USDT', 'SOL/USDT', 'BNB/USDT', 'XRP/USDT'];
-      
       for (const symbol of symbols) {
-        const orderBook = this.orderBook.getOrderBook(symbol);
-        if (orderBook) {
-          const currentPrice = orderBook.midPrice.toNumber();
-          const volatility = 0.02;
-          
-          this.orderBook.updateOrderBook(symbol, currentPrice, volatility);
-          
-          // Update position prices
+        try {
+          const snapshot = await exchange.getOrderBook(symbol, 10);
+          if (!snapshot) continue;
+          this.orderBook.updateOrderBook(snapshot);
+          const currentPrice = (snapshot.bids[0][0] + snapshot.asks[0][0]) / 2;
           const newPrice = new Decimal(currentPrice);
           const positionUpdates = this.positionTracker.updatePositionPriceBySymbol(symbol, newPrice, Date.now());
-          
-          // Check stop loss and take profit
           for (const { position } of positionUpdates) {
             if (this.positionTracker.checkStopLoss(position.id, newPrice)) {
               this.closePosition(position.id, newPrice, Date.now(), 'stop_loss');
@@ -149,10 +144,12 @@ export class PaperTradingService {
               this.closePosition(position.id, newPrice, Date.now(), 'take_profit');
             }
           }
+        } catch { /* Missing live depth pauses matching for this symbol. */ }
         }
-      }
-    }, 100); // Update every 100ms
+    };
+    this.priceUpdateInterval = setInterval(() => { void refresh(); }, 5_000);
     this.priceUpdateInterval.unref();
+    void refresh();
   }
 
   private startIdempotencyCleanup(): void {
@@ -187,6 +184,11 @@ export class PaperTradingService {
   }
 
   public async createPaperTrade(request: PaperTradeRequest): Promise<PaperTradeResponse> {
+    const exchange = this.getExchange?.();
+    if (!exchange) throw new Error('Live market depth is unavailable; paper order was not accepted');
+    const liveBook = await exchange.getOrderBook(request.symbol, 10);
+    this.orderBook.updateOrderBook(liveBook);
+    const liveMidPrice = new Decimal((liveBook.bids[0][0] + liveBook.asks[0][0]) / 2);
     // Check idempotency
     if (request.idempotencyKey) {
       const cached = this.checkIdempotency(request.idempotencyKey, request);
@@ -239,6 +241,7 @@ export class PaperTradingService {
       takeProfit: request.takeProfit ? new Decimal(request.takeProfit) : undefined,
       leverage: request.leverage || 1,
     });
+    this.positionTracker.updatePositionPrice(position.id, liveMidPrice);
 
     // Trigger order creation
     stateMachine.sendEvent('CREATE_ORDER');
