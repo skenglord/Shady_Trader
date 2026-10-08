@@ -26,7 +26,7 @@
 
 ### October 7 frontend readiness loop
 
-- All preceding changes were committed as `61cdd91` and fast-forward merged into local `main`. Pushing to `origin/main` failed because this machine has no usable GitHub credentials; remote publication remains pending.
+- All preceding changes were committed as `61cdd91` and fast-forward merged into local `main`. GitHub authentication was verified October 8, 2026. Both work branches are already merged into local `main` (`61cdd91` and `2bb151b`); the working tree was clean before this publication handoff update.
 - Split the market chart, performance chart, ML panel, and Freqtrade panel using lazy imports. Sign-in does not request these feature chunks; Recharts loads only when portfolio history is available. Loading placeholders preserve chart space and modal close controls.
 - Production entry JS decreased from **788.42 kB to 217.82 kB**, and the largest output chunk is **332.43 kB**. Build passed without the previous 500 kB advisory.
 - **Two isolated Chromium scenarios passed**, covering empty/populated history, chart rendering, sign-in gating, ML/Freqtrade modal rendering, and feature chunk request timing, with no browser page errors. API and WebSocket traffic is mocked; service workers are blocked for fixture interception, so these checks do not verify PWA installation or real backend integration.
