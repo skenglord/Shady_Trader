@@ -1,16 +1,30 @@
 # Production Readiness Todo
 
-Created: 2026-06-10 | Updated: 2026-06-18
+Created: 2026-06-10 | Updated: 2026-10-10
 
 ## Current verified gate state
 
-- `npm run lint`: **pass**.
-- `npm run build`: **pass**; Vite reports only the existing large-chunk warning.
-- `npm test -- --test-reporter=spec --test-concurrency=1`: **pass (serial spec)**; 438 tests, 436 pass, 1 flaky, 1 skipped. Deep deterministic passes 34/34 in isolation.
-- `git diff --check`: **pass**.
-- `npm run quality:coverage`: **pass**; lines=54.93%, branches=75.05% (thresholds: 50% lines, 65% branches).
-- `npm run quality:complexity`: fail; `backend/main.ts :: runCycle => 88` and `backend/shadow/shadow_trader.ts :: updatePositions => 51` exceed max 50.
-- `npm run security:audit`: fail; `npm audit --omit=dev --audit-level=high` reports vulnerabilities.
+- Root lint/build/complexity: **pass** on October 10.
+- Serial isolated Node 22 tests: **pass**, 518 tests / 517 passed / 0 failed or cancelled / 1 skipped. Whole skipped suites remain; do not infer complete coverage from that counter.
+- Coverage checker: **pass**, lines 56.97%, branches 74.68% (thresholds 50% / 65%).
+- Additional root ML tests: **28/28 pass**; omitted by normal shell glob.
+- Isolated production Chromium checks: **2/2 pass**, mocked API/WebSocket.
+- CLI-specific TypeScript project: **fail**, TS6059 rootDir/import boundary.
+- Production dependency audit: **fail**, 12 affected packages (1 critical, 2 high, 9 moderate), with exposure qualified in the report.
+- Existing service on port 3000: no listener verified. Native SQLite installed for Node 22 fails under default Node 24.
+
+## Current release blockers and next actions
+
+**Not ready for live funds or untrusted network exposure.** The [October 10 full audit](full_system_audit_2026-10-10.md) supersedes the historical gate/readiness assessments below; no production fixes were made during the audit.
+
+- [ ] Authenticate paper REST/WebSocket and symbol mutations; reject malformed WS frames safely; close Vite source/data exposure.
+- [ ] Serialize/durably reconcile entries and all exit paths; prevent post-stop entries and duplicate closes; preserve symbol/venue ownership.
+- [ ] Make balance settlement transactional and awaited; repair paper order identities, fill prices, P&L and liquidation.
+- [ ] Activate risk configs atomically, remove LLM risk authority, and repair ML/schema/Freqtrade integration and independent OOS evaluation.
+- [ ] Repair Docker runtime imports/Kubernetes volumes, enforce a single engine owner, and verify database-specific backup restoration.
+- [ ] Upgrade vulnerable dependencies, repair CLI/test discovery, and prove the audit regression scenarios before a sandbox-exchange release gate.
+
+The remaining sections retain dated implementation history and earlier inventories; they are not current verification claims.
 
 ## Phase 1 coverage-test expansion (June 15, 2026)
 
