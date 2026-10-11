@@ -1,6 +1,7 @@
 import { withDatabaseTransaction, type TransactionQuery } from '../database.js';
 import type { NormalizedExchangeFill } from './account-execution-adapter.js';
 import type { BalanceManager } from '../balance/manager.js';
+import { valueFillFee } from './fill-fees.js';
 
 export type ExchangeScope = { exchange: string; accountId: string };
 
@@ -10,7 +11,8 @@ export async function applyExchangeFill(
   scope: ExchangeScope,
   balanceManager: BalanceManager
 ): Promise<'applied' | 'duplicate' | 'unmatched'> {
-  if (fill.fee !== 0 && fill.feeCurrency !== fill.symbol.split('/')[1]) return 'unmatched';
+  const fee = valueFillFee(fill);
+  if (!fee) return 'unmatched';
   return withDatabaseTransaction(async query => {
     const intents = await query(`
       SELECT * FROM execution_intents
@@ -46,29 +48,31 @@ export async function applyExchangeFill(
       if (!rows.length) throw new Error('Matched exit fill has no scoped trade');
       const trade = rows[0];
       const remaining = Number(trade.remaining_amount ?? trade.amount);
-      if (fill.quantity > remaining + 1e-10) throw new Error('Exit fill exceeds remaining trade quantity');
-      const nextRemaining = Math.max(0, remaining - fill.quantity);
+      const consumedQuantity = fill.quantity + fee.baseAmount;
+      if (consumedQuantity > remaining + 1e-10 || consumedQuantity < 0) throw new Error('Exit fill exceeds remaining trade quantity');
+      const nextRemaining = Math.max(0, remaining - consumedQuantity);
       const grossPnl = String(trade.side).toLowerCase() === 'buy' ? (fill.price - Number(trade.price)) * fill.quantity : (Number(trade.price) - fill.price) * fill.quantity;
-      const quoteCurrency = fill.symbol.split('/')[1];
-      const fee = fill.feeCurrency === quoteCurrency ? fill.fee : 0;
-      const realizedPnl = grossPnl - fee;
+      // Value the base fee at this fill, then recognize the price movement on
+      // the consumed inventory so its entry basis is not counted twice.
+      const entryPrice = Number(trade.price);
+      const realizedPnl = grossPnl - fee.quoteValue + (fill.price - entryPrice) * fee.baseAmount - fee.quoteAmount;
       const cumulativePnl = Number(trade.realized_pnl || 0) + realizedPnl;
       await query(`UPDATE shadow_trades SET remaining_amount = ?, realized_pnl = ?, status = ?, pnl = CASE WHEN ? = 0 THEN ? ELSE pnl END, exit_price = CASE WHEN ? = 0 THEN ? ELSE exit_price END, exit_timestamp = CASE WHEN ? = 0 THEN ? ELSE exit_timestamp END WHERE id = ?`, [nextRemaining, cumulativePnl, nextRemaining === 0 ? 'closed' : 'open', nextRemaining, cumulativePnl, nextRemaining, fill.price, nextRemaining, fill.timestamp, tradeId]);
       // This adapter is spot-only: principal reserved on entry is full notional,
       // regardless of a strategy's simulated leverage setting.
-      await balanceManager.recordTradeResultInTransaction(query, realizedPnl, Number(trade.price) * fill.quantity, { exchange: scope.exchange, accountId: scope.accountId, exchangeFillId: fill.exchangeFillId });
+      await balanceManager.recordTradeResultInTransaction(query, realizedPnl, Number(trade.price) * consumedQuantity, { exchange: scope.exchange, accountId: scope.accountId, exchangeFillId: fill.exchangeFillId });
     } else {
       const rows = await query(`SELECT * FROM shadow_trades WHERE id = ? AND exchange_name = ? AND account_id = ? ${process.env.USE_POSTGRES === 'true' ? 'FOR UPDATE' : ''}`, [intent.trade_id, scope.exchange, scope.accountId], 'all');
       if (!rows.length) throw new Error('Matched entry fill has no scoped trade');
       const trade = rows[0];
       const prior = Number(trade.remaining_amount ?? 0);
       const priorNotional = prior * Number(trade.price || 0);
-      const quantity = prior + fill.quantity;
-      const quoteCurrency = fill.symbol.split('/')[1];
-      const fee = fill.feeCurrency === quoteCurrency ? fill.fee : 0;
-      const averagePrice = (priorNotional + fill.quantity * fill.price + fee) / quantity;
+      const acquiredQuantity = fill.quantity - fee.baseAmount;
+      const quantity = prior + acquiredQuantity;
+      if (acquiredQuantity <= 0 || quantity <= 0) throw new Error('Entry fill fee consumes all acquired quantity');
+      const averagePrice = (priorNotional + fill.quantity * fill.price + fee.quoteAmount) / quantity;
       await query(`UPDATE shadow_trades SET amount = ?, remaining_amount = ?, price = ?, status = 'open' WHERE id = ?`, [quantity, quantity, averagePrice, intent.trade_id]);
-      await balanceManager.addActiveTradeInTransaction(query, fill.quantity * fill.price + fee, { exchange: scope.exchange, accountId: scope.accountId, exchangeFillId: fill.exchangeFillId });
+      await balanceManager.addActiveTradeInTransaction(query, fill.quantity * fill.price + fee.quoteAmount, { exchange: scope.exchange, accountId: scope.accountId, exchangeFillId: fill.exchangeFillId });
     }
     return 'applied';
   });
