@@ -103,6 +103,21 @@ describe('atomic balance settlement', () => {
     assert.equal(state.pnl, 5);
   });
 
+  test('trade result can join a caller transaction and audit through its query handle', async () => {
+    const state = installBalanceStore({ main: 1000, bot: 800, active: 200 });
+    const manager = new BalanceManager();
+    // The method must use the supplied query rather than opening a nested transaction.
+    const query = async (sql: string, params: any[] = [], type: 'run' | 'all' = 'run') => {
+      if (sql.includes('SELECT * FROM balances')) return [{ main_balance: state.main, bot_balance: state.bot, active_trade_balance: state.active, total_pnl: state.pnl, total_pnl_pct: state.pnlPct }];
+      if (sql.includes('total_pnl = total_pnl + ?')) { state.bot += Number(params[0]); state.active -= Number(params[1]); state.pnl += Number(params[3]); return { changes: 1 }; }
+      if (sql.includes('INSERT INTO audit_balances')) { state.auditRows.push({ eventType: params[2] }); return { changes: 1 }; }
+      return { changes: 1 };
+    };
+    await manager.recordTradeResultInTransaction(query as any, 12, 100, { fillId: 'f1' });
+    assert.equal(state.pnl, 12);
+    assert.equal(state.auditRows.length, 1);
+  });
+
   test('concurrent allocations cannot spend the same main-balance funds twice', async () => {
     const state = installBalanceStore({ main: 1000, bot: 0, active: 0 });
     const manager = new BalanceManager();

@@ -7,6 +7,7 @@ const ADDITIONAL_COLUMNS: Record<string, string[]> = {
     'client_order_id TEXT',
     "intent_type TEXT NOT NULL DEFAULT 'entry'",
     'parent_trade_id TEXT',
+    'requested_quantity REAL',
     'filled_quantity REAL NOT NULL DEFAULT 0',
     'average_fill_price REAL',
     'last_observed_at BIGINT'
