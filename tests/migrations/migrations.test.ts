@@ -45,6 +45,58 @@ describe('v6.0 Migrations', () => {
     }
   });
 
+  test('real exchange reconciliation migration adds scoped intent, fill, state, and incident schema', async () => {
+    const intentColumns = await runQuery(`PRAGMA table_info(execution_intents)`, [], 'all');
+    const tradeColumns = await runQuery(`PRAGMA table_info(shadow_trades)`, [], 'all');
+    const intentNames = (intentColumns as any[]).map(column => column.name);
+    const tradeNames = (tradeColumns as any[]).map(column => column.name);
+
+    for (const column of ['exchange_name', 'account_id', 'client_order_id', 'intent_type', 'parent_trade_id', 'filled_quantity']) {
+      assert.ok(intentNames.includes(column), `execution_intents.${column} should exist`);
+    }
+    for (const column of ['exchange_name', 'account_id', 'remaining_amount', 'realized_pnl']) {
+      assert.ok(tradeNames.includes(column), `shadow_trades.${column} should exist`);
+    }
+
+    for (const table of ['exchange_fills', 'exchange_reconciliation_state', 'exchange_reconciliation_incidents']) {
+      const rows = await runQuery(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, [table], 'all');
+      assert.equal((rows as any[]).length, 1, `${table} should exist`);
+    }
+  });
+
+  test('exchange fill uniqueness and reconciliation state are account scoped', async () => {
+    const testScope = `account-${Date.now()}-${Math.random()}`;
+    const exchangeOrderId = `test-order-${Date.now()}`;
+    const fillParams = ['binance', testScope, exchangeOrderId, 'fill-1', 'intent-a', 'trade-a', 'BTC/USDT', 'buy', 1, 50000, 0.01, 'USDT', Date.now()];
+    await runQuery(`
+      INSERT INTO exchange_fills
+        (exchange_name, account_id, exchange_order_id, exchange_fill_id, idempotency_key, trade_id, symbol, side, quantity, price, fee, fee_currency, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, fillParams);
+    await assert.rejects(runQuery(`
+      INSERT INTO exchange_fills
+        (exchange_name, account_id, exchange_order_id, exchange_fill_id, idempotency_key, trade_id, symbol, side, quantity, price, fee, fee_currency, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, fillParams));
+
+    await runQuery(`INSERT INTO exchange_reconciliation_state (exchange_name, account_id, status) VALUES (?, ?, ?)`, ['binance', `${testScope}-a`, 'blocked']);
+    await runQuery(`INSERT INTO exchange_reconciliation_state (exchange_name, account_id, status) VALUES (?, ?, ?)`, ['binance', `${testScope}-b`, 'ready']);
+    const rows = await runQuery(`SELECT status FROM exchange_reconciliation_state WHERE exchange_name = ? AND account_id = ?`, ['binance', `${testScope}-a`], 'all');
+    assert.deepEqual((rows as any[]).map(row => row.status), ['blocked']);
+  });
+
+  test('legacy trades remain unscoped rather than being assigned to an account', async () => {
+    const id = `legacy-${Date.now()}`;
+    await runQuery(`
+      INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage)
+      VALUES (?, 'BTC/USDT', 'buy', 1, 50000, 'closed', ?, 'moderate', 1)
+    `, [id, Date.now()]);
+    const rows = await runQuery(`SELECT exchange_name, account_id FROM shadow_trades WHERE id = ?`, [id], 'all');
+    assert.equal(rows[0].exchange_name, null);
+    assert.equal(rows[0].account_id, null);
+    await runQuery(`DELETE FROM shadow_trades WHERE id = ?`, [id]);
+  });
+
   test('freqtrade_hyperopt_results has all 13 required columns', async () => {
     const cols = await runQuery(`PRAGMA table_info(freqtrade_hyperopt_results)`, [], 'all');
     const names = (cols as any[]).map(c => c.name);
