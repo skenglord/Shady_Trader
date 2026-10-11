@@ -18,7 +18,7 @@
     "quality:coverage": "npm run test:coverage && node scripts/check-coverage.mjs",
     "quality:complexity": "node scripts/check-complexity.mjs",
     "quality:ci": "npm run lint && npm run test && npm run quality:coverage && npm run quality:complexity && npm run security:audit",
-    "security:audit": "npm audit --omit=dev --audit-level=high",
+    "security:audit": "npm audit --omit=dev",
     "audit:archive": "tsx scripts/archive-audit-logs.ts",
     "audit:ui": "node scripts/ui-audit.mjs",
     "test:ui:isolated": "npm run build && playwright test tests/playwright/lazy-dashboard.spec.ts --reporter=list",
