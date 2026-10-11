@@ -173,6 +173,15 @@ export class BalanceManager {
     `, [tradeValue, tradeValue, tradeValue], 'active_trade_addition', tradeValue, 'add_active_trade', undefined, 'Insufficient bot balance');
   }
 
+  async addActiveTradeInTransaction(query: TransactionQuery, tradeValue: number, metadata?: unknown) {
+    this.validateAmount(tradeValue);
+    const before = await this.readBalances(query);
+    const result = await query(`UPDATE balances SET bot_balance = bot_balance - ?, active_trade_balance = active_trade_balance + ? WHERE id = 'default' AND bot_balance >= ?`, [tradeValue, tradeValue, tradeValue]);
+    if (result?.changes === 0 || result?.rowCount === 0) throw new Error('Insufficient bot balance for reconciled entry fill');
+    const after = await this.readBalances(query);
+    await this.logAuditBalance(query, 'active_trade_addition', before, after, tradeValue, 'reconciled_exchange_fill', metadata);
+  }
+
   private validateAmount(amount: number) {
     if (!Number.isFinite(amount) || amount < 0) throw new Error('Amount must be a finite non-negative number');
   }

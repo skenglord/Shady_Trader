@@ -9,7 +9,7 @@ const fill = (id: string, qty: number, price: number, side: 'buy' | 'sell' = 'bu
 
 function installStore(options: { failAudit?: boolean } = {}) {
   const original = {
-    intents: [{ idempotency_key: 'intent-1', trade_id: 'trade-1', parent_trade_id: null as string | null, exchange_name: scope.exchange, account_id: scope.accountId, exchange_order_id: 'order-1', client_order_id: 'client-1', intent_type: 'entry', requested_quantity: 2, filled_quantity: 0, average_fill_price: null as number | null, status: 'submitted', created_at: 1 }],
+    intents: [{ idempotency_key: 'intent-1', trade_id: 'trade-1', parent_trade_id: null as string | null, exchange_name: scope.exchange, account_id: scope.accountId, exchange_order_id: 'order-1', client_order_id: 'client-1', intent_type: 'entry', side: 'buy', symbol: 'BTC/USDT', requested_quantity: 2, filled_quantity: 0, average_fill_price: null as number | null, status: 'submitted', created_at: 1 }],
     trades: [{ id: 'trade-1', exchange_name: scope.exchange, account_id: scope.accountId, amount: 2, remaining_amount: 0, price: 100, side: 'buy', status: 'pending', leverage: 1, realized_pnl: 0 }],
     fills: [] as any[], audits: [] as any[], balance: { main_balance: 1000, bot_balance: 500, active_trade_balance: 200, total_pnl: 0, total_pnl_pct: 0 },
   };
@@ -23,6 +23,7 @@ function installStore(options: { failAudit?: boolean } = {}) {
     if (sql.includes("UPDATE shadow_trades SET amount = ?")) { const t = state.trades.find(row => row.id === params[3])!; t.amount = params[0]; t.remaining_amount = params[1]; t.price = params[2]; t.status = 'open'; return { changes: 1 }; }
     if (sql.includes('UPDATE shadow_trades SET remaining_amount')) { const t = state.trades.find(row => row.id === params[9])!; t.remaining_amount = params[0]; t.realized_pnl = params[1]; t.status = params[2]; return { changes: 1 }; }
     if (sql.includes('bot_balance = bot_balance + ?,') && sql.includes('total_pnl = total_pnl + ?')) { state.balance.bot_balance += Number(params[0]); state.balance.active_trade_balance -= Number(params[1]); state.balance.total_pnl += Number(params[3]); return { changes: 1 }; }
+    if (sql.includes('SET bot_balance = bot_balance - ?')) { if (state.balance.bot_balance < Number(params[0])) return { changes: 0 }; state.balance.bot_balance -= Number(params[0]); state.balance.active_trade_balance += Number(params[1]); return { changes: 1 }; }
     if (sql.includes('INSERT INTO audit_balances')) { if (options.failAudit) throw new Error('audit failed'); state.audits.push(params); return { changes: 1 }; }
     if (type === 'all') return [];
     return { changes: 1 };
@@ -47,12 +48,15 @@ test('entry fills update actual quantity and replay only once', async () => {
   assert.equal(state.trades[0].amount, 0.5);
   assert.equal(state.trades[0].remaining_amount, 0.5);
   assert.equal(state.fills.length, 1);
-  assert.equal(state.audits.length, 0);
+  assert.equal(state.audits.length, 1, 'entry principal reservation is audited transactionally');
+  assert.equal(state.balance.bot_balance, 450);
+  assert.equal(state.balance.active_trade_balance, 250);
 });
 
 test('partial exit fills retain the open trade and apply realized PnL through the transaction query', async () => {
   const state = installStore();
   state.intents[0].intent_type = 'exit';
+  state.intents[0].side = 'sell';
   state.intents[0].trade_id = 'trade-1:close';
   state.intents[0].parent_trade_id = 'trade-1';
   state.intents[0].filled_quantity = 0;
@@ -75,6 +79,7 @@ test('fills without a unique matching scoped intent remain unmatched', async () 
 test('audit failure rolls back fill claim and trade update', async () => {
   const state = installStore({ failAudit: true });
   state.intents[0].intent_type = 'exit';
+  state.intents[0].side = 'sell';
   state.intents[0].trade_id = 'trade-1:close';
   state.intents[0].parent_trade_id = 'trade-1';
   state.trades[0].remaining_amount = 2;

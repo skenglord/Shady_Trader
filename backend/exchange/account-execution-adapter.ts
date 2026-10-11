@@ -59,9 +59,9 @@ export interface ExchangePage<T> {
 }
 
 export interface ExchangeCapabilities {
-  supportsLiveTrading: boolean;
-  supportsAuthenticatedReads: boolean;
-  supportsClientOrderIds: boolean;
+  readonly supportsLiveTrading: boolean;
+  readonly supportsAuthenticatedReads: boolean;
+  readonly supportsClientOrderIds: boolean;
 }
 
 /**
@@ -74,6 +74,7 @@ export interface AccountExecutionAdapter {
   readonly accountId: string;
   readonly capabilities: ExchangeCapabilities;
   placeOrder(request: PlaceExchangeOrderRequest): Promise<NormalizedExchangeOrder>;
+  cancelOrder?(exchangeOrderId: string, symbol: string): Promise<boolean>;
   /** null is reserved for an authoritative not-found response. */
   getOrder(query: ExchangeOrderQuery): Promise<NormalizedExchangeOrder | null>;
   listOpenOrders(): Promise<NormalizedExchangeOrder[]>;

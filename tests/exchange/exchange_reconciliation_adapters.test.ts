@@ -5,16 +5,18 @@ import { generateKeyPairSync } from 'node:crypto';
 import { ExchangeConnector } from '../../backend/exchange/connector.js';
 
 const originalPost = axios.post;
+const originalGet = axios.get;
 const connectors: ExchangeConnector[] = [];
 const coinbasePrivateKey = generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey.export({ type: 'pkcs8', format: 'pem' }).toString();
 function connector(exchange: string) {
-  const item = new ExchangeConnector(exchange, 'api-key', exchange === 'coinbase' ? coinbasePrivateKey : 'api-secret', 'passphrase', true);
+  const item = new ExchangeConnector(exchange, 'api-key', exchange === 'coinbase' ? coinbasePrivateKey : 'api-secret', 'passphrase', exchange !== 'kraken');
   item.shutdown();
   connectors.push(item);
   return item;
 }
 afterEach(() => {
   axios.post = originalPost;
+  axios.get = originalGet;
   for (const item of connectors.splice(0)) item.shutdown();
 });
 
@@ -24,43 +26,51 @@ test('all venue execution surfaces expose account recovery contract', async () =
     assert.ok(item.accountExecutionAdapter, `${venue} adapter`);
     assert.equal(item.accountExecutionAdapter.exchange, venue);
     assert.equal(typeof item.accountExecutionAdapter.listFills, 'function');
+    assert.equal(item.accountExecutionAdapter.capabilities.supportsLiveTrading, false, 'unvalidated venue recovery must not authorize live orders');
   }
 });
 
-test('native client order IDs are passed through unchanged on order submission', async () => {
-  const requests: Array<{ url: string; data: any }> = [];
-  axios.post = (async (url: string, data: any) => {
-    requests.push({ url, data });
-    if (url.includes('AddOrder')) return { data: { result: { txid: ['kraken-1'] }, error: [] } };
-    if (url.includes('trade/order')) return { data: { code: '0', data: [{ ordId: 'okx-1', clOrdId: 'caller-id', state: 'live', sz: '1', accFillSz: '0' }] } };
-    if (url.includes('brokerage/orders')) return { data: { success: true, order_id: 'cb-1', client_order_id: 'caller-id', status: 'OPEN' } };
-    return { data: { orderId: 77, status: 'NEW', origQty: '1', executedQty: '0', transactTime: 123 } };
-  }) as any;
+test('account adapter order submission remains disabled until reconciliation validation is complete', async () => {
   for (const venue of ['binance', 'kraken', 'okx', 'coinbase']) {
     const item = connector(venue);
-    await item.accountExecutionAdapter.placeOrder({ clientOrderId: 'caller-id', symbol: 'BTC/USDT', side: 'buy', quantity: 1, orderType: 'market' });
+    await assert.rejects(() => item.accountExecutionAdapter.placeOrder({ clientOrderId: 'callerid', symbol: 'BTC/USDT', side: 'buy', quantity: 1, orderType: 'market' }), /live order submission is disabled/);
   }
-  const joined = requests.map(request => typeof request.data === 'string' ? request.data : JSON.stringify(request.data)).join('\n');
-  assert.match(joined, /newClientOrderId=caller-id/);
-  assert.match(joined, /cl_ord_id=caller-id/);
-  assert.match(joined, /clOrdId.*caller-id/);
-  assert.match(joined, /client_order_id.*caller-id/);
 });
 
-test('Coinbase Advanced Trade uses Bearer JWT and order_configuration', async () => {
+test('Coinbase Advanced Trade authenticated reads use Bearer JWT', async () => {
   let headers: any;
-  let body: any;
-  axios.post = (async (_url: string, data: any, config: any) => {
+  axios.get = (async (_url: string, config: any) => {
     headers = config.headers;
-    body = JSON.parse(data);
-    return { data: { success: true, order_id: 'cb-1', status: 'OPEN' } };
+    return { data: { accounts: [] } };
   }) as any;
   const item = connector('coinbase');
-  await item.accountExecutionAdapter.placeOrder({ clientOrderId: 'id-1', symbol: 'BTC/USDT', side: 'buy', quantity: 0.1, orderType: 'market' });
+  await item.accountExecutionAdapter.getBalances();
   assert.match(headers.Authorization, /^Bearer /);
-  assert.equal(body.client_order_id, 'id-1');
-  assert.ok(body.order_configuration.market_market_ioc);
-  assert.equal(body.product_id, 'BTC-USDT');
+});
+
+test('normalizes native Kraken open-order maps, OKX fills, and Binance sell fills', async () => {
+  const kraken = connector('kraken');
+  axios.post = (async (url: string) => {
+    if (url.includes('OpenOrders')) return { data: { error: [], result: { open: { KRAKEN1: { status: 'open', vol: '2', vol_exec: '0', opentm: 1700000000, descr: { pair: 'XBTUSD', type: 'sell' } } } } } };
+    return { data: { error: [], result: { closed: {}, count: 0 } } };
+  }) as any;
+  const open = await kraken.accountExecutionAdapter.listOpenOrders();
+  assert.equal(open[0].exchangeOrderId, 'KRAKEN1');
+  assert.equal(open[0].side, 'sell');
+  assert.equal(open[0].requestedQuantity, 2);
+
+  const okx = connector('okx');
+  axios.get = (async () => ({ data: { code: '0', data: [{ ordId: 'O1', tradeId: 'T1', instId: 'BTC-USDT', side: 'sell', fillSz: '0.2', fillPx: '50000', fee: '-1', feeCcy: 'USDT', ts: '1700000000000' }] } })) as any;
+  const fills = await okx.accountExecutionAdapter.listFills(0);
+  assert.equal(fills.items[0].exchangeFillId, 'T1');
+  assert.equal(fills.items[0].side, 'sell');
+  assert.equal(fills.items[0].feeCurrency, 'USDT');
+
+  const binance = connector('binance');
+  axios.get = (async () => ({ data: [{ id: 9, orderId: 3, symbol: 'BTCUSDT', isBuyer: false, qty: '0.1', price: '50000', time: 1700000000000, commission: 0, commissionAsset: 'USDT' }] })) as any;
+  const binanceFills = await binance.accountExecutionAdapter.listFills(0);
+  assert.equal(binanceFills.items[0].side, 'sell');
+  assert.equal(binanceFills.items[0].symbol, 'BTC/USDT');
 });
 
 test('venue API error payloads reject instead of becoming empty successful state', async () => {
@@ -70,4 +80,14 @@ test('venue API error payloads reject instead of becoming empty successful state
   axios.get = (async () => ({ data: { success: false, error_response: { message: 'denied' } } })) as any;
   const coinbase = connector('coinbase');
   await assert.rejects(() => coinbase.accountExecutionAdapter.getBalances(), /Coinbase API error/);
+});
+
+test('unvalidated adapters cannot submit live orders and Kraken testnet cannot reach production auth', async () => {
+  const item = connector('binance');
+  await assert.rejects(() => item.placeOrder('BTC/USDT', 'buy', 0.1), /live order submission is disabled/);
+  await assert.rejects(() => item.placeOCOOrder('BTC/USDT', 'buy', 0.1, 49000, 51000), /live order submission is disabled/);
+  assert.equal(item.getCapabilities().supportsLiveTrading, false);
+  const krakenTestnet = new ExchangeConnector('kraken', 'api-key', 'api-secret', undefined, true);
+  krakenTestnet.shutdown(); connectors.push(krakenTestnet);
+  await assert.rejects(() => krakenTestnet.accountExecutionAdapter.getBalances(), /Kraken Spot testnet is not supported/);
 });

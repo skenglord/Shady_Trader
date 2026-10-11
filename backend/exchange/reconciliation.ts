@@ -41,7 +41,15 @@ export class PositionReconciliationEngine {
   async reconcileAccount(adapter: AccountExecutionAdapter): Promise<ReconciliationResult> {
     const key = this.key(adapter);
     const previous = this.queues.get(key) || Promise.resolve();
-    const current = previous.catch(() => undefined).then(() => this.runAccountCycle(adapter));
+    const current = previous.catch(() => undefined).then(async () => {
+      try { return await this.runAccountCycle(adapter); }
+      catch (error) {
+        const scope = { exchange: adapter.exchange, accountId: adapter.accountId };
+        const message = (error instanceof Error ? error.message : String(error)).slice(0, 1000);
+        await runQuery(`INSERT INTO exchange_reconciliation_state (exchange_name, account_id, status, fill_cursor, last_checked_at, last_error) VALUES (?, ?, 'blocked', NULL, ?, ?) ON CONFLICT(exchange_name, account_id) DO UPDATE SET status = 'blocked', last_checked_at = excluded.last_checked_at, last_error = excluded.last_error`, [scope.exchange, scope.accountId, Date.now(), message]);
+        throw error;
+      }
+    });
     this.queues.set(key, current);
     try { return await current; } finally { if (this.queues.get(key) === current) this.queues.delete(key); }
   }
@@ -57,9 +65,10 @@ export class PositionReconciliationEngine {
     const orders = await this.readAllOrders(adapter, from);
     const fills = await this.readAllFills(adapter, from);
     const intents = await runQuery(`SELECT ei.*, COALESCE(ei.requested_quantity, st.amount) AS request_quantity FROM execution_intents ei LEFT JOIN shadow_trades st ON st.id = ei.trade_id WHERE ei.exchange_name = ? AND ei.account_id = ? AND ei.status IN ('pending','submitted','uncertain','partially_filled')`, [scope.exchange, scope.accountId], 'all');
-    const orderById = new Map(orders.map(order => [order.exchangeOrderId, order]));
+    const observedOrders = [...new Map([...openOrders, ...orders].map(order => [order.exchangeOrderId, order])).values()];
+    const orderById = new Map(observedOrders.map(order => [order.exchangeOrderId, order]));
     const orderByClient = new Map<string, NormalizedExchangeOrder[]>();
-    for (const order of orders) if (order.clientOrderId) orderByClient.set(order.clientOrderId, [...(orderByClient.get(order.clientOrderId) || []), order]);
+    for (const order of observedOrders) if (order.clientOrderId) orderByClient.set(order.clientOrderId, [...(orderByClient.get(order.clientOrderId) || []), order]);
     const matchedIds = new Set<string>();
     for (const intent of intents) {
       let match = intent.exchange_order_id ? orderById.get(String(intent.exchange_order_id)) : undefined;
@@ -68,7 +77,7 @@ export class PositionReconciliationEngine {
         if (byClient.length === 1) match = byClient[0];
       }
       if (!match && !intent.exchange_order_id && !intent.client_order_id) {
-        const candidates = orders.filter(order => order.symbol === intent.symbol && order.side === intent.side && Math.abs(order.requestedQuantity - Number(intent.request_quantity || -1)) < 1e-8 && Math.abs(order.updatedAt - Number(intent.created_at)) < 5 * 60_000);
+        const candidates = observedOrders.filter(order => order.symbol === intent.symbol && order.side === intent.side && Math.abs(order.requestedQuantity - Number(intent.request_quantity || -1)) < 1e-8 && Math.abs(order.updatedAt - Number(intent.created_at)) < 5 * 60_000);
         if (candidates.length === 1) match = candidates[0];
         else await this.recordIncident(scope, candidates.length ? 'ambiguous_legacy_order' : 'unmatched_intent', { intentKey: intent.idempotency_key, candidateOrderIds: candidates.map(item => item.exchangeOrderId) });
       }
@@ -81,11 +90,16 @@ export class PositionReconciliationEngine {
     }
     const knownOrders = new Set(intents.flatMap((intent: any) => [intent.exchange_order_id, intent.client_order_id]).filter(Boolean).map(String));
     for (const id of matchedIds) knownOrders.add(id);
-    for (const order of [...openOrders, ...orders.filter(order => order.status === 'open' || order.status === 'partially_filled')]) {
+    for (const order of observedOrders.filter(order => order.status === 'open' || order.status === 'partially_filled' || order.status === 'pending')) {
       if (!knownOrders.has(order.exchangeOrderId) && (!order.clientOrderId || !knownOrders.has(order.clientOrderId))) await this.recordIncident(scope, 'external_order', { orderId: order.exchangeOrderId, clientOrderId: order.clientOrderId, symbol: order.symbol, side: order.side, quantity: order.requestedQuantity });
     }
     let applied = 0, duplicates = 0;
-    for (const fill of fills) {
+    for (const fill of fills.sort((a, b) => a.timestamp - b.timestamp)) {
+      const quoteCurrency = fill.symbol.split('/')[1];
+      if (fill.fee > 0 && (!fill.feeCurrency || fill.feeCurrency !== quoteCurrency)) {
+        await this.recordIncident(scope, 'unvalued_fill_fee', { orderId: fill.exchangeOrderId, fillId: fill.exchangeFillId, fee: fill.fee, feeCurrency: fill.feeCurrency, quoteCurrency });
+        continue;
+      }
       const result = await applyExchangeFill(fill, scope, new BalanceManager());
       if (result === 'applied') applied++;
       else if (result === 'duplicate') duplicates++;
@@ -142,8 +156,10 @@ export class PositionReconciliationEngine {
   }
   async hasUnresolvedIncidents(scope: ReconciliationScope): Promise<boolean> { const rows = await this.listIncidents(scope, 'open'); return rows.length > 0; }
   async getAccountReadiness(scope: ReconciliationScope): Promise<boolean> {
-    const rows = await runQuery(`SELECT status FROM exchange_reconciliation_state WHERE exchange_name = ? AND account_id = ?`, [scope.exchange, scope.accountId], 'all');
-    return rows[0]?.status === 'ready' && !(await this.hasUnresolvedIncidents(scope));
+    const rows = await runQuery(`SELECT status, last_successful_at FROM exchange_reconciliation_state WHERE exchange_name = ? AND account_id = ?`, [scope.exchange, scope.accountId], 'all');
+    const successfulAt = Number(rows[0]?.last_successful_at || 0);
+    const fresh = successfulAt > 0 && Date.now() - successfulAt <= 90_000;
+    return rows[0]?.status === 'ready' && fresh && !(await this.hasUnresolvedIncidents(scope));
   }
 
   /** Backward-compatible read-only history used by the existing admin views. */

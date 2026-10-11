@@ -17,12 +17,15 @@ function adapter(overrides: Partial<AccountExecutionAdapter> = {}): AccountExecu
 afterEach(() => clearMockRunQuery());
 
 test('incomplete pagination fails closed without advancing the account checkpoint', async () => {
-  const writes: string[] = [];
-  setMockRunQuery(async (sql: string) => { if (sql.includes('INSERT INTO exchange_reconciliation_state')) writes.push(sql); if (sql.includes('SELECT fill_cursor')) return [{ fill_cursor: '1234' }]; return []; });
+  const writes: Array<{ sql: string; params: any[] }> = [];
+  setMockRunQuery(async (sql: string, params: any[] = []) => { if (sql.includes('INSERT INTO exchange_reconciliation_state')) writes.push({ sql, params }); if (sql.includes('SELECT fill_cursor')) return [{ fill_cursor: '1234' }]; return []; });
   const engine = new PositionReconciliationEngine();
   const exchange = adapter({ listFills: async (_since, cursor) => cursor ? { items: [], nextCursor: 'loop' } : { items: [], nextCursor: 'loop' } });
   await assert.rejects(engine.reconcileAccount(exchange), /cursor repeated/);
-  assert.equal(writes.length, 0);
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].sql, /'blocked'/);
+  assert.match(writes[0].sql, /status = 'blocked'/);
+  assert.equal(writes[0].params[3], 'Exchange pagination cursor repeated; snapshot is incomplete');
 });
 
 test('reconciliation reads all pages before successful checkpoint advancement', async () => {
@@ -39,11 +42,12 @@ test('reconciliation reads all pages before successful checkpoint advancement', 
 });
 
 test('read and authentication errors preserve the previous cursor and incidents', async () => {
-  const writes: string[] = [];
-  setMockRunQuery(async (sql: string) => { if (sql.includes('INSERT INTO exchange_reconciliation_state')) writes.push(sql); if (sql.includes('SELECT fill_cursor')) return [{ fill_cursor: '5000' }]; return []; });
+  const writes: Array<{ sql: string; params: any[] }> = [];
+  setMockRunQuery(async (sql: string, params: any[] = []) => { if (sql.includes('INSERT INTO exchange_reconciliation_state')) writes.push({ sql, params }); if (sql.includes('SELECT fill_cursor')) return [{ fill_cursor: '5000' }]; return []; });
   const engine = new PositionReconciliationEngine();
   await assert.rejects(engine.reconcileAccount(adapter({ listOpenOrders: async () => { throw new Error('401 unauthorized'); } })), /401 unauthorized/);
-  assert.equal(writes.length, 0);
+  assert.equal(writes.length, 1);
+  assert.match(writes[0].sql, /status = 'blocked'/);
 });
 
 test('account cycles are serialized per venue and account', async () => {
@@ -56,8 +60,14 @@ test('account cycles are serialized per venue and account', async () => {
 });
 
 test('account readiness remains isolated by exchange and account ID', async () => {
-  setMockRunQuery(async (sql: string, params: any[] = []) => sql.includes('SELECT status FROM exchange_reconciliation_state') ? (params[1] === 'acct-a' ? [{ status: 'ready' }] : [{ status: 'blocked' }]) : []);
+  setMockRunQuery(async (sql: string, params: any[] = []) => sql.includes('SELECT status, last_successful_at') ? (params[1] === 'acct-a' ? [{ status: 'ready', last_successful_at: Date.now() }] : [{ status: 'blocked', last_successful_at: Date.now() }]) : []);
   const engine = new PositionReconciliationEngine();
   assert.equal(await engine.getAccountReadiness({ exchange: 'binance', accountId: 'acct-a' }), true);
   assert.equal(await engine.getAccountReadiness({ exchange: 'binance', accountId: 'acct-b' }), false);
+});
+
+test('account readiness expires after the last successful snapshot becomes stale', async () => {
+  setMockRunQuery(async (sql: string) => sql.includes('SELECT status, last_successful_at') ? [{ status: 'ready', last_successful_at: Date.now() - 91_000 }] : []);
+  const engine = new PositionReconciliationEngine();
+  assert.equal(await engine.getAccountReadiness({ exchange: 'binance', accountId: 'acct-a' }), false);
 });

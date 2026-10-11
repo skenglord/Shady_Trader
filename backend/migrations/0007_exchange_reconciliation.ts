@@ -7,16 +7,16 @@ const ADDITIONAL_COLUMNS: Record<string, string[]> = {
     'client_order_id TEXT',
     "intent_type TEXT NOT NULL DEFAULT 'entry'",
     'parent_trade_id TEXT',
-    'requested_quantity REAL',
-    'filled_quantity REAL NOT NULL DEFAULT 0',
-    'average_fill_price REAL',
+    'requested_quantity NUMERIC(30, 12)',
+    'filled_quantity NUMERIC(30, 12) NOT NULL DEFAULT 0',
+    'average_fill_price NUMERIC(30, 12)',
     'last_observed_at BIGINT'
   ],
   shadow_trades: [
     'exchange_name TEXT',
     'account_id TEXT',
-    'remaining_amount REAL',
-    'realized_pnl REAL NOT NULL DEFAULT 0'
+    'remaining_amount NUMERIC(30, 12)',
+    'realized_pnl NUMERIC(30, 12) NOT NULL DEFAULT 0'
   ]
 };
 
@@ -41,9 +41,9 @@ export async function up(): Promise<void> {
       trade_id TEXT NOT NULL,
       symbol TEXT NOT NULL,
       side TEXT NOT NULL,
-      quantity REAL NOT NULL,
-      price REAL NOT NULL,
-      fee REAL NOT NULL DEFAULT 0,
+      quantity NUMERIC(30, 12) NOT NULL,
+      price NUMERIC(30, 12) NOT NULL,
+      fee NUMERIC(30, 12) NOT NULL DEFAULT 0,
       fee_currency TEXT,
       timestamp BIGINT NOT NULL,
       PRIMARY KEY (exchange_name, account_id, exchange_order_id, exchange_fill_id)

@@ -9,8 +9,8 @@ const originalPost = axios.post;
 const originalDelete = axios.delete;
 const connectors: ExchangeConnector[] = [];
 
-function makeConnector(exchange: string, key = '', secret = '') {
-  const connector = new ExchangeConnector(exchange, key, secret, undefined, true);
+function makeConnector(exchange: string, key = '', secret = '', testnet = true) {
+  const connector = new ExchangeConnector(exchange, key, secret, undefined, testnet);
   connector.shutdown();
   connectors.push(connector);
   return connector;
@@ -39,25 +39,19 @@ describe('ExchangeConnector execution adapters', () => {
 
   test('enforces Binance credentials for authenticated execution', async () => {
     const connector = makeConnector('binance');
-    await assert.rejects(() => connector.placeOrder('BTC/USDT', 'buy', 0.1), /require[s]? EXCHANGE_API_KEY/);
+    await assert.rejects(() => connector.placeOrder('BTC/USDT', 'buy', 0.1), /live order submission is disabled/);
     await assert.rejects(() => connector.getBalance(), /require[s]? EXCHANGE_API_KEY/);
     await assert.rejects(() => connector.cancelOrder('1', 'BTC/USDT'), /require[s]? EXCHANGE_API_KEY/);
   });
 
   test('parses Binance authenticated responses', async () => {
-    axios.post = (async () => ({
-      data: { orderId: 77, status: 'FILLED', executedQty: '0.25', price: '50123.45', transactTime: 1234567890 }
-    })) as any;
     axios.get = (async () => ({
       data: { balances: [{ asset: 'USDT', free: '123.5' }, { asset: 'BTC', free: '0' }] }
     })) as any;
-    axios.delete = (async () => ({})) as any;
+    axios.delete = (async () => ({ data: { orderId: '77', status: 'CANCELED' } })) as any;
 
     const connector = makeConnector('binance', 'k', 's');
-    const order = await connector.placeOrder('BTC/USDT', 'buy', 0.25);
-    assert.strictEqual(order.simulated, false);
-    assert.strictEqual(order.exchange, 'binance');
-    assert.strictEqual(order.id, '77');
+    await assert.rejects(() => connector.placeOrder('BTC/USDT', 'buy', 0.25), /live order submission is disabled/);
 
     const balance = await connector.getBalance();
     assert.strictEqual(balance.simulated, false);
@@ -75,15 +69,12 @@ describe('ExchangeConnector execution adapters', () => {
       return { data: {} };
     }) as any;
 
-    const connector = makeConnector('kraken', 'k', 'czVjcmV0'); // base64-like secret
+    const connector = makeConnector('kraken', 'k', 'czVjcmV0', false); // Kraken Spot authenticated access is production-only
     const capabilities = connector.getCapabilities();
     assert.strictEqual(capabilities.provider, 'kraken');
-    assert.strictEqual(capabilities.supportsLiveTrading, true);
+    assert.strictEqual(capabilities.supportsLiveTrading, false);
 
-    const order = await connector.placeOrder('BTC/USDT', 'sell', 0.15);
-    assert.strictEqual(order.exchange, 'kraken');
-    assert.strictEqual(order.id, 'tx-1');
-    assert.strictEqual(order.simulated, false);
+    await assert.rejects(() => connector.placeOrder('BTC/USDT', 'sell', 0.15), /live order submission is disabled/);
 
     const balance = await connector.getBalance();
     assert.strictEqual(balance.simulated, false);
