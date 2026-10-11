@@ -31,6 +31,7 @@ describe('live execution safeguards', () => {
     const claimed = new Set<string>();
     const unresolvedModes = new Set<string>();
     const insertedShadowTrades: any[][] = [];
+    const insertedIntents: any[][] = [];
     let orders = 0;
 
     setMockRunQuery(async (sql: string, params: any[] = []) => {
@@ -40,6 +41,7 @@ describe('live execution safeguards', () => {
       if (sql.includes('FROM shadow_trades') && sql.includes("status = 'open'")) return [];
       if (sql.includes('SUM(pnl)')) return [{ netPnl: 0 }];
       if (sql.includes('INSERT INTO execution_intents')) {
+        insertedIntents.push(params);
         const key = String(params[0]);
         if (claimed.has(key)) return { changes: 0 };
         claimed.add(key);
@@ -63,7 +65,9 @@ describe('live execution safeguards', () => {
     };
     const exchange = {
       apiKey: 'test-key', apiSecret: 'test-secret',
-      placeOrder: async () => { orders++; throw new Error('simulated timeout'); },
+      isAccountReadyForLiveTrading: async () => true,
+      accountExecutionAdapter: { exchange: 'binance', accountId: 'acct-test' },
+      placeOrder: async (_symbol: string, _side: string, _amount: number, _type: string, _price: number, clientOrderId: string) => { assert.equal(clientOrderId, insertedIntents[0]?.[11]); orders++; throw new Error('simulated timeout'); },
     };
 
     await trader.processSignal(signal, 50000, RiskMode.ULTRA_CONSERVATIVE, undefined, exchange, 'strongbull', 123456);
@@ -72,6 +76,9 @@ describe('live execution safeguards', () => {
     const pendingTrade = insertedShadowTrades.find(row => row[7] === RiskMode.ULTRA_CONSERVATIVE);
     assert.ok(pendingTrade, 'pending trade intent is persisted before order submission');
     assert.equal(pendingTrade[5], 'pending');
+    assert.equal(insertedIntents[0][9], 'binance');
+    assert.equal(insertedIntents[0][10], 'acct-test');
+    assert.ok(insertedIntents[0][11], 'client order ID is persisted before submission');
 
     await trader.processSignal(signal, 50000, RiskMode.ULTRA_CONSERVATIVE, undefined, exchange, 'strongbull', 123456);
     assert.equal(orders, 1, 'unresolved order outcome blocks duplicate retry');
@@ -90,6 +97,8 @@ describe('live execution safeguards', () => {
     let orders = 0;
     const exchange = {
       hasExecutionCredentials: true,
+      isAccountReadyForLiveTrading: async () => true,
+      accountExecutionAdapter: { exchange: 'binance', accountId: 'acct-test' },
       placeOrder: async () => {
         orders++;
         return new Promise(resolve => { releaseOrders.push(resolve); });
@@ -126,6 +135,8 @@ describe('live execution safeguards', () => {
     });
     const exchange = {
       hasExecutionCredentials: true,
+      isAccountReadyForLiveTrading: async () => true,
+      accountExecutionAdapter: { exchange: 'binance', accountId: 'acct-test' },
       placeOrder: async () => { orders++; throw new Error('timeout after possible fill'); },
     };
     assert.equal(await trader.closeTrade('live-close-uncertain', 49000, mode, undefined, exchange), false);
@@ -152,10 +163,24 @@ describe('live execution safeguards', () => {
       entryPrice: 50000, stopLoss: 49000, takeProfit: 52000,
     }, 50000, RiskMode.ULTRA_CONSERVATIVE, undefined, {
       apiKey: 'test-key', apiSecret: 'test-secret',
+      isAccountReadyForLiveTrading: async () => true,
+      accountExecutionAdapter: { exchange: 'binance', accountId: 'acct-test' },
       placeOrder: async () => { orders++; return { id: 'should-not-run', status: 'closed', filled: 1 }; },
     }, 'strongbull', 123456, () => true);
     assert.equal(insertedIntents, 0);
     assert.equal(orders, 0);
     assert.equal(trader.portfolios[RiskMode.ULTRA_CONSERVATIVE].openTrades.length, 0);
+  });
+
+  test('spot live entry refuses short exposure and an unready account', async () => {
+    process.env.LIVE_TRADING_ENABLED = 'true';
+    let orders = 0;
+    setMockRunQuery(async (sql: string) => sql.includes('FROM execution_intents') ? [] : sql.includes('SUM(pnl)') ? [{ netPnl: 0 }] : { changes: 1 });
+    const trader = new ShadowTrader();
+    const exchange = { apiKey: 'k', apiSecret: 's', accountExecutionAdapter: { exchange: 'binance', accountId: 'acct' }, isAccountReadyForLiveTrading: async () => false, placeOrder: async () => { orders++; return {}; } };
+    const base = { symbol: 'BTC/USDT', confidence: 99, entryPrice: 100, stopLoss: 90, takeProfit: 120 };
+    await trader.processSignal({ ...base, side: 'sell' }, 100, RiskMode.ULTRA_CONSERVATIVE, undefined, exchange, 'strongbull', 1);
+    await trader.processSignal({ ...base, side: 'buy' }, 100, RiskMode.ULTRA_CONSERVATIVE, undefined, exchange, 'strongbull', 2);
+    assert.equal(orders, 0);
   });
 });

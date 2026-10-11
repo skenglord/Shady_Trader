@@ -183,6 +183,20 @@ export class ExchangeConnector {
     return this.executionAdapter?.capabilities || { provider: this.exchangeName, supportsLiveTrading: false, supportsAccountReads: false, supportsPublicMarketData: true };
   }
 
+  async isAccountReadyForLiveTrading(): Promise<boolean> {
+    if (!this.accountExecutionAdapter?.capabilities.supportsLiveTrading || !this.accountExecutionAdapter.capabilities.supportsAuthenticatedReads || !this.accountExecutionAdapter.capabilities.supportsClientOrderIds) return false;
+    try { return await this.reconciliationEngine.getAccountReadiness({ exchange: this.accountExecutionAdapter.exchange, accountId: this.accountExecutionAdapter.accountId }); }
+    catch { return false; }
+  }
+
+  listReconciliationIncidents(scope?: { exchange: string; accountId: string }, status?: 'open' | 'resolved') {
+    return this.reconciliationEngine.listIncidents(scope, status);
+  }
+
+  resolveReconciliationIncident(id: string, actor: string, reason: string) {
+    return this.reconciliationEngine.resolveIncident(id, actor, reason);
+  }
+
   get hasExecutionCredentials(): boolean {
     return Boolean(this.apiKey && this.apiSecret);
   }
