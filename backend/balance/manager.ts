@@ -143,9 +143,14 @@ export class BalanceManager {
   }
 
   async recordTradeResult(pnl: number, tradeValue: number) {
+    await withDatabaseTransaction(query => this.recordTradeResultInTransaction(query, pnl, tradeValue));
+  }
+
+  async recordTradeResultInTransaction(query: TransactionQuery, pnl: number, tradeValue: number, metadata?: unknown) {
     if (!Number.isFinite(pnl)) throw new Error('Invalid trade PnL');
     this.validateAmount(tradeValue);
-    await this.applyAtomicMutation(`
+    const before = await this.readBalances(query);
+    const result = await query(`
       UPDATE balances SET
         bot_balance = bot_balance + ?,
         active_trade_balance = CASE WHEN active_trade_balance >= ? THEN active_trade_balance - ? ELSE 0 END,
@@ -153,7 +158,10 @@ export class BalanceManager {
         total_pnl_pct = CASE WHEN main_balance + bot_balance > 0
           THEN ((total_pnl + ?) / (main_balance + bot_balance)) * 100 ELSE 0 END
       WHERE id = 'default'
-    `, [tradeValue + pnl, tradeValue, tradeValue, pnl, pnl], 'pnl_adjustment', pnl, 'trade_result', { tradeValue });
+    `, [tradeValue + pnl, tradeValue, tradeValue, pnl, pnl]);
+    if (result?.changes === 0 || result?.rowCount === 0) throw new Error('Trade result could not be applied');
+    const after = await this.readBalances(query);
+    await this.logAuditBalance(query, 'pnl_adjustment', before, after, pnl, 'trade_result', { tradeValue, ...(metadata && typeof metadata === 'object' ? metadata as object : {}) });
   }
 
   async addActiveTrade(tradeValue: number) {
@@ -163,6 +171,15 @@ export class BalanceManager {
       SET bot_balance = bot_balance - ?, active_trade_balance = active_trade_balance + ?
       WHERE id = 'default' AND bot_balance >= ?
     `, [tradeValue, tradeValue, tradeValue], 'active_trade_addition', tradeValue, 'add_active_trade', undefined, 'Insufficient bot balance');
+  }
+
+  async addActiveTradeInTransaction(query: TransactionQuery, tradeValue: number, metadata?: unknown) {
+    this.validateAmount(tradeValue);
+    const before = await this.readBalances(query);
+    const result = await query(`UPDATE balances SET bot_balance = bot_balance - ?, active_trade_balance = active_trade_balance + ? WHERE id = 'default' AND bot_balance >= ?`, [tradeValue, tradeValue, tradeValue]);
+    if (result?.changes === 0 || result?.rowCount === 0) throw new Error('Insufficient bot balance for reconciled entry fill');
+    const after = await this.readBalances(query);
+    await this.logAuditBalance(query, 'active_trade_addition', before, after, tradeValue, 'reconciled_exchange_fill', metadata);
   }
 
   private validateAmount(amount: number) {

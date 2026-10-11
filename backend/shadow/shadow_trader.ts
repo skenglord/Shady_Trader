@@ -42,14 +42,19 @@ async function canOpenNewTrade({
   currentPrice: number;
   exchange?: any;
 }): Promise<boolean> {
-  const unresolved = await runQuery(
-    `SELECT idempotency_key FROM execution_intents
-     WHERE status IN ('pending', 'submitted', 'uncertain') LIMIT 1`,
-    [], 'all'
-  );
-  if (Array.isArray(unresolved) && unresolved.length > 0) {
-    logger.error('Entry blocked by unresolved execution intent', { service: 'ShadowTrader', mode });
-    return false;
+  const isLiveEntry = mode === activeMode && process.env.LIVE_TRADING_ENABLED === 'true';
+  if (isLiveEntry) {
+    const account = exchange?.accountExecutionAdapter;
+    if (!account) return false;
+    const unresolved = await runQuery(
+      `SELECT idempotency_key FROM execution_intents
+       WHERE exchange_name = ? AND account_id = ? AND status IN ('pending', 'submitted', 'uncertain', 'partially_filled') LIMIT 1`,
+      [account.exchange, account.accountId], 'all'
+    );
+    if (Array.isArray(unresolved) && unresolved.length > 0) {
+      logger.error('Entry blocked by unresolved execution intent for the live account', { service: 'ShadowTrader', mode });
+      return false;
+    }
   }
 
   let dailyLoss: number;
@@ -73,6 +78,10 @@ async function canOpenNewTrade({
     }
     if (!(exchange?.hasExecutionCredentials ?? Boolean(exchange?.apiKey && exchange?.apiSecret))) {
       logger.error('Live entry blocked: exchange credentials are incomplete', { service: 'ShadowTrader', mode });
+      return false;
+    }
+    if (!exchange?.accountExecutionAdapter || typeof exchange?.isAccountReadyForLiveTrading !== 'function' || !(await exchange.isAccountReadyForLiveTrading())) {
+      logger.error('Live entry blocked: exchange account reconciliation is not ready', { service: 'ShadowTrader', mode });
       return false;
     }
   }
@@ -147,36 +156,54 @@ export class ShadowTrader {
     }
   }
 
-  async loadState() {
+  async loadState(scope?: { exchange: string; accountId: string }) {
     let liveOrderIds = new Map<string, string>();
     try {
       const intents = await runQuery(
-        `SELECT trade_id, exchange_order_id FROM execution_intents WHERE status = 'complete' AND exchange_order_id IS NOT NULL`,
+        `SELECT trade_id, exchange_order_id FROM execution_intents WHERE status IN ('complete','partially_filled') AND intent_type = 'entry' AND exchange_order_id IS NOT NULL`,
         [], 'all'
       );
       liveOrderIds = new Map((intents || []).map((intent: any) => [String(intent.trade_id), String(intent.exchange_order_id)]));
     } catch (error) {
-      logger.error('Failed to load persisted live order ids', {
+      logger.error('Failed to load persisted live order ids; refusing to start from incomplete state', {
         service: 'ShadowTrader', error: error instanceof Error ? error.message : String(error)
       });
+      throw error;
     }
     for (const mode of Object.values(RiskMode)) {
       let openTrades: any[] = [];
       try {
         openTrades = await runQuery(`
         SELECT * FROM shadow_trades
-        WHERE risk_mode = ? AND status = 'open'
-      `, [mode], 'all');
-      } catch {
-        openTrades = [];
+        WHERE risk_mode = ? AND status = 'open'${scope ? ' AND (exchange_name IS NULL OR (exchange_name = ? AND account_id = ?))' : ''}
+      `, scope ? [mode, scope.exchange, scope.accountId] : [mode], 'all');
+      } catch (error) {
+        logger.error('Failed to load persisted open trades; refusing to discard state', { service: 'ShadowTrader', mode, error: error instanceof Error ? error.message : String(error) });
+        throw error;
       }
       
-      this.portfolios[mode].openTrades = openTrades.map((t: any) => ({
-        ...t,
-        stopLoss: t.stop_loss,
-        takeProfit: t.take_profit,
-        exchangeOrderId: liveOrderIds.get(String(t.id)) || t.exchange_order_id || null
-      }));
+      const previousTrades = new Map(this.portfolios[mode].openTrades.map((trade: any) => [String(trade.id), trade]));
+      this.portfolios[mode].openTrades = openTrades.map((t: any) => {
+        const previous: any = previousTrades.get(String(t.id)) || {};
+        const exchangeOrderId = liveOrderIds.get(String(t.id)) || t.exchange_order_id || null;
+        const live = Boolean(exchangeOrderId && t.exchange_name && t.account_id);
+        const persistedStop = Number(t.stop_loss ?? 0);
+        const inMemoryStop = Number(previous.stopLoss ?? 0);
+        const stopLoss = inMemoryStop > 0 && persistedStop > 0
+          ? (String(t.side).toLowerCase() === 'buy' ? Math.max(inMemoryStop, persistedStop) : Math.min(inMemoryStop, persistedStop))
+          : (inMemoryStop || persistedStop || previous.stopLoss);
+        return {
+          ...previous, ...t,
+          amount: live ? Number(t.remaining_amount ?? t.amount) : (previous.amount ?? t.amount),
+          stopLoss,
+          takeProfit: previous.takeProfit ?? t.take_profit,
+          exchangeOrderId,
+          isRunner: previous.isRunner ?? false,
+          candlesHeld: previous.candlesHeld ?? 0,
+          lastUpdateTime: previous.lastUpdateTime,
+          trailingStop: previous.trailingStop
+        };
+      });
 
       let result: any[] = [];
       try {
@@ -184,8 +211,9 @@ export class ShadowTrader {
         SELECT SUM(pnl) as totalPnl FROM shadow_trades
         WHERE risk_mode = ? AND status = 'closed'
       `, [mode], 'all');
-      } catch {
-        result = [];
+      } catch (error) {
+        logger.error('Failed to load persisted trade PnL; refusing to discard state', { service: 'ShadowTrader', mode, error: error instanceof Error ? error.message : String(error) });
+        throw error;
       }
       
       const totalPnl = result[0]?.totalPnl || 0;
@@ -208,6 +236,11 @@ export class ShadowTrader {
       if (shouldAbort()) return activeModeTradeOpened;
       const portfolio = this.portfolios[mode];
       const liveOrderEnabled = mode === activeMode && process.env.LIVE_TRADING_ENABLED === 'true';
+
+      if (liveOrderEnabled && signal.side !== 'buy') {
+        logger.error('Spot live trading cannot open short exposure', { service: 'ShadowTrader', symbol: signal.symbol, side: signal.side });
+        continue;
+      }
 
       if (!await canOpenNewTrade({
         riskManager: this.riskManager, mode, activeMode, portfolio, currentPrice, exchange
@@ -362,22 +395,26 @@ export class ShadowTrader {
 
       const intentCandleTime = Number.isFinite(candleTime) ? Number(candleTime) : trade.timestamp;
       const idempotencyKey = `${mode}:${trade.symbol}:${trade.side}:${intentCandleTime}`;
+      const accountAdapter = exchange?.accountExecutionAdapter;
+      const clientOrderId = randomUUID().replace(/-/g, '');
       if (shouldAbort()) return activeModeTradeOpened;
       const intentResult = await runQuery(`
         INSERT INTO execution_intents
-          (idempotency_key, trade_id, symbol, risk_mode, side, candle_time, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+          (idempotency_key, trade_id, symbol, risk_mode, side, candle_time, status, created_at, updated_at, exchange_name, account_id, client_order_id, intent_type, requested_quantity)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'entry', ?)
         ON CONFLICT DO NOTHING
       `, [idempotencyKey, trade.id, trade.symbol, mode, trade.side, intentCandleTime,
-        liveOrderEnabled ? 'pending' : 'simulated', trade.timestamp, trade.timestamp], 'run');
+        liveOrderEnabled ? 'pending' : 'simulated', trade.timestamp, trade.timestamp, liveOrderEnabled ? accountAdapter?.exchange || exchange?.exchangeName || null : null,
+        liveOrderEnabled ? accountAdapter?.accountId || null : null, liveOrderEnabled ? clientOrderId : null, trade.amount], 'run');
       if (intentResult?.changes === 0 || intentResult?.rowCount === 0) continue;
 
       // Persist the pending position before contacting the exchange. If the
       // process dies or times out, the durable intent blocks another entry.
       await runQuery(`
-        INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage, stop_loss, take_profit, entry_slippage_frac, total_fee_frac)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit, trade.entrySlippageFrac, trade.totalFeeFrac]);
+        INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage, stop_loss, take_profit, entry_slippage_frac, total_fee_frac, exchange_name, account_id, remaining_amount)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit, trade.entrySlippageFrac, trade.totalFeeFrac,
+        liveOrderEnabled ? accountAdapter?.exchange || exchange?.exchangeName || null : null, liveOrderEnabled ? accountAdapter?.accountId || null : null, liveOrderEnabled ? 0 : trade.amount]);
 
       if (shouldAbort()) {
         await runQuery(`UPDATE shadow_trades SET status = 'cancelled' WHERE id = ?`, [trade.id]);
@@ -394,15 +431,13 @@ export class ShadowTrader {
               [Date.now(), idempotencyKey]);
             continue;
           }
-          const order = await exchange.placeOrder(trade.symbol, trade.side, trade.amount, 'market');
-          requireFilledOrder(order, trade.amount);
+          const order = await exchange.placeOrder(trade.symbol, trade.side, trade.amount, 'market', undefined, clientOrderId);
           trade.exchangeOrderId = order.id;
           await runQuery(`UPDATE execution_intents SET status = 'submitted', exchange_order_id = ?, updated_at = ? WHERE idempotency_key = ?`,
             [order.id, Date.now(), idempotencyKey]);
-          await runQuery(`UPDATE shadow_trades SET status = 'open' WHERE id = ?`, [trade.id]);
-          await runQuery(`UPDATE execution_intents SET status = 'complete', updated_at = ? WHERE idempotency_key = ?`,
-            [Date.now(), idempotencyKey]);
-          trade.status = 'open';
+          // An order acknowledgement is not a fill. The reconciler alone opens
+          // the persisted position once authoritative fills have been settled.
+          continue;
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           await runQuery(`UPDATE execution_intents SET status = 'uncertain', last_error = ?, updated_at = ? WHERE idempotency_key = ?`,
@@ -455,7 +490,7 @@ export class ShadowTrader {
         }
       }
 
-      if (ctx.config.runnerEnabled && !trade.isRunner && ctx.profitPct >= (ctx.config.runnerConditions?.triggerProfit / 100 || 0.015)) {
+      if (!trade.exchangeOrderId && ctx.config.runnerEnabled && !trade.isRunner && ctx.profitPct >= (ctx.config.runnerConditions?.triggerProfit / 100 || 0.015)) {
         console.log(`[ShadowTrader] [${ctx.mode}] Runner triggered for ${trade.id}`);
         const exitFactor = ctx.config.runnerConditions?.partialExit || 0.6;
         const closeAmount = trade.amount * exitFactor;
@@ -575,32 +610,44 @@ export class ShadowTrader {
     const closeIntentKey = `close:${trade.id}`;
     let liveCloseIntentClaimed = false;
     if (trade.exchangeOrderId) {
+      if (process.env.LIVE_TRADING_ENABLED !== 'true') {
+        logger.error('Live close blocked because live trading is disabled', { service: 'ShadowTrader', tradeId: trade.id });
+        return false;
+      }
+      const accountAdapter = exchange?.accountExecutionAdapter;
+      if (!accountAdapter?.capabilities?.supportsLiveTrading || accountAdapter.exchange !== trade.exchange_name || accountAdapter.accountId !== trade.account_id) {
+        logger.error('Live close blocked: trade and configured exchange account do not match', { service: 'ShadowTrader', tradeId: trade.id });
+        return false;
+      }
       if (!(exchange?.hasExecutionCredentials ?? Boolean(exchange?.apiKey && exchange?.apiSecret))) {
         logger.error('Live close blocked: exchange credentials are incomplete', { service: 'ShadowTrader', tradeId: trade.id });
         return false;
       }
       try {
         const now = Date.now();
+        const clientOrderId = randomUUID().replace(/-/g, '');
+        const exitQuantity = Number(trade.remainingAmount ?? trade.remaining_amount ?? trade.amount);
         // Keep close intents distinct from entry intents: reconciliation joins
         // entry order IDs by trade_id, so reusing trade.id here would duplicate
         // local position quantities and replace the entry order ID on reload.
         const claim = await runQuery(`
           INSERT INTO execution_intents
-            (idempotency_key, trade_id, symbol, risk_mode, side, candle_time, status, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+            (idempotency_key, trade_id, symbol, risk_mode, side, candle_time, status, created_at, updated_at, exchange_name, account_id, client_order_id, intent_type, parent_trade_id, requested_quantity)
+          VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, 'exit', ?, ?)
           ON CONFLICT DO NOTHING
-        `, [closeIntentKey, `${trade.id}:close`, trade.symbol, ctx.mode, trade.side === 'buy' ? 'sell' : 'buy', now, now, now], 'run');
+        `, [closeIntentKey, `${trade.id}:close`, trade.symbol, ctx.mode, trade.side === 'buy' ? 'sell' : 'buy', now, now, now, accountAdapter?.exchange || exchange?.exchangeName || trade.exchange_name || null, accountAdapter?.accountId || trade.account_id || null, clientOrderId, trade.id, exitQuantity], 'run');
         if (claim?.changes === 0 || claim?.rowCount === 0) {
           logger.error('Live close blocked by an existing close intent; reconciliation required', { service: 'ShadowTrader', tradeId: trade.id });
           return false;
         }
         liveCloseIntentClaimed = true;
         const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
-        const order = await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
+        const order = await exchange.placeOrder(trade.symbol, closeSide, exitQuantity, 'market', undefined, clientOrderId);
         await runQuery(`UPDATE execution_intents SET status = 'submitted', exchange_order_id = ?, updated_at = ? WHERE idempotency_key = ?`,
           [order?.id || null, Date.now(), closeIntentKey]);
-        requireFilledOrder(order, trade.amount);
         trade.exchangeCloseOrderId = order.id;
+        // Keep the position active until authoritative exit fills settle.
+        return false;
       } catch (error) {
         if (liveCloseIntentClaimed) {
           await runQuery(`UPDATE execution_intents SET status = 'uncertain', last_error = ?, updated_at = ? WHERE idempotency_key = ?`,
@@ -625,7 +672,7 @@ export class ShadowTrader {
       this.riskManager.recordLoss(ctx.mode);
     }
 
-    if (ctx.mode === ctx.activeMode && ctx.balanceManager) {
+    if (ctx.mode === ctx.activeMode && ctx.balanceManager && !trade.exchangeOrderId) {
       const tradeCost = trade.amount * trade.price / trade.leverage;
       await ctx.balanceManager.recordTradeResult(pnl, tradeCost);
 
@@ -661,6 +708,9 @@ export class ShadowTrader {
   }
 
   async updatePositions(currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any, lastCandle: any = null, currentSymbol?: string, timeframe = '1m') {
+    // Reconciliation may have settled a fill since the last trading cycle.
+    const account = exchange?.accountExecutionAdapter;
+    if (account) await this.loadState({ exchange: account.exchange, accountId: account.accountId });
     const candlesBySymbol = new Map<string, any>();
     for (const mode of Object.values(RiskMode)) {
       const portfolio = this.portfolios[mode];

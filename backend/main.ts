@@ -695,6 +695,8 @@ export class TradingEngine {
         this.startupDiagnostics.exchangeConfigured = false;
         this.startupDiagnostics.exchangeReason = 'exchange_disabled';
       }
+      const account = this.exchange?.accountExecutionAdapter;
+      await this.shadowTrader.loadState(account ? { exchange: account.exchange, accountId: account.accountId } : undefined);
 
       this.broadcast({ type: 'status', data: { symbol: this.symbol, timeframe: this.timeframe, exchange: this.exchange?.exchangeName || this.startupDiagnostics?.exchangeName } });
       

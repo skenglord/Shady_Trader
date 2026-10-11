@@ -291,6 +291,7 @@ const adminRoutes = [
   '/freqtrade/backtest',
   '/freqtrade/validate',
   '/freqtrade/ingest',
+  '/reconciliation/incidents',
 ];
 
 // Trader routes (view + moderate operations)
@@ -529,6 +530,37 @@ apiRouter.get('/csrf-token', (req: any, res: any) => {
 
 // Apply CSRF protection to state-changing operations
 apiRouter.use(csrfProtection);
+
+apiRouter.get('/reconciliation/incidents', async (req: any, res: any) => {
+  const status = req.query.status;
+  if (status !== undefined && status !== 'open' && status !== 'resolved') return res.status(400).json({ error: 'status must be open or resolved' });
+  const exchange = typeof req.query.exchange === 'string' ? req.query.exchange : undefined;
+  const accountId = typeof req.query.accountId === 'string' ? req.query.accountId : undefined;
+  if ((exchange && !accountId) || (!exchange && accountId)) return res.status(400).json({ error: 'exchange and accountId must be supplied together' });
+  const connector = getTradingEngine()?.exchange;
+  if (!connector) return res.status(503).json({ error: 'Exchange is not initialized' });
+  try {
+    const incidents = await connector.listReconciliationIncidents(exchange ? { exchange, accountId: accountId! } : undefined, status);
+    return res.json({ incidents });
+  } catch (error) {
+    logger.error('Failed to list reconciliation incidents', { error: error instanceof Error ? error.message : String(error) });
+    return res.status(503).json({ error: 'Reconciliation incidents are unavailable' });
+  }
+});
+
+apiRouter.post('/reconciliation/incidents/:incidentId/resolve', async (req: any, res: any) => {
+  const reason = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  if (!reason || reason.length > 1000) return res.status(400).json({ error: 'reason is required and must be at most 1000 characters' });
+  const connector = getTradingEngine()?.exchange;
+  if (!connector) return res.status(503).json({ error: 'Exchange is not initialized' });
+  try {
+    await connector.resolveReconciliationIncident(String(req.params.incidentId), 'admin', reason);
+    return res.json({ resolved: true, incidentId: String(req.params.incidentId) });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return res.status(/not found/i.test(message) ? 404 : 400).json({ error: message });
+  }
+});
 
 const timeframeSchema = z.object({
   timeframe: z.string().refine((v) => TIMEFRAME_ALLOWLIST.has(v), 'Invalid timeframe. Allowed: 1m, 5m, 15m, 1h, 1d')
