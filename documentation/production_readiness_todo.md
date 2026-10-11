@@ -13,7 +13,7 @@ Created: 2026-06-10 | Updated: 2026-10-11
 - Root lint and production frontend build: **pass**; complexity gate: **pass** (max 50).
 - Full serial Node 22 test suite on the merged `main` tree: **586 tests / 585 passed / 0 failed / 1 skipped**.
 - Production dependency audit: **fail**, still reports 12 vulnerabilities (1 critical, 2 high, 9 moderate); no dependency changes were included in this phase.
-- Full legacy readiness audit below remains active: exchange testnet/sandbox validation, multi-symbol Binance recovery, deployment validation, and dependency remediation remain outstanding. These phases do not authorize live funds or untrusted network exposure.
+- Full legacy readiness audit below remains active: unknown-symbol Binance recovery, exchange testnet/sandbox validation, deployment validation, and dependency remediation remain outstanding. These phases do not authorize live funds or untrusted network exposure.
 
 ## Baseline verified gate state (October 10 audit)
 
