@@ -12,6 +12,7 @@ export type PaperTradingEvent =
   | 'CANCEL_ORDER'
   | 'UPDATE_PRICE'
   | 'CLOSE_POSITION'
+  | 'LIQUIDATE_POSITION'
   | 'ERROR_OCCURRED'
   | 'RESET';
 
@@ -92,6 +93,14 @@ export class PaperTradingStateMachine {
       event: 'CLOSE_POSITION',
       guard: (ctx) => this.validateClosePosition(ctx),
       action: (ctx) => this.onCloseInitiated(ctx),
+    });
+
+    this.addTransition({
+      from: 'OPEN_POSITION',
+      to: 'CLOSED',
+      event: 'LIQUIDATE_POSITION',
+      guard: (ctx) => !!ctx.positionId,
+      action: (ctx) => this.onPositionClosed(ctx),
     });
 
     this.addTransition({

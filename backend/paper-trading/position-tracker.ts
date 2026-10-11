@@ -44,17 +44,17 @@ export class PaperPositionTracker {
 
   constructor() {}
 
-  public openPosition(position: Omit<PaperPosition, 'id' | 'status' | 'candlesHeld' | 'openedAt'>): PaperPosition {
+  public openPosition(position: Omit<PaperPosition, 'id' | 'status' | 'candlesHeld' | 'openedAt'> & { id?: string }): PaperPosition {
     const id = randomUUID();
     const newPosition: PaperPosition = {
       ...position,
-      id,
+      id: position.id || id,
       status: 'open',
       candlesHeld: 0,
       openedAt: Date.now(),
     };
 
-    this.positions.set(id, newPosition);
+    this.positions.set(newPosition.id, newPosition);
     
     // Add to position history
     if (!this.positionHistory.has(position.symbol)) {
@@ -65,7 +65,7 @@ export class PaperPositionTracker {
     return newPosition;
   }
 
-  public closePosition(positionId: string, exitPrice: Decimal, timestamp: number): PaperPosition | null {
+  public closePosition(positionId: string, exitPrice: Decimal, timestamp: number, reason = 'manual_close'): PaperPosition | null {
     const position = this.positions.get(positionId);
     if (!position || position.status !== 'open') {
       return null;
@@ -79,7 +79,7 @@ export class PaperPositionTracker {
       unrealizedPnl: new Decimal(0),
       status: 'closed',
       closedAt: timestamp,
-      exitReason: 'manual_close',
+      exitReason: reason,
     };
 
     this.positions.set(positionId, closedPosition);
@@ -110,13 +110,14 @@ export class PaperPositionTracker {
         if (updatedPosition) {
           const pnl = this.calculatePnl(updatedPosition, currentPrice);
           const liquidated = this.checkLiquidation(updatedPosition, currentPrice);
+          let finalPosition = updatedPosition;
 
           if (liquidated) {
-            this.liquidatePosition(positionId, currentPrice, timestamp);
+            finalPosition = this.liquidatePosition(positionId, currentPrice, timestamp) || updatedPosition;
           }
 
           results.push({
-            position: updatedPosition,
+            position: finalPosition,
             pnl,
             liquidated,
           });
@@ -152,7 +153,7 @@ export class PaperPositionTracker {
     const liquidatedPosition: PaperPosition = {
       ...position,
       currentPrice,
-      realizedPnl: pnl.realizedPnl,
+      realizedPnl: pnl.totalPnl,
       unrealizedPnl: new Decimal(0),
       status: 'liquidated',
       closedAt: timestamp,
@@ -197,11 +198,11 @@ export class PaperPositionTracker {
 
   public checkLiquidation(position: PaperPosition, currentPrice: Decimal): boolean {
     const pnl = this.calculatePnl(position, currentPrice);
-    const lossPercentage = pnl.marginUsed.gt(0) 
-      ? pnl.totalPnl.abs().div(pnl.marginUsed)
+    const lossPercentage = pnl.marginUsed.gt(0) && pnl.totalPnl.isNegative()
+      ? pnl.totalPnl.neg().div(pnl.marginUsed)
       : new Decimal(0);
 
-    return lossPercentage.gte(new Decimal(1).div(position.leverage).minus(this.MAINTENANCE_MARGIN));
+    return pnl.totalPnl.isNegative() && lossPercentage.gte(new Decimal(1).div(position.leverage).minus(this.MAINTENANCE_MARGIN));
   }
 
   public calculatePnl(position: PaperPosition, currentPrice?: Decimal): PnlCalculation {
@@ -220,13 +221,11 @@ export class PaperPositionTracker {
     if (position.status === 'closed' || position.status === 'liquidated') {
       pnl = position.realizedPnl || new Decimal(0);
     } else {
-      pnl = isLong 
-        ? currentMargin.minus(marginUsed)
-        : marginUsed.minus(currentMargin);
+      pnl = position.quantity.mul(priceDiff);
     }
 
-    const pnlPercentage = marginUsed.gt(0) 
-      ? pnl.div(marginUsed).mul(100)
+    const pnlPercentage = notionalValue.gt(0)
+      ? pnl.div(notionalValue).mul(100)
       : new Decimal(0);
 
     const roi = marginUsed.gt(0)

@@ -576,6 +576,7 @@ describe('Paper Trading Service', () => {
     };
 
     await service.createPaperTrade(request);
+    await new Promise(resolve => setTimeout(resolve, 150));
     const positions = await service.getOpenPositions();
     
     assert(positions.length > 0);

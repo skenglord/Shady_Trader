@@ -76,6 +76,7 @@ export class PaperTradingService {
   private stateMachines: Map<string, PaperTradingStateMachine> = new Map();
   private orderBook: OrderBookSimulator;
   private positionTracker: PaperPositionTracker;
+  private pendingPositions = new Map<string, Omit<PaperPosition, 'id' | 'status' | 'candlesHeld' | 'openedAt'>>();
   private idempotencyCache: Map<string, IdempotencyRecord> = new Map();
   private readonly IDEMPOTENCY_TTL = 24 * 60 * 60 * 1000; // 24 hours
   private orderMatchingInterval: NodeJS.Timeout | null = null;
@@ -137,11 +138,17 @@ export class PaperTradingService {
           const currentPrice = (snapshot.bids[0][0] + snapshot.asks[0][0]) / 2;
           const newPrice = new Decimal(currentPrice);
           const positionUpdates = this.positionTracker.updatePositionPriceBySymbol(symbol, newPrice, Date.now());
-          for (const { position } of positionUpdates) {
+          for (const { position, liquidated } of positionUpdates) {
+            if (liquidated) {
+              this.stateMachines.get(position.id)?.sendEvent('LIQUIDATE_POSITION', {
+                positionId: position.id, price: newPrice.toNumber(), timestamp: Date.now(),
+              });
+              continue;
+            }
             if (this.positionTracker.checkStopLoss(position.id, newPrice)) {
-              this.closePosition(position.id, newPrice, Date.now(), 'stop_loss');
+              await this.closePosition(position.id, newPrice, Date.now(), 'stop_loss');
             } else if (this.positionTracker.checkTakeProfit(position.id, newPrice)) {
-              this.closePosition(position.id, newPrice, Date.now(), 'take_profit');
+              await this.closePosition(position.id, newPrice, Date.now(), 'take_profit');
             }
           }
         } catch { /* Missing live depth pauses matching for this symbol. */ }
@@ -174,12 +181,18 @@ export class PaperTradingService {
       });
     }
 
-    // Update position tracker
-    if (order.fillPrice && order.filledQuantity) {
-      const position = this.positionTracker.getPosition(order.id);
-      if (position) {
-        this.positionTracker.updatePositionPrice(order.id, order.fillPrice);
-      }
+    // A position is created only after a real simulator fill, using the
+    // actually filled size and volume-weighted entry price.
+    const pending = this.pendingPositions.get(order.id);
+    if (pending && order.fillPrice && order.filledQuantity?.gt(0)) {
+      this.positionTracker.openPosition({
+        ...pending,
+        id: order.id,
+        quantity: order.filledQuantity,
+        entryPrice: order.fillPrice,
+        currentPrice: order.fillPrice,
+      });
+      this.pendingPositions.delete(order.id);
     }
   }
 
@@ -188,7 +201,6 @@ export class PaperTradingService {
     if (!exchange) throw new Error('Live market depth is unavailable; paper order was not accepted');
     const liveBook = await exchange.getOrderBook(request.symbol, 10);
     this.orderBook.updateOrderBook(liveBook);
-    const liveMidPrice = new Decimal((liveBook.bids[0][0] + liveBook.asks[0][0]) / 2);
     // Check idempotency
     if (request.idempotencyKey) {
       const cached = this.checkIdempotency(request.idempotencyKey, request);
@@ -231,17 +243,15 @@ export class PaperTradingService {
 
     this.orderBook.addPaperOrder(paperOrder);
 
-    // Create position (use same ID as order for simplicity)
-    const position = this.positionTracker.openPosition({
+    this.pendingPositions.set(orderId, {
       symbol: request.symbol,
       side: request.side,
       quantity,
-      entryPrice: price || new Decimal(0), // Will be updated on fill
+      entryPrice: price || new Decimal(0),
       stopLoss: request.stopLoss ? new Decimal(request.stopLoss) : undefined,
       takeProfit: request.takeProfit ? new Decimal(request.takeProfit) : undefined,
       leverage: request.leverage || 1,
     });
-    this.positionTracker.updatePositionPrice(position.id, liveMidPrice);
 
     // Trigger order creation
     stateMachine.sendEvent('CREATE_ORDER');
@@ -286,8 +296,7 @@ export class PaperTradingService {
 
     stateMachine.sendEvent('CANCEL_ORDER');
     this.orderBook.cancelPaperOrder(positionId);
-    // Remove the pending position
-    this.positionTracker.closePosition(positionId, new Decimal(0), Date.now());
+    this.pendingPositions.delete(positionId);
 
     const response: PaperTradeResponse = {
       id: positionId,
@@ -307,7 +316,7 @@ export class PaperTradingService {
   }
 
   public async closePosition(positionId: string, currentPrice: Decimal, timestamp: number, reason?: string): Promise<PaperPosition | null> {
-    const position = this.positionTracker.closePosition(positionId, currentPrice, timestamp);
+    const position = this.positionTracker.closePosition(positionId, currentPrice, timestamp, reason || 'manual_close');
     
     if (position) {
       const stateMachine = this.stateMachines.get(positionId);
@@ -317,13 +326,11 @@ export class PaperTradingService {
           price: currentPrice.toNumber(),
           timestamp,
         });
-      }
-
-      const order = this.orderBook.getPaperOrder(positionId);
-      if (order) {
-        order.status = 'filled';
-        order.fillPrice = currentPrice;
-        order.fillTimestamp = timestamp;
+        stateMachine.sendEvent('FILL_ORDER', {
+          positionId,
+          price: currentPrice.toNumber(),
+          timestamp,
+        });
       }
     }
 

@@ -35,6 +35,7 @@ describe('Paper Trading Integration', () => {
       assert(result.id, `Failed to create trade for mode ${mode}`);
     }
 
+    await new Promise(resolve => setTimeout(resolve, 150));
     const summary = await paperService.getSummary();
     assert.strictEqual(summary.positionCount.total, riskModes.length);
   });
@@ -79,6 +80,7 @@ describe('Paper Trading Integration', () => {
       positions.push(result);
     }
 
+    await new Promise(resolve => setTimeout(resolve, 150));
     // Get summary
     const summary = await paperService.getSummary();
     
@@ -196,6 +198,7 @@ describe('Paper Trading Integration', () => {
       assert.strictEqual(result.symbol, symbol);
     }
 
+    await new Promise(resolve => setTimeout(resolve, 150));
     const summary = await paperService.getSummary();
     assert.strictEqual(summary.positionCount.total, symbols.length);
   });
@@ -234,6 +237,7 @@ describe('Paper Trading Integration', () => {
     const results = await Promise.all(promises);
     assert.strictEqual(results.length, 100);
     
+    await new Promise(resolve => setTimeout(resolve, 150));
     const summary = await paperService.getSummary();
     assert.strictEqual(summary.positionCount.total, 100);
   });
