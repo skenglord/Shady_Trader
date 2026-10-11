@@ -1,9 +1,27 @@
 import path from 'path';
 import { initPostgresDatabase, runPostgresQuery } from './database_postgres.js';
+import { withPostgresTransaction } from './database_postgres.js';
 
 let mockRunQuery: ((sql: string, params: any[], type: 'run' | 'all') => Promise<any>) | null = null;
+let mockRunTransaction: ((work: (query: TransactionQuery) => Promise<any>) => Promise<any>) | null = null;
+let sqliteDatabase: any = null;
+let sqliteExecutionQueue: Promise<void> = Promise.resolve();
 const QUERY_TIMEOUT_MS = 30000; // 30 second timeout per query
 const USE_POSTGRES = process.env.USE_POSTGRES === 'true';
+
+export type TransactionQuery = (sql: string, params?: any[], type?: 'run' | 'all') => Promise<any>;
+
+async function withSqliteExecutionLock<T>(work: () => Promise<T>): Promise<T> {
+  const previous = sqliteExecutionQueue;
+  let release!: () => void;
+  sqliteExecutionQueue = new Promise<void>(resolve => { release = resolve; });
+  await previous;
+  try {
+    return await work();
+  } finally {
+    release();
+  }
+}
 
 export async function initDatabase() {
   if (USE_POSTGRES) {
@@ -16,6 +34,7 @@ export async function initDatabase() {
       const Database = await import('better-sqlite3');
       const dbPath = path.resolve(process.cwd(), process.env.DB_PATH || 'trading.db');
       const db = new Database.default(dbPath);
+      sqliteDatabase = db;
       // Apply pragmas for better performance and concurrency
       db.pragma('journal_mode = WAL');
       db.pragma('wal_autocheckpoint = 1000');
@@ -293,20 +312,6 @@ export async function initDatabase() {
         CREATE INDEX IF NOT EXISTS idx_signals_symbol ON signals(symbol);
       `);
 
-      mockRunQuery = async (sql: string, params: any[] = [], type: 'run' | 'all' = 'run'): Promise<any> => {
-        try {
-          if (type === 'all') {
-            const stmt = db.prepare(sql);
-            return stmt.all(...params);
-          } else {
-            const stmt = db.prepare(sql);
-            return stmt.run(...params);
-          }
-        } catch (error) {
-          // Re-throw to be handled by caller
-          throw error;
-        }
-      };
     } catch (error) {
       console.error('Failed to initialize SQLite database:', error);
       throw error;
@@ -316,6 +321,10 @@ export async function initDatabase() {
 
 export function setMockRunQuery(fn: typeof mockRunQuery) {
   mockRunQuery = fn;
+}
+
+export function setMockRunTransaction(fn: typeof mockRunTransaction): void {
+  mockRunTransaction = fn;
 }
 
 /**
@@ -329,6 +338,7 @@ export function setMockRunQuery(fn: typeof mockRunQuery) {
  */
 export function clearMockRunQuery(): void {
   mockRunQuery = null;
+  mockRunTransaction = null;
 }
 
 /** Return table columns using the active database's catalog syntax. */
@@ -354,6 +364,38 @@ export async function runQuery(sql: string, params: any[] = [], type: 'run' | 'a
     return runPostgresQuery(sql, params, type);
   }
 
-  // This should not happen if initDatabase was called, but provide fallback
-  throw new Error('Database not initialized');
+  if (!sqliteDatabase) throw new Error('Database not initialized');
+  return withSqliteExecutionLock(async () => executeSqliteQuery(sqliteDatabase, sql, params, type));
+}
+
+function executeSqliteQuery(db: any, sql: string, params: any[] = [], type: 'run' | 'all' = 'run'): any {
+  const statement = db.prepare(sql);
+  return type === 'all' ? statement.all(...params) : statement.run(...params);
+}
+
+export async function withDatabaseTransaction<T>(work: (query: TransactionQuery) => Promise<T>): Promise<T> {
+  if (USE_POSTGRES) return withPostgresTransaction(work);
+  if (mockRunQuery) {
+    if (!mockRunTransaction) throw new Error('Transaction execution is unavailable while a query mock is active');
+    return mockRunTransaction(work);
+  }
+  if (!sqliteDatabase) throw new Error('Database not initialized');
+
+  return withSqliteExecutionLock(async () => {
+    sqliteDatabase.exec('BEGIN IMMEDIATE');
+    const query: TransactionQuery = async (sql, params = [], type = 'run') =>
+      executeSqliteQuery(sqliteDatabase, sql, params, type);
+    try {
+      const result = await work(query);
+      sqliteDatabase.exec('COMMIT');
+      return result;
+    } catch (error) {
+      try {
+        sqliteDatabase.exec('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Failed to roll back SQLite transaction', rollbackError);
+      }
+      throw error;
+    }
+  });
 }

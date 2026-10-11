@@ -1,5 +1,6 @@
 import { Pool } from 'pg';
 import dotenv from 'dotenv';
+import type { TransactionQuery } from './database.js';
 
 // Load environment variables
 dotenv.config();
@@ -627,6 +628,44 @@ export async function runPostgresQuery(sql: string, params: any[] = [], type: 'r
     if (client) {
       client.release();
     }
+  }
+}
+
+export async function withPostgresTransaction<T>(
+  work: (query: TransactionQuery) => Promise<T>,
+  transactionPool: Pick<Pool, 'connect'> = pool
+): Promise<T> {
+  const client = await transactionPool.connect();
+  let transactionStarted = false;
+  try {
+    await client.query(`SET statement_timeout = ${QUERY_TIMEOUT_MS}`);
+    await client.query('BEGIN');
+    transactionStarted = true;
+
+    const query: TransactionQuery = async (sql, params = [], type = 'run') => {
+      const result = await client.query(toPostgresSql(sql), params);
+      if (type === 'all') return result.rows;
+      return {
+        changes: result.rowCount || 0,
+        lastInsertRowid: result.rows?.[0]?.id || undefined,
+      };
+    };
+
+    const result = await work(query);
+    await client.query('COMMIT');
+    transactionStarted = false;
+    return result;
+  } catch (error) {
+    if (transactionStarted) {
+      try {
+        await client.query('ROLLBACK');
+      } catch (rollbackError) {
+        console.error('Failed to roll back PostgreSQL transaction', rollbackError);
+      }
+    }
+    throw error;
+  } finally {
+    client.release();
   }
 }
 
