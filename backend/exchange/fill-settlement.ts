@@ -10,7 +10,7 @@ export async function applyExchangeFill(
   scope: ExchangeScope,
   balanceManager: BalanceManager
 ): Promise<'applied' | 'duplicate' | 'unmatched'> {
-  if (fill.fee > 0 && fill.feeCurrency !== fill.symbol.split('/')[1]) return 'unmatched';
+  if (fill.fee !== 0 && fill.feeCurrency !== fill.symbol.split('/')[1]) return 'unmatched';
   return withDatabaseTransaction(async query => {
     const intents = await query(`
       SELECT * FROM execution_intents

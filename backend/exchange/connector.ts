@@ -316,32 +316,51 @@ export class ExchangeConnector {
     const page = async (kind: 'orders' | 'fills', since: number, cursor?: string): Promise<ExchangePage<any>> => {
       let data: any;
       if (exchange === 'binance') data = await auth('GET', kind === 'orders' ? '/api/v3/allOrders' : '/api/v3/myTrades', undefined, { symbol: this.activeSymbol.replace('/', ''), limit: '1000', ...(!cursor ? { startTime: String(since) } : kind === 'orders' ? { orderId: cursor } : { fromId: cursor }) });
-      else if (exchange === 'kraken') data = await auth('POST', kind === 'orders' ? '/0/private/ClosedOrders' : '/0/private/TradesHistory', undefined, { start: String(Math.floor(since / 1000)), ofs: cursor || '0' });
-      else if (exchange === 'okx') data = await auth('GET', kind === 'orders' ? '/api/v5/trade/orders-history' : '/api/v5/trade/fills-history', undefined, { instType: 'SPOT', begin: String(since), limit: '100', ...(cursor ? { after: cursor } : {}) });
+      else if (exchange === 'kraken') data = await auth('POST', kind === 'orders' ? '/0/private/ClosedOrders' : '/0/private/TradesHistory', undefined, { start: String(Math.floor(since / 1000)), with_cursor: 'true', ...(cursor ? { cursor } : {}) });
+      else if (exchange === 'okx') data = await auth('GET', kind === 'orders' ? '/api/v5/trade/orders-history-archive' : '/api/v5/trade/fills-history', undefined, { instType: 'SPOT', begin: String(since), limit: '100', ...(cursor ? { after: cursor } : {}) });
       else data = await auth('GET', kind === 'orders' ? '/api/v3/brokerage/orders/historical/batch' : '/api/v3/brokerage/orders/historical/fills', undefined, { ...(kind === 'orders' ? { start_date: new Date(since).toISOString() } : { start_sequence_timestamp: new Date(since).toISOString() }), ...(cursor ? { cursor } : {}) });
       const keyed = exchange === 'kraken' ? (data?.closed ?? data?.trades ?? {}) : null;
       const items: any[] = exchange === 'kraken' ? Object.entries(keyed).map(([id, value]: [string, any]) => ({ ...value, ...(kind === 'orders' ? { txid: value.txid || id } : { trade_id: value.trade_id || id }) })) : exchange === 'coinbase' ? (kind === 'orders' ? data?.orders : data?.fills) : data;
       if (!Array.isArray(items)) throw new Error(`${exchange} returned malformed ${kind} page`);
+      if (exchange === 'coinbase' && kind === 'orders') {
+        if (typeof data?.has_next !== 'boolean') throw new Error('Coinbase returned malformed order pagination state');
+        if (data.has_next && (typeof data.cursor !== 'string' || !data.cursor)) throw new Error('Coinbase order pagination is incomplete');
+      }
       const normalized = items.map(raw => kind === 'orders' ? normalizeOrder(raw) : normalizeFill(raw));
       if (exchange === 'kraken' && items.length >= 50 && !Number.isFinite(Number(data?.count))) throw new Error('Kraken omitted history count; pagination completeness is unknown');
-      const next = exchange === 'coinbase' ? (data?.cursor ? String(data.cursor) : null) : exchange === 'kraken' ? (Number(data?.count || 0) > Number(cursor || 0) + items.length ? String(Number(cursor || 0) + items.length) : null) : exchange === 'okx' ? (items.length >= 100 ? String(kind === 'orders' ? items.at(-1)?.ordId : items.at(-1)?.billId) : null) : (items.length >= 1000 ? String(Number(kind === 'orders' ? items.at(-1)?.orderId : items.at(-1)?.id ?? items.at(-1)?.tradeId) + 1) : null);
+      let next: string | null = null;
+      if (exchange === 'coinbase') next = data?.cursor ? String(data.cursor) : null;
+      else if (exchange === 'kraken') next = data?.cursor?.next ? String(data.cursor.next) : null;
+      else if (exchange === 'okx' && items.length >= 100) {
+        const cursorId = kind === 'orders' ? items.at(-1)?.ordId : items.at(-1)?.billId;
+        if (cursorId === undefined || cursorId === null || cursorId === '') throw new Error(`OKX returned incomplete ${kind} pagination`);
+        next = String(cursorId);
+      } else if (exchange === 'binance' && items.length >= 1000) {
+        const lastId = Number(kind === 'orders' ? items.at(-1)?.orderId : items.at(-1)?.id ?? items.at(-1)?.tradeId);
+        if (!Number.isSafeInteger(lastId) || lastId < 0) throw new Error(`Binance returned incomplete ${kind} pagination`);
+        next = String(lastId + 1);
+      }
       if (next === '') throw new Error(`${exchange} returned incomplete ${kind} pagination`);
       return { items: normalized, nextCursor: next };
     };
     const normalizeFill = (raw: any): NormalizedExchangeFill => {
-      const fillId = String(raw.id ?? raw.trade_id ?? raw.tradeId ?? raw.execId ?? raw.entry_id ?? '');
+      const fillId = String(raw.entry_id ?? raw.id ?? raw.trade_id ?? raw.tradeId ?? raw.execId ?? '');
       const orderId = String(raw.orderId ?? raw.order_id ?? raw.ordertxid ?? raw.ordId ?? '');
       const quantity = Number(raw.qty ?? raw.vol ?? raw.fillSz ?? raw.size ?? raw.base_size ?? 0);
       const price = Number(raw.price ?? raw.fillPx ?? raw.average_filled_price ?? 0);
       if (!fillId || !orderId || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) throw new Error(`${exchange} returned malformed fill data`);
       const side = String(raw.side ?? (typeof raw.isBuyer === 'boolean' ? raw.isBuyer ? 'buy' : 'sell' : raw.type) ?? '').toLowerCase();
       if (side !== 'buy' && side !== 'sell') throw new Error(`${exchange} returned a fill without a valid side`);
-      const stamp = raw.time ?? raw.timestamp ?? raw.ts ?? (raw.trade_time ? Date.parse(raw.trade_time) : raw.created_time ? Date.parse(raw.created_time) : Date.now());
+      const stamp = raw.time ?? raw.timestamp ?? raw.ts ?? (raw.trade_time ? Date.parse(raw.trade_time) : raw.created_time ? Date.parse(raw.created_time) : NaN);
       const timestamp = typeof stamp === 'string' && !/^\d+(\.\d+)?$/.test(stamp) ? Date.parse(stamp) : Number(stamp);
       const rawSymbol = String(raw.symbol ?? raw.product_id ?? raw.instId ?? raw.pair ?? '');
       const symbol = canonicalSymbol(rawSymbol);
       if (!Number.isFinite(timestamp) || timestamp <= 0) throw new Error(`${exchange} returned a fill without a valid timestamp`);
-      const fee = Math.abs(Number(raw.commission ?? raw.fee ?? raw.fee_amount ?? 0));
+      const venueFee = Number(raw.commission ?? raw.fee ?? raw.fee_amount ?? 0);
+      if (!Number.isFinite(venueFee)) throw new Error(`${exchange} returned an invalid fill fee`);
+      // Canonical ledger convention: positive is charged, negative is a rebate.
+      // OKX reports the inverse sign (negative charges, positive rebates).
+      const fee = exchange === 'okx' ? -venueFee : venueFee;
       const feeCurrency = raw.commissionAsset ?? raw.feeCcy ?? raw.feeCurrency ?? raw.fee_currency ?? (exchange === 'coinbase' && fee > 0 ? symbol.split('/')[1] : null);
       return { exchangeOrderId: orderId, exchangeFillId: fillId, clientOrderId: raw.clientOrderId ?? raw.clOrdId ?? null, symbol, side: side as 'buy' | 'sell', quantity, price, fee, feeCurrency, timestamp: exchange === 'kraken' && timestamp < 1e12 ? timestamp * 1000 : timestamp };
     };
