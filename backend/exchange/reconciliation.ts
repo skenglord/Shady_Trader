@@ -1,6 +1,6 @@
 import { runQuery } from '../database.js';
 import { logger } from '../logging/logger.js';
-import { BaseExchangeAdapter } from './adapter.js';
+import { BaseExchangeAdapter, PositionReconciliationUnavailableError } from './adapter.js';
 
 export interface PositionReconciliation {
   symbol: string;
@@ -53,7 +53,9 @@ export class PositionReconciliationEngine {
       try {
         await this.reconcileExchangePositions(exchangeName);
       } catch (error) {
-        logger.error('Failed to reconcile positions for exchange', {
+        logger.error(error instanceof PositionReconciliationUnavailableError
+          ? 'Exchange position reconciliation unavailable; no empty snapshot will be assumed'
+          : 'Failed to reconcile positions for exchange', {
           exchange: exchangeName,
           error: error.message
         });

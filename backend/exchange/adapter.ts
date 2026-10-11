@@ -24,6 +24,13 @@ export interface Position {
   leverage: number;
 }
 
+export class PositionReconciliationUnavailableError extends Error {
+  constructor(exchange: string) {
+    super(`${exchange} position reconciliation is not implemented; refusing to report an empty account snapshot`);
+    this.name = 'PositionReconciliationUnavailableError';
+  }
+}
+
 export interface Order {
   id: string;
   symbol: string;
@@ -61,6 +68,7 @@ export abstract class BaseExchangeAdapter {
     takeProfitPrice: number
   ): Promise<{ stopOrder: Order; takeProfitOrder: Order }>;
   abstract cancelOrder(orderId: string): Promise<boolean>;
+  /** Must return an authoritative account snapshot or reject; never fake an empty account. */
   abstract getPositions(): Promise<Position[]>;
   abstract getOrderBook(symbol: string, depth: number): Promise<OrderBook>;
   abstract getBalance(): Promise<Record<string, number>>;
@@ -175,8 +183,7 @@ export class BinanceAdapter extends BaseExchangeAdapter {
   }
 
   async getPositions(): Promise<Position[]> {
-    // Implementation for getting positions
-    return [];
+    throw new PositionReconciliationUnavailableError(this.getName());
   }
 
   async getOrderBook(symbol: string, depth: number): Promise<OrderBook> {
@@ -259,7 +266,7 @@ export class KrakenAdapter extends BaseExchangeAdapter {
   }
 
   async getPositions(): Promise<Position[]> {
-    return [];
+    throw new PositionReconciliationUnavailableError(this.getName());
   }
 
   async getOrderBook(symbol: string, depth: number): Promise<OrderBook> {
@@ -329,7 +336,7 @@ export class OkxAdapter extends BaseExchangeAdapter {
   }
 
   async getPositions(): Promise<Position[]> {
-    return [];
+    throw new PositionReconciliationUnavailableError(this.getName());
   }
 
   async getOrderBook(symbol: string, depth: number): Promise<OrderBook> {
@@ -398,7 +405,7 @@ export class CoinbaseAdapter extends BaseExchangeAdapter {
   }
 
   async getPositions(): Promise<Position[]> {
-    return [];
+    throw new PositionReconciliationUnavailableError(this.getName());
   }
 
   async getOrderBook(symbol: string, depth: number): Promise<OrderBook> {

@@ -1,12 +1,13 @@
 # Production Readiness Todo
 
-Created: 2026-06-10 | Updated: 2026-10-10
+Created: 2026-06-10 | Updated: 2026-10-11
 
 ## Current verified gate state (October 11 readiness phases)
 
 - Access-control phase: paper REST and `/symbol` require trader role; invalid API tokens no longer bypass CSRF; paper WebSocket consumers are activated only after authentication; null pre-auth WebSocket JSON is rejected without throwing; Vite source-deny blocks `/@fs/`, encoded protected paths, traversal and SQLite files.
 - Focused access-control tests: **17/17 pass**.
 - Focused trade-safety, stop, pair-price and existing deterministic regression suites: **87/87 pass**.
+- Reconciliation fail-closed guard: **2/2 pass**; stub exchange adapters now raise `PositionReconciliationUnavailableError`, and no comparison/log entry is written when the exchange snapshot is unavailable. Real exchange position APIs are still missing.
 - Root lint and production frontend build: **pass**; complexity gate: **pass** (max 50).
 - Full Node 22 test suite: **522 tests / 521 passed / 0 failed / 1 skipped**. Separate ML suite: **28/28 pass**.
 - Production dependency audit: **fail**, still reports 12 vulnerabilities (1 critical, 2 high, 9 moderate); no dependency changes were included in this phase.
@@ -30,6 +31,7 @@ Created: 2026-06-10 | Updated: 2026-10-10
 - [x] Secure paper REST and symbol mutations with trader role checks; require valid API tokens for CSRF bypass; reject malformed pre-auth WS JSON safely; delay paper WS initialization until auth; deny Vite filesystem aliases and local database files. Focused tests pass 17/17; full production readiness checks remain pending.
 - [x] Prevent duplicate live closes with a per-trade lock and durable close intent; leave uncertain closes blocked for reconciliation. Price existing positions and kill-switch exits by each trade's own symbol. Stop waits for the active cycle and cancels entries that have not reached exchange submission. Focused trade-safety regressions pass 87/87.
 - [ ] Implement real exchange position/order reconciliation and transactional settlement; cover venue ownership, partial exits, and recovery of uncertain orders.
+- [x] Prevent stub exchange adapters from masquerading as an authoritative empty account; reconciliation now emits an explicit unavailable error and skips local comparison. Verification: 2/2 focused tests pass. This is a fail-closed guard, not production reconciliation support.
 - [ ] Make balance settlement transactional and awaited; repair paper order identities, fill prices, P&L and liquidation.
 - [ ] Activate risk configs atomically, remove LLM risk authority, and repair ML/schema/Freqtrade integration and independent OOS evaluation.
 - [ ] Repair Docker runtime imports/Kubernetes volumes, enforce a single engine owner, and verify database-specific backup restoration.
