@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import { BalanceManager } from '../../backend/balance/manager.js';
 import { ShadowTrader } from '../../backend/shadow/shadow_trader.js';
 import { RiskMode } from '../../backend/risk/manager.js';
-import { runQuery, setMockRunQuery } from '../../backend/database.js';
+import { runQuery, setMockRunQuery, setMockRunTransaction } from '../../backend/database.js';
 
 const mockBalances = {
   main_balance: 100000,
@@ -13,7 +13,7 @@ const mockBalances = {
   total_pnl_pct: 0
 };
 
-setMockRunQuery(async (sql, params = [], type = 'run') => {
+const mockQuery = async (sql: string, params: any[] = [], type: 'run' | 'all' = 'run') => {
   if (sql.includes('INSERT OR IGNORE INTO balances')) return { changes: 0 };
   if (sql.includes('SELECT * FROM balances')) {
     return [{
@@ -80,7 +80,10 @@ setMockRunQuery(async (sql, params = [], type = 'run') => {
 
   if (type === 'all') return [];
   return { changes: 1 };
-});
+};
+
+setMockRunQuery(mockQuery);
+setMockRunTransaction(work => work(mockQuery));
 
 test('BalanceManager should move funds correctly', async () => {
   await runQuery('UPDATE balances SET main_balance = 100000, bot_balance = 0 WHERE id = ?', ['default']);

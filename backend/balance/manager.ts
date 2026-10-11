@@ -1,6 +1,5 @@
-import { runQuery } from '../database.js';
+import { runQuery, withDatabaseTransaction, type TransactionQuery } from '../database.js';
 import { randomUUID } from 'crypto';
-import { logger } from '../logging/logger.js';
 
 export interface Balances {
   mainBalance: number;
@@ -17,19 +16,25 @@ export class BalanceManager {
     sql: string,
     params: any[],
     eventType: string,
-    changeAmount: number,
+    changeAmount: number | ((before: Balances, after: Balances) => number),
     reason: string,
     metadata?: any,
-    failureMessage = 'Balance operation could not be applied'
+    failureMessage = 'Balance operation could not be applied',
+    validateBefore?: (before: Balances) => void,
   ): Promise<void> {
-    const before = await this.getBalances();
-    const result = await runQuery(sql, params);
-    if (result?.changes === 0 || result?.rowCount === 0) throw new Error(failureMessage);
-    const after = await this.getBalances();
-    await this.logAuditBalance(eventType, before, after, changeAmount, reason, metadata);
+    await withDatabaseTransaction(async query => {
+      const before = await this.readBalances(query);
+      validateBefore?.(before);
+      const result = await query(sql, params);
+      if (result?.changes === 0 || result?.rowCount === 0) throw new Error(failureMessage);
+      const after = await this.readBalances(query);
+      const actualChangeAmount = typeof changeAmount === 'function' ? changeAmount(before, after) : changeAmount;
+      await this.logAuditBalance(query, eventType, before, after, actualChangeAmount, reason, metadata);
+    });
   }
 
   private async logAuditBalance(
+    query: TransactionQuery,
     eventType: string,
     beforeBalances: Balances,
     afterBalances: Balances,
@@ -37,37 +42,36 @@ export class BalanceManager {
     reason: string,
     metadata?: any
   ) {
-    try {
-      const auditId = randomUUID();
-      const timestamp = Date.now();
-      const metadataJson = metadata ? JSON.stringify(metadata) : null;
+    const auditId = randomUUID();
+    const timestamp = Date.now();
+    const metadataJson = metadata ? JSON.stringify(metadata) : null;
 
-      await runQuery(`
-        INSERT INTO audit_balances (
-          id, balance_id, event_type, timestamp,
-          before_main_balance, before_bot_balance, before_active_balance,
-          after_main_balance, after_bot_balance, after_active_balance,
-          change_amount, reason, metadata
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [
-        auditId, 'default', eventType, timestamp,
-        beforeBalances.mainBalance, beforeBalances.botBalance, beforeBalances.activeTradeBalance,
-        afterBalances.mainBalance, afterBalances.botBalance, afterBalances.activeTradeBalance,
-        changeAmount, reason, metadataJson
-      ]);
-    } catch (error: any) {
-      logger.error('Failed to log audit balance', { error: String(error), service: 'balance-manager' });
-      // Don't throw - audit logging shouldn't break balance operations
-    }
+    await query(`
+      INSERT INTO audit_balances (
+        id, balance_id, event_type, timestamp,
+        before_main_balance, before_bot_balance, before_active_balance,
+        after_main_balance, after_bot_balance, after_active_balance,
+        change_amount, reason, metadata
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `, [
+      auditId, 'default', eventType, timestamp,
+      beforeBalances.mainBalance, beforeBalances.botBalance, beforeBalances.activeTradeBalance,
+      afterBalances.mainBalance, afterBalances.botBalance, afterBalances.activeTradeBalance,
+      changeAmount, reason, metadataJson
+    ]);
   }
 
   async getBalances(): Promise<Balances> {
-    await runQuery(`
+    return this.readBalances(async (sql, params = [], type = 'run') => runQuery(sql, params, type));
+  }
+
+  private async readBalances(query: TransactionQuery): Promise<Balances> {
+    await query(`
       INSERT OR IGNORE INTO balances
         (id, main_balance, bot_balance, active_trade_balance, total_pnl, total_pnl_pct)
       VALUES ('default', 100000, 0, 0, 0, 0)
     `);
-    const rows = await runQuery('SELECT * FROM balances WHERE id = ?', ['default'], 'all');
+    const rows = await query('SELECT * FROM balances WHERE id = ?', ['default'], 'all');
     const row = rows[0] || {};
     const b = {
       mainBalance: row.main_balance ?? 100000,
@@ -114,23 +118,20 @@ export class BalanceManager {
   }
 
   async halfBotBalance() {
-    const current = await this.getBalances();
-    const amount = current.botBalance / 2;
     await this.applyAtomicMutation(`
       UPDATE balances
       SET main_balance = main_balance + (bot_balance / 2), bot_balance = bot_balance - (bot_balance / 2)
       WHERE id = 'default'
-    `, [], 'withdrawal', amount, 'half_bot_balance');
+    `, [], 'withdrawal', before => before.botBalance / 2, 'half_bot_balance');
   }
 
   async doubleBotBalance() {
-    const current = await this.getBalances();
-    this.validateAmount(current.botBalance);
     await this.applyAtomicMutation(`
       UPDATE balances
       SET main_balance = main_balance - bot_balance, bot_balance = bot_balance + bot_balance
       WHERE id = 'default' AND main_balance >= bot_balance
-    `, [], 'allocation', current.botBalance, 'double_bot_balance', undefined, 'Insufficient main balance');
+    `, [], 'allocation', before => before.botBalance, 'double_bot_balance', undefined,
+      'Insufficient main balance', before => this.validateAmount(before.botBalance));
   }
 
   async updateActiveTradeBalance(amount: number) {
