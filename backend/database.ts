@@ -321,6 +321,7 @@ export async function initDatabase() {
 
 export function setMockRunQuery(fn: typeof mockRunQuery) {
   mockRunQuery = fn;
+  mockRunTransaction = null;
 }
 
 export function setMockRunTransaction(fn: typeof mockRunTransaction): void {

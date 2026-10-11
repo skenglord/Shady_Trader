@@ -35,7 +35,7 @@ import { createServer, type Server as HttpServer } from 'http';
 
 import { TradingEngine } from '../../backend/main.js';
 import { MarketDataService } from '../../backend/api/marketDataService.js';
-import { setMockRunQuery, clearMockRunQuery } from '../../backend/database.js';
+import { setMockRunQuery, setMockRunTransaction, clearMockRunQuery } from '../../backend/database.js';
 import { apiRouter } from '../../backend/api/routes.js';
 import { ShadowTrader } from '../../backend/shadow/shadow_trader.js';
 import { RiskMode } from '../../backend/risk/manager.js';
@@ -124,7 +124,7 @@ function createRedisMock() {
  * for writes. Used for engine lifecycle and REST auth tests.
  */
 function setupDefaultDbMock() {
-  setMockRunQuery(async (sql: string, _params: any[], type: 'run' | 'all') => {
+  const mockQuery = async (sql: string, _params: any[] = [], type: 'run' | 'all' = 'run') => {
     if (sql.includes('SELECT * FROM settings')) return [];
     if (sql.includes('SELECT 1')) return [{ 1: 1 }];
     if (sql.includes('SELECT * FROM balances')) {
@@ -143,7 +143,9 @@ function setupDefaultDbMock() {
     if (sql.includes('FROM market_news')) return [];
     if (type === 'all') return [];
     return { changes: 1 };
-  });
+  };
+  setMockRunQuery(mockQuery);
+  setMockRunTransaction(work => work(mockQuery));
 }
 
 /**

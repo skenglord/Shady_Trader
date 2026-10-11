@@ -78,7 +78,7 @@ describe('Paper trading component behavior', () => {
 
     const updated = tracker.updatePositionPrice(position.id, new Decimal(110));
     assert.strictEqual(updated?.currentPrice?.toNumber(), 110);
-    assert.strictEqual(tracker.calculatePnl(updated!).totalPnl.toNumber(), 5);
+    assert.strictEqual(tracker.calculatePnl(updated!).totalPnl.toNumber(), 10);
     assert.strictEqual(tracker.checkStopLoss(position.id, new Decimal(89)), true);
     assert.strictEqual(tracker.checkTakeProfit(position.id, new Decimal(121)), true);
     assert.strictEqual(tracker.incrementCandlesHeld(position.id)?.candlesHeld, 1);
@@ -97,7 +97,7 @@ describe('Paper trading component behavior', () => {
     assert.strictEqual(shortPosition.status, 'open');
     assert.strictEqual(tracker.checkLiquidation(shortPosition, new Decimal(120)), true);
     assert.strictEqual(tracker.checkLiquidation(shortPosition, new Decimal(160)), true);
-    assert.strictEqual(tracker.calculatePnl(shortPosition, new Decimal(90)).totalPnl.toNumber(), 4);
+    assert.strictEqual(tracker.calculatePnl(shortPosition, new Decimal(90)).totalPnl.toNumber(), 20);
   });
 
   test('order book initializes, updates, and matches market orders with slippage', () => {

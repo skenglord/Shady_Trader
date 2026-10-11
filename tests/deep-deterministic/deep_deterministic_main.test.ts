@@ -1,7 +1,7 @@
 import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
 import { TradingEngine } from '../../backend/main.js';
-import { setMockRunQuery, clearMockRunQuery } from '../../backend/database.js';
+import { setMockRunQuery, setMockRunTransaction, clearMockRunQuery } from '../../backend/database.js';
 import Redis from 'ioredis';
 
 // Mock Redis class that doesn't connect
@@ -35,7 +35,7 @@ MockRedis.prototype.constructor = Redis;
 
 // Mock database queries
 function setupMocks() {
-  setMockRunQuery(async (sql: string, params?: any[], method?: string) => {
+  const mockQuery = async (sql: string, params?: any[], method?: string) => {
     if (sql.includes('SELECT 1')) return [{ 1: 1 }];
     if (sql.includes('SELECT * FROM settings')) return [];
     if (sql.includes('SELECT SUM(pnl)')) return [{ totalPnl: 0 }];
@@ -59,7 +59,9 @@ function setupMocks() {
     if (sql.includes('UPDATE OR REPLACE INTO settings')) return { changes: 1 };
     if (sql.includes('DELETE FROM shadow_trades')) return { changes: 1 };
     return [];
-  });
+  };
+  setMockRunQuery(mockQuery);
+  setMockRunTransaction(work => work(mockQuery as any));
 }
 
 describe('Deep Deterministic Tests - TradingEngine (main.ts)', { concurrency: false }, () => {
