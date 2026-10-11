@@ -4,6 +4,7 @@ import { logger } from '../logging/logger.js';
 import { BaseExchangeAdapter, PositionReconciliationUnavailableError } from './adapter.js';
 import type { AccountExecutionAdapter, NormalizedExchangeFill, NormalizedExchangeOrder } from './account-execution-adapter.js';
 import { applyExchangeFill } from './fill-settlement.js';
+import { valueFillFee } from './fill-fees.js';
 import { BalanceManager } from '../balance/manager.js';
 
 export interface ReconciliationResult { exchange: string; accountId: string; ready: boolean; ordersRead: number; fillsRead: number; applied: number; duplicates: number; unresolved: number; checkpoint: number; }
@@ -95,9 +96,8 @@ export class PositionReconciliationEngine {
     }
     let applied = 0, duplicates = 0;
     for (const fill of fills.sort((a, b) => a.timestamp - b.timestamp)) {
-      const quoteCurrency = fill.symbol.split('/')[1];
-      if (fill.fee !== 0 && (!fill.feeCurrency || fill.feeCurrency !== quoteCurrency)) {
-        await this.recordIncident(scope, 'unvalued_fill_fee', { orderId: fill.exchangeOrderId, fillId: fill.exchangeFillId, fee: fill.fee, feeCurrency: fill.feeCurrency, quoteCurrency });
+      if (!valueFillFee(fill)) {
+        await this.recordIncident(scope, 'unvalued_fill_fee', { orderId: fill.exchangeOrderId, fillId: fill.exchangeFillId, fee: fill.fee, feeCurrency: fill.feeCurrency, quoteCurrency: fill.symbol.split('/')[1] });
         continue;
       }
       const result = await applyExchangeFill(fill, scope, new BalanceManager());

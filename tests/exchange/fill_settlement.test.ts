@@ -85,6 +85,39 @@ test('quote-currency rebates reduce entry cost without changing filled quantity'
   assert.equal(state.balance.active_trade_balance, 248);
 });
 
+test('base-currency entry fees reduce acquired quantity while reserving full quote notional', async () => {
+  const state = installStore();
+  const charged = { ...fill('base-fee-entry', 0.5, 100), fee: 0.01, feeCurrency: 'BTC' };
+  assert.equal(await applyExchangeFill(charged, scope, new BalanceManager()), 'applied');
+  assert.equal(state.trades[0].amount, 0.49);
+  assert.equal(state.trades[0].remaining_amount, 0.49);
+  assert.ok(Math.abs(state.trades[0].price - (50 / 0.49)) < 1e-10);
+  assert.equal(state.balance.active_trade_balance, 250);
+});
+
+test('base-currency exit fees consume inventory and include fee value in realized PnL', async () => {
+  const state = installStore();
+  state.intents[0].intent_type = 'exit';
+  state.intents[0].side = 'sell';
+  state.intents[0].trade_id = 'trade-1:close';
+  state.intents[0].parent_trade_id = 'trade-1';
+  state.trades[0].remaining_amount = 2;
+  const charged = { ...fill('base-fee-exit', 0.5, 110, 'sell'), fee: 0.01, feeCurrency: 'BTC' };
+  assert.equal(await applyExchangeFill(charged, scope, new BalanceManager()), 'applied');
+  assert.equal(state.trades[0].remaining_amount, 1.49);
+  assert.ok(Math.abs(state.trades[0].realized_pnl - 4) < 1e-10);
+  assert.ok(Math.abs(state.balance.total_pnl - 4) < 1e-10);
+});
+
+test('base-currency fee rebates increase acquired entry quantity', async () => {
+  const state = installStore();
+  const rebate = { ...fill('base-fee-rebate', 0.5, 100), fee: -0.01, feeCurrency: 'BTC' };
+  assert.equal(await applyExchangeFill(rebate, scope, new BalanceManager()), 'applied');
+  assert.equal(state.trades[0].amount, 0.51);
+  assert.equal(state.trades[0].remaining_amount, 0.51);
+  assert.ok(Math.abs(state.trades[0].price - (50 / 0.51)) < 1e-10);
+});
+
 test('rebates in an unvalued currency remain unmatched', async () => {
   const state = installStore();
   const rebate = { ...fill('unvalued-rebate', 0.5, 100), fee: -0.01, feeCurrency: 'BNB' };
