@@ -11,7 +11,7 @@ Created: 2026-06-10 | Updated: 2026-10-11
 - Balance mutation and audit transactionality: **complete**. SQLite and PostgreSQL transaction adapters are covered for commit/rollback, serialization/client pinning and failure cleanup; balance snapshots, conditional update and audit insert now share one transaction. Focused database/balance/shadow tests pass. PostgreSQL verification uses a mocked pool client; no live PostgreSQL server was available for integration testing.
 - Paper-accounting phase: **52/52 relevant tests pass, 1 skipped**; positions use the order ID and actual fill quantity/price, pending orders do not create positions, P&L uses full notional movement, profitable positions are not liquidated, and closes/liquidations preserve realized P&L and exit reason.
 - Root lint and production frontend build: **pass**; complexity gate: **pass** (max 50).
-- Full serial Node 22 test suite on the current venue-fixture follow-up: **581 tests / 580 passed / 0 failed / 1 skipped**.
+- Full serial Node 22 test suite on the merged `main` tree: **584 tests / 583 passed / 0 failed / 1 skipped**.
 - Production dependency audit: **fail**, still reports 12 vulnerabilities (1 critical, 2 high, 9 moderate); no dependency changes were included in this phase.
 - Full legacy readiness audit below remains active: exchange testnet/sandbox validation, multi-symbol Binance recovery, deployment validation, and dependency remediation remain outstanding. These phases do not authorize live funds or untrusted network exposure.
 
