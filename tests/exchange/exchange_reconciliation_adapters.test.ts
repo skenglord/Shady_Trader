@@ -134,6 +134,12 @@ test('Coinbase fill pages normalize native entry IDs and carry the returned curs
   assert.equal(requests[1].config.params.cursor, 'fills-next');
 });
 
+test('Coinbase fill history rejects has_next without a cursor', async () => {
+  axios.get = (async () => ({ data: { fills: [], has_next: true } })) as any;
+  const item = connector('coinbase');
+  await assert.rejects(() => item.accountExecutionAdapter.listFills(0), /fill pagination is incomplete/);
+});
+
 test('Coinbase order history rejects has_next without a cursor', async () => {
   axios.get = (async () => ({ data: { orders: [], has_next: true } })) as any;
   const item = connector('coinbase');

@@ -326,6 +326,9 @@ export class ExchangeConnector {
         if (typeof data?.has_next !== 'boolean') throw new Error('Coinbase returned malformed order pagination state');
         if (data.has_next && (typeof data.cursor !== 'string' || !data.cursor)) throw new Error('Coinbase order pagination is incomplete');
       }
+      if (exchange === 'coinbase' && kind === 'fills' && data?.has_next === true && (typeof data.cursor !== 'string' || !data.cursor)) {
+        throw new Error('Coinbase fill pagination is incomplete');
+      }
       const normalized = items.map(raw => kind === 'orders' ? normalizeOrder(raw) : normalizeFill(raw));
       if (exchange === 'kraken' && items.length >= 50 && !Number.isFinite(Number(data?.count))) throw new Error('Kraken omitted history count; pagination completeness is unknown');
       let next: string | null = null;
