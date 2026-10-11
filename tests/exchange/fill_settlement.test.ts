@@ -76,6 +76,22 @@ test('fills without a unique matching scoped intent remain unmatched', async () 
   assert.equal(state.fills.length, 0);
 });
 
+test('quote-currency rebates reduce entry cost without changing filled quantity', async () => {
+  const state = installStore();
+  const rebate = { ...fill('rebate-fill', 0.5, 100), fee: -2, feeCurrency: 'USDT' };
+  assert.equal(await applyExchangeFill(rebate, scope, new BalanceManager()), 'applied');
+  assert.equal(state.trades[0].remaining_amount, 0.5);
+  assert.equal(state.trades[0].price, 96);
+  assert.equal(state.balance.active_trade_balance, 248);
+});
+
+test('rebates in an unvalued currency remain unmatched', async () => {
+  const state = installStore();
+  const rebate = { ...fill('unvalued-rebate', 0.5, 100), fee: -0.01, feeCurrency: 'BNB' };
+  assert.equal(await applyExchangeFill(rebate, scope, new BalanceManager()), 'unmatched');
+  assert.equal(state.fills.length, 0);
+});
+
 test('audit failure rolls back fill claim and trade update', async () => {
   const state = installStore({ failAudit: true });
   state.intents[0].intent_type = 'exit';

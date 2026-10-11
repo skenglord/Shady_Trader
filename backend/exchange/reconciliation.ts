@@ -96,7 +96,7 @@ export class PositionReconciliationEngine {
     let applied = 0, duplicates = 0;
     for (const fill of fills.sort((a, b) => a.timestamp - b.timestamp)) {
       const quoteCurrency = fill.symbol.split('/')[1];
-      if (fill.fee > 0 && (!fill.feeCurrency || fill.feeCurrency !== quoteCurrency)) {
+      if (fill.fee !== 0 && (!fill.feeCurrency || fill.feeCurrency !== quoteCurrency)) {
         await this.recordIncident(scope, 'unvalued_fill_fee', { orderId: fill.exchangeOrderId, fillId: fill.exchangeFillId, fee: fill.fee, feeCurrency: fill.feeCurrency, quoteCurrency });
         continue;
       }
