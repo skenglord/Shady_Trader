@@ -26,6 +26,7 @@ import {
 import { FreqtradeBridge } from '../freqtrade/bridge.js';
 import { canRunFreqtradeLocally, enqueueFreqtradeLocalJob } from '../freqtrade/local-jobs.js';
 import { normalizeFreqtradeTimerange, normalizeValidateTolerance } from '../freqtrade/validation.js';
+import { SUPPORTED_SPOT_SYMBOLS } from '../config/supported-spot-symbols.js';
 import { spawn } from 'child_process';
 import path from 'path';
 import { freqtradeMetricsRegistry } from '../observability/freqtrade_metrics.js';
@@ -196,7 +197,7 @@ function cacheIdempotentResponse() {
 type Role = 'trader' | 'admin';
 
 const TIMEFRAME_ALLOWLIST = new Set(['1m', '5m', '15m', '1h', '1d']);
-const SYMBOL_ALLOWLIST = new Set(['BTC/USDT', 'ETH/USDT', 'SOL/USDT']);
+const SYMBOL_ALLOWLIST = new Set<string>(SUPPORTED_SPOT_SYMBOLS);
 const MUTABLE_SETTINGS_BLOCKLIST = new Set(['apiKey', 'apiSecret', 'apiPassword', 'exchange', 'apiProviders']);
 const riskModes = new Set(Object.values(RiskMode));
 const regimeModes = new Set(Object.values(RegimeType));

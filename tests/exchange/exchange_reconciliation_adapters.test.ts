@@ -160,29 +160,77 @@ test('OKX uses the three-month order archive and advances by order ID', async ()
   assert.match(urls[1], /after=100/);
 });
 
-test('Binance history advances by native order and trade IDs for its active symbol', async () => {
-  const requests: Array<{ url: string; params: any }> = [];
-  axios.get = (async (url: string, config: any) => {
-    requests.push({ url, params: config.params });
-    const data = Array.from({ length: 1000 }, (_, index) => url.includes('/allOrders')
-      ? { orderId: index + 1, symbol: 'ETHUSDT', side: 'BUY', status: 'FILLED', origQty: '1', executedQty: '1', updateTime: 1700000000000 }
-      : { id: index + 1, orderId: 1, symbol: 'ETHUSDT', isBuyer: true, qty: '1', price: '100', time: 1700000000000, commission: 0, commissionAsset: 'USDT' });
+test('Binance rejects legacy native-only cursors that lack symbol scope', async () => {
+  const item = connector('binance');
+  await assert.rejects(() => item.accountExecutionAdapter.listOrders(1, '1001'), /invalid orders pagination cursor/);
+  await assert.rejects(() => item.accountExecutionAdapter.listFills(1, '1001'), /invalid fills pagination cursor/);
+});
+
+test('Binance order history advances across every supported Spot symbol with symbol-scoped cursors', async () => {
+  const requests: Array<{ params: any; data: any[] }> = [];
+  const responses = [
+    Array.from({ length: 1000 }, (_, index) => ({ orderId: index + 1, symbol: 'BTCUSDT', side: 'BUY', status: 'FILLED', origQty: '1', executedQty: '1', updateTime: 1700000000000 })),
+    [{ orderId: 1001, symbol: 'BTCUSDT', side: 'BUY', status: 'FILLED', origQty: '1', executedQty: '1', updateTime: 1700000000000 }],
+    Array.from({ length: 1000 }, (_, index) => ({ orderId: index + 1, symbol: 'ETHUSDT', side: 'BUY', status: 'FILLED', origQty: '1', executedQty: '1', updateTime: 1700000000000 })),
+    [{ orderId: 1001, symbol: 'ETHUSDT', side: 'BUY', status: 'FILLED', origQty: '1', executedQty: '1', updateTime: 1700000000000 }],
+    [],
+  ];
+  axios.get = (async (_url: string, config: any) => {
+    const data = responses.shift()!;
+    requests.push({ params: config.params, data });
     return { data };
   }) as any;
   const item = connector('binance');
-  item.setActiveSymbol('ETH/USDT');
-  const firstOrders = await item.accountExecutionAdapter.listOrders(1);
-  await item.accountExecutionAdapter.listOrders(1, firstOrders.nextCursor!);
-  const firstFills = await item.accountExecutionAdapter.listFills(1);
-  await item.accountExecutionAdapter.listFills(1, firstFills.nextCursor!);
-  assert.equal(firstOrders.nextCursor, '1001');
-  assert.equal(firstFills.nextCursor, '1001');
+  const first = await item.accountExecutionAdapter.listOrders(1);
+  const second = await item.accountExecutionAdapter.listOrders(1, first.nextCursor!);
+  const third = await item.accountExecutionAdapter.listOrders(1, second.nextCursor!);
+  const fourth = await item.accountExecutionAdapter.listOrders(1, third.nextCursor!);
+  const fifth = await item.accountExecutionAdapter.listOrders(1, fourth.nextCursor!);
   const params = (index: number, key: string) => requests[index].params instanceof URLSearchParams ? requests[index].params.get(key) : requests[index].params[key];
-  assert.equal(params(0, 'symbol'), 'ETHUSDT');
+  assert.ok(first.nextCursor);
+  assert.ok(second.nextCursor);
+  assert.ok(third.nextCursor);
+  assert.ok(fourth.nextCursor);
+  assert.equal(fifth.nextCursor, null);
+  assert.deepEqual(requests.map((_, index) => params(index, 'symbol')), ['BTCUSDT', 'BTCUSDT', 'ETHUSDT', 'ETHUSDT', 'SOLUSDT']);
+  assert.equal(params(0, 'startTime'), '1');
   assert.equal(params(1, 'orderId'), '1001');
-  assert.equal(params(2, 'fromId'), null);
+  assert.equal(params(2, 'startTime'), '1');
+  assert.equal(params(3, 'orderId'), '1001');
+  assert.equal(params(4, 'startTime'), '1');
+});
+
+test('Binance fill history advances across every supported Spot symbol with symbol-scoped cursors', async () => {
+  const requests: Array<{ params: any }> = [];
+  const responses = [
+    Array.from({ length: 1000 }, (_, index) => ({ id: index + 1, orderId: 10, symbol: 'BTCUSDT', isBuyer: true, qty: '1', price: '100', time: 1700000000000, commission: 0, commissionAsset: 'USDT' })),
+    [{ id: 1001, orderId: 10, symbol: 'BTCUSDT', isBuyer: true, qty: '1', price: '100', time: 1700000000000, commission: 0, commissionAsset: 'USDT' }],
+    Array.from({ length: 1000 }, (_, index) => ({ id: index + 1, orderId: 20, symbol: 'ETHUSDT', isBuyer: true, qty: '1', price: '100', time: 1700000000000, commission: 0, commissionAsset: 'USDT' })),
+    [{ id: 1001, orderId: 20, symbol: 'ETHUSDT', isBuyer: true, qty: '1', price: '100', time: 1700000000000, commission: 0, commissionAsset: 'USDT' }],
+    [],
+  ];
+  axios.get = (async (_url: string, config: any) => {
+    requests.push({ params: config.params });
+    return { data: responses.shift()! };
+  }) as any;
+  const item = connector('binance');
+  const first = await item.accountExecutionAdapter.listFills(1);
+  const second = await item.accountExecutionAdapter.listFills(1, first.nextCursor!);
+  const third = await item.accountExecutionAdapter.listFills(1, second.nextCursor!);
+  const fourth = await item.accountExecutionAdapter.listFills(1, third.nextCursor!);
+  const fifth = await item.accountExecutionAdapter.listFills(1, fourth.nextCursor!);
+  const params = (index: number, key: string) => requests[index].params instanceof URLSearchParams ? requests[index].params.get(key) : requests[index].params[key];
+  assert.ok(first.nextCursor);
+  assert.ok(second.nextCursor);
+  assert.ok(third.nextCursor);
+  assert.ok(fourth.nextCursor);
+  assert.equal(fifth.nextCursor, null);
+  assert.deepEqual(requests.map((_, index) => params(index, 'symbol')), ['BTCUSDT', 'BTCUSDT', 'ETHUSDT', 'ETHUSDT', 'SOLUSDT']);
+  assert.equal(params(0, 'startTime'), '1');
+  assert.equal(params(1, 'fromId'), '1001');
   assert.equal(params(2, 'startTime'), '1');
   assert.equal(params(3, 'fromId'), '1001');
+  assert.equal(params(4, 'startTime'), '1');
 });
 
 test('unvalidated adapters cannot submit live orders and Kraken testnet cannot reach production auth', async () => {

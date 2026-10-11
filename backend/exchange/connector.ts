@@ -7,6 +7,7 @@ import { ExchangeAdapterFactory, BaseExchangeAdapter } from './adapter.js';
 import { PositionReconciliationEngine } from './reconciliation.js';
 import { ProviderRotator, type ProviderName } from './provider-rotator.js';
 import { getExchangeAccountId, type AccountExecutionAdapter, type ExchangePage, type NormalizedExchangeFill, type NormalizedExchangeOrder, type PlaceExchangeOrderRequest } from './account-execution-adapter.js';
+import { SUPPORTED_SPOT_SYMBOLS } from '../config/supported-spot-symbols.js';
 
 type ExchangeName = 'coinmarketcap' | 'coinapi' | 'coingecko' | 'binance' | 'kraken' | 'okx' | 'coinbase';
 type Capabilities = {
@@ -313,10 +314,30 @@ export class ExchangeConnector {
       if (!Number.isFinite(requestedQuantity) || requestedQuantity < 0 || !Number.isFinite(filledQuantity) || filledQuantity < 0) throw new Error(`${exchange} returned invalid order quantities`);
       return { exchangeOrderId: id, clientOrderId: raw.clientOrderId ?? raw.cl_ord_id ?? raw.clOrdId ?? raw.client_order_id ?? null, symbol: product, side: sideRaw as 'buy' | 'sell', requestedQuantity, filledQuantity, averageFillPrice: Number(raw.avgPrice ?? raw.avgPx ?? raw.average_filled_price ?? (filledQuantity > 0 && quoteQty > 0 ? quoteQty / filledQuantity : 0) ?? 0) || null, status, updatedAt };
     };
+    const binanceCursor = (kind: 'orders' | 'fills', symbolIndex: number, nativeId: string | null) => `binance:v1:${kind}:${symbolIndex}:${nativeId ?? 'start'}`;
+    const parseBinanceCursor = (kind: 'orders' | 'fills', cursor?: string) => {
+      if (!cursor) return { symbolIndex: 0, nativeId: null as string | null };
+      const match = /^binance:v1:(orders|fills):(\d+):(start|\d+)$/.exec(cursor);
+      if (!match || match[1] !== kind) throw new Error(`Binance returned an invalid ${kind} pagination cursor`);
+      const symbolIndex = Number(match[2]);
+      if (!Number.isSafeInteger(symbolIndex) || symbolIndex < 0 || symbolIndex >= SUPPORTED_SPOT_SYMBOLS.length) throw new Error(`Binance returned an invalid ${kind} pagination symbol`);
+      const nativeId = match[3] === 'start' ? null : match[3];
+      if (nativeId !== null && !Number.isSafeInteger(Number(nativeId))) throw new Error(`Binance returned an invalid ${kind} pagination ID`);
+      return { symbolIndex, nativeId };
+    };
     const page = async (kind: 'orders' | 'fills', since: number, cursor?: string): Promise<ExchangePage<any>> => {
       let data: any;
-      if (exchange === 'binance') data = await auth('GET', kind === 'orders' ? '/api/v3/allOrders' : '/api/v3/myTrades', undefined, { symbol: this.activeSymbol.replace('/', ''), limit: '1000', ...(!cursor ? { startTime: String(since) } : kind === 'orders' ? { orderId: cursor } : { fromId: cursor }) });
-      else if (exchange === 'kraken') data = await auth('POST', kind === 'orders' ? '/0/private/ClosedOrders' : '/0/private/TradesHistory', undefined, { start: String(Math.floor(since / 1000)), with_cursor: 'true', ...(cursor ? { cursor } : {}) });
+      let binanceSymbolIndex: number | null = null;
+      if (exchange === 'binance') {
+        const state = parseBinanceCursor(kind, cursor);
+        binanceSymbolIndex = state.symbolIndex;
+        const symbol = SUPPORTED_SPOT_SYMBOLS[state.symbolIndex].replace('/', '');
+        data = await auth('GET', kind === 'orders' ? '/api/v3/allOrders' : '/api/v3/myTrades', undefined, {
+          symbol,
+          limit: '1000',
+          ...(state.nativeId === null ? { startTime: String(since) } : kind === 'orders' ? { orderId: state.nativeId } : { fromId: state.nativeId })
+        });
+      } else if (exchange === 'kraken') data = await auth('POST', kind === 'orders' ? '/0/private/ClosedOrders' : '/0/private/TradesHistory', undefined, { start: String(Math.floor(since / 1000)), with_cursor: 'true', ...(cursor ? { cursor } : {}) });
       else if (exchange === 'okx') data = await auth('GET', kind === 'orders' ? '/api/v5/trade/orders-history-archive' : '/api/v5/trade/fills-history', undefined, { instType: 'SPOT', begin: String(since), limit: '100', ...(cursor ? { after: cursor } : {}) });
       else data = await auth('GET', kind === 'orders' ? '/api/v3/brokerage/orders/historical/batch' : '/api/v3/brokerage/orders/historical/fills', undefined, { ...(kind === 'orders' ? { start_date: new Date(since).toISOString() } : { start_sequence_timestamp: new Date(since).toISOString() }), ...(cursor ? { cursor } : {}) });
       const keyed = exchange === 'kraken' ? (data?.closed ?? data?.trades ?? {}) : null;
@@ -338,10 +359,14 @@ export class ExchangeConnector {
         const cursorId = kind === 'orders' ? items.at(-1)?.ordId : items.at(-1)?.billId;
         if (cursorId === undefined || cursorId === null || cursorId === '') throw new Error(`OKX returned incomplete ${kind} pagination`);
         next = String(cursorId);
-      } else if (exchange === 'binance' && items.length >= 1000) {
-        const lastId = Number(kind === 'orders' ? items.at(-1)?.orderId : items.at(-1)?.id ?? items.at(-1)?.tradeId);
-        if (!Number.isSafeInteger(lastId) || lastId < 0) throw new Error(`Binance returned incomplete ${kind} pagination`);
-        next = String(lastId + 1);
+      } else if (exchange === 'binance' && binanceSymbolIndex !== null) {
+        if (items.length >= 1000) {
+          const lastId = Number(kind === 'orders' ? items.at(-1)?.orderId : items.at(-1)?.id ?? items.at(-1)?.tradeId);
+          if (!Number.isSafeInteger(lastId) || lastId < 0) throw new Error(`Binance returned incomplete ${kind} pagination`);
+          next = binanceCursor(kind, binanceSymbolIndex, String(lastId + 1));
+        } else if (binanceSymbolIndex + 1 < SUPPORTED_SPOT_SYMBOLS.length) {
+          next = binanceCursor(kind, binanceSymbolIndex + 1, null);
+        }
       }
       if (next === '') throw new Error(`${exchange} returned incomplete ${kind} pagination`);
       return { items: normalized, nextCursor: next };
