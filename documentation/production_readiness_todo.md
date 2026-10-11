@@ -12,8 +12,9 @@ Created: 2026-06-10 | Updated: 2026-10-11
 - Paper-accounting phase: **52/52 relevant tests pass, 1 skipped**; positions use the order ID and actual fill quantity/price, pending orders do not create positions, P&L uses full notional movement, profitable positions are not liquidated, and closes/liquidations preserve realized P&L and exit reason.
 - Root lint and production frontend build: **pass**; complexity gate: **pass** (max 50).
 - Full serial Node 22 test suite on the merged `main` tree: **586 tests / 585 passed / 0 failed / 1 skipped**.
-- Production dependency audit: **fail**, still reports 12 vulnerabilities (1 critical, 2 high, 9 moderate); no dependency changes were included in this phase.
-- Full legacy readiness audit below remains active: unknown-symbol Binance recovery, exchange testnet/sandbox validation, deployment validation, and dependency remediation remain outstanding. These phases do not authorize live funds or untrusted network exposure.
+- Production dependency audit (`npm audit --omit=dev`): **pass**, 0 vulnerabilities after the October 11 dependency remediation. The full dependency graph still reports 14 development-dependency advisories (0 critical, 5 high, 5 moderate, 4 low); those are outside this production-only remediation and remain to be triaged.
+- Dependency advisory snapshots are archived in [production](audits/2026-10-11/npm-audit-production.json) and [full graph](audits/2026-10-11/npm-audit-full.json) reports.
+- Full legacy readiness audit below remains active: unknown-symbol Binance recovery, exchange testnet/sandbox validation, deployment validation, and development-dependency remediation remain outstanding. These phases do not authorize live funds or untrusted network exposure.
 
 ## Baseline verified gate state (October 10 audit)
 
@@ -39,7 +40,8 @@ Created: 2026-06-10 | Updated: 2026-10-11
 - [x] Make the balance update and audit record transactional for SQLite and PostgreSQL transaction adapters. Full-suite paper component assertions now reflect full-notional PnL.
 - [ ] Activate risk configs atomically, remove LLM risk authority, and repair ML/schema/Freqtrade integration and independent OOS evaluation.
 - [ ] Repair Docker runtime imports/Kubernetes volumes, enforce a single engine owner, and verify database-specific backup restoration.
-- [ ] Upgrade vulnerable dependencies, repair CLI/test discovery, and prove the audit regression scenarios before a sandbox-exchange release gate.
+- [x] Upgrade vulnerable production dependencies; `npm audit --omit=dev` reports zero advisories. The full graph still has 14 development-dependency advisories.
+- [ ] Repair CLI/test discovery and triage remaining development dependency advisories; prove the audit regression scenarios before a sandbox-exchange release gate.
 
 The remaining sections retain dated implementation history and earlier inventories; they are not current verification claims.
 
@@ -289,8 +291,7 @@ Goal: make the repository pass the existing production quality gates without man
    - Definition of done: `npm run quality:complexity` passes with all reported functions below 50.
 
 3. **Sub-task: Resolve production audit vulnerabilities**
-   - Instructions: Address `npm audit --omit=dev --audit-level=high` findings by upgrading, replacing, or removing vulnerable production dependencies.
-   - Recommendations: Prioritize critical/high findings first. Do not suppress audit findings unless a documented exception is attached.
+   - Status: **complete October 11, 2026**. Updated OpenTelemetry auto-instrumentations, SDK and OTLP exporter to the 0.223 release line and applied available non-breaking production transitive fixes. Production audit reports 0 vulnerabilities. Full graph still reports development-only advisories (4 low, 5 moderate, 5 high), which require separate review.
    - Definition of done: `npm run security:audit` passes.
 
 4. **Sub-task: Run CI parity**
