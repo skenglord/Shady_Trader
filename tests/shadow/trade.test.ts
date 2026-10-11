@@ -8,10 +8,13 @@ import { runQuery, setMockRunQuery } from '../../backend/database.js';
 const mockBalances = {
   main_balance: 100000,
   bot_balance: 0,
-  active_trade_balance: 0
+  active_trade_balance: 0,
+  total_pnl: 0,
+  total_pnl_pct: 0
 };
 
 setMockRunQuery(async (sql, params = [], type = 'run') => {
+  if (sql.includes('INSERT OR IGNORE INTO balances')) return { changes: 0 };
   if (sql.includes('SELECT * FROM balances')) {
     return [{
       ...mockBalances,
@@ -19,6 +22,35 @@ setMockRunQuery(async (sql, params = [], type = 'run') => {
       total_pnl_pct: 0,
       updated_at: Date.now()
     }];
+  }
+
+  if (sql.includes('SET main_balance = main_balance - ?, bot_balance = bot_balance + ?')) {
+    const amount = Number(params[0]);
+    if (mockBalances.main_balance < Number(params[2])) return { changes: 0 };
+    mockBalances.main_balance -= amount;
+    mockBalances.bot_balance += Number(params[1]);
+    return { changes: 1 };
+  }
+  if (sql.includes('SET main_balance = main_balance + ?, bot_balance = bot_balance - ?')) {
+    const amount = Number(params[0]);
+    if (mockBalances.bot_balance < Number(params[2])) return { changes: 0 };
+    mockBalances.main_balance += amount;
+    mockBalances.bot_balance -= Number(params[1]);
+    return { changes: 1 };
+  }
+  if (sql.includes('SET bot_balance = bot_balance - ?, active_trade_balance = active_trade_balance + ?')) {
+    const amount = Number(params[0]);
+    if (mockBalances.bot_balance < Number(params[2])) return { changes: 0 };
+    mockBalances.bot_balance -= amount;
+    mockBalances.active_trade_balance += Number(params[1]);
+    return { changes: 1 };
+  }
+  if (sql.includes('bot_balance = bot_balance + ?,') && sql.includes('total_pnl = total_pnl + ?')) {
+    mockBalances.bot_balance += Number(params[0]);
+    mockBalances.active_trade_balance = Math.max(0, mockBalances.active_trade_balance - Number(params[1]));
+    mockBalances.total_pnl = (mockBalances.total_pnl || 0) + Number(params[3]);
+    mockBalances.total_pnl_pct = (mockBalances.total_pnl / (mockBalances.main_balance + mockBalances.bot_balance)) * 100;
+    return { changes: 1 };
   }
 
   if (sql.includes('UPDATE balances')) {

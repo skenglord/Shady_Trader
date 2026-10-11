@@ -13,6 +13,22 @@ export interface Balances {
 export class BalanceManager {
   constructor() {}
 
+  private async applyAtomicMutation(
+    sql: string,
+    params: any[],
+    eventType: string,
+    changeAmount: number,
+    reason: string,
+    metadata?: any,
+    failureMessage = 'Balance operation could not be applied'
+  ): Promise<void> {
+    const before = await this.getBalances();
+    const result = await runQuery(sql, params);
+    if (result?.changes === 0 || result?.rowCount === 0) throw new Error(failureMessage);
+    const after = await this.getBalances();
+    await this.logAuditBalance(eventType, before, after, changeAmount, reason, metadata);
+  }
+
   private async logAuditBalance(
     eventType: string,
     beforeBalances: Balances,
@@ -46,6 +62,11 @@ export class BalanceManager {
   }
 
   async getBalances(): Promise<Balances> {
+    await runQuery(`
+      INSERT OR IGNORE INTO balances
+        (id, main_balance, bot_balance, active_trade_balance, total_pnl, total_pnl_pct)
+      VALUES ('default', 100000, 0, 0, 0, 0)
+    `);
     const rows = await runQuery('SELECT * FROM balances WHERE id = ?', ['default'], 'all');
     const row = rows[0] || {};
     const b = {
@@ -75,98 +96,75 @@ export class BalanceManager {
   }
 
   async allocateToBot(amount: number) {
-    const current = await this.getBalances();
-    if (amount > current.mainBalance) throw new Error('Insufficient main balance');
-
-    const updated = {
-      mainBalance: current.mainBalance - amount,
-      botBalance: current.botBalance + amount,
-      activeTradeBalance: current.activeTradeBalance,
-      totalPnl: current.totalPnl,
-      totalPnlPct: current.totalPnlPct
-    };
-
-    await this.updateBalances(updated);
-
-    // Audit log
-    await this.logAuditBalance('allocation', current, updated, amount, 'allocate_to_bot');
+    this.validateAmount(amount);
+    await this.applyAtomicMutation(`
+      UPDATE balances
+      SET main_balance = main_balance - ?, bot_balance = bot_balance + ?
+      WHERE id = 'default' AND main_balance >= ?
+    `, [amount, amount, amount], 'allocation', amount, 'allocate_to_bot', undefined, 'Insufficient main balance');
   }
 
   async withdrawFromBot(amount: number) {
-    const current = await this.getBalances();
-    if (amount > current.botBalance) throw new Error('Insufficient bot balance');
-
-    const updated = {
-      mainBalance: current.mainBalance + amount,
-      botBalance: current.botBalance - amount,
-      activeTradeBalance: current.activeTradeBalance,
-      totalPnl: current.totalPnl,
-      totalPnlPct: current.totalPnlPct
-    };
-
-    await this.updateBalances(updated);
-
-    // Audit log
-    await this.logAuditBalance('withdrawal', current, updated, amount, 'withdraw_from_bot');
+    this.validateAmount(amount);
+    await this.applyAtomicMutation(`
+      UPDATE balances
+      SET main_balance = main_balance + ?, bot_balance = bot_balance - ?
+      WHERE id = 'default' AND bot_balance >= ?
+    `, [amount, amount, amount], 'withdrawal', amount, 'withdraw_from_bot', undefined, 'Insufficient bot balance');
   }
 
   async halfBotBalance() {
     const current = await this.getBalances();
     const amount = current.botBalance / 2;
-    await this.withdrawFromBot(amount);
+    await this.applyAtomicMutation(`
+      UPDATE balances
+      SET main_balance = main_balance + (bot_balance / 2), bot_balance = bot_balance - (bot_balance / 2)
+      WHERE id = 'default'
+    `, [], 'withdrawal', amount, 'half_bot_balance');
   }
 
   async doubleBotBalance() {
     const current = await this.getBalances();
-    await this.allocateToBot(current.botBalance);
+    this.validateAmount(current.botBalance);
+    await this.applyAtomicMutation(`
+      UPDATE balances
+      SET main_balance = main_balance - bot_balance, bot_balance = bot_balance + bot_balance
+      WHERE id = 'default' AND main_balance >= bot_balance
+    `, [], 'allocation', current.botBalance, 'double_bot_balance', undefined, 'Insufficient main balance');
   }
 
   async updateActiveTradeBalance(amount: number) {
-    const current = await this.getBalances();
-    await this.updateBalances({
-      activeTradeBalance: current.activeTradeBalance + amount
-    });
+    if (!Number.isFinite(amount)) throw new Error('Invalid active trade balance adjustment');
+    await this.applyAtomicMutation(`
+      UPDATE balances SET active_trade_balance = active_trade_balance + ?
+      WHERE id = 'default' AND active_trade_balance + ? >= 0
+    `, [amount, amount], 'active_trade_adjustment', amount, 'update_active_trade_balance', undefined, 'Insufficient active trade balance');
   }
 
   async recordTradeResult(pnl: number, tradeValue: number) {
-    const current = await this.getBalances();
-    // Return the initial trade value to bot balance, plus/minus the pnl
-    const newBotBalance = current.botBalance + tradeValue + pnl;
-    const newActiveTradeBalance = Math.max(0, current.activeTradeBalance - tradeValue);
-    const newTotalPnl = current.totalPnl + pnl;
-
-    // Calculate PnL % based on the total balance
-    const totalBalance = current.mainBalance + current.botBalance;
-    const newTotalPnlPct = totalBalance > 0 ? (newTotalPnl / totalBalance) * 100 : 0;
-
-    const updated = {
-      mainBalance: current.mainBalance,
-      botBalance: newBotBalance,
-      activeTradeBalance: newActiveTradeBalance,
-      totalPnl: newTotalPnl,
-      totalPnlPct: newTotalPnlPct
-    };
-
-    await this.updateBalances(updated);
-
-    // Audit log
-    await this.logAuditBalance('pnl_adjustment', current, updated, pnl, 'trade_result', { tradeValue });
+    if (!Number.isFinite(pnl)) throw new Error('Invalid trade PnL');
+    this.validateAmount(tradeValue);
+    await this.applyAtomicMutation(`
+      UPDATE balances SET
+        bot_balance = bot_balance + ?,
+        active_trade_balance = CASE WHEN active_trade_balance >= ? THEN active_trade_balance - ? ELSE 0 END,
+        total_pnl = total_pnl + ?,
+        total_pnl_pct = CASE WHEN main_balance + bot_balance > 0
+          THEN ((total_pnl + ?) / (main_balance + bot_balance)) * 100 ELSE 0 END
+      WHERE id = 'default'
+    `, [tradeValue + pnl, tradeValue, tradeValue, pnl, pnl], 'pnl_adjustment', pnl, 'trade_result', { tradeValue });
   }
 
   async addActiveTrade(tradeValue: number) {
-    const current = await this.getBalances();
-    // Deduct trade value from bot balance and move to active trade balance
-    const updated = {
-      mainBalance: current.mainBalance,
-      botBalance: current.botBalance - tradeValue,
-      activeTradeBalance: current.activeTradeBalance + tradeValue,
-      totalPnl: current.totalPnl,
-      totalPnlPct: current.totalPnlPct
-    };
+    this.validateAmount(tradeValue);
+    await this.applyAtomicMutation(`
+      UPDATE balances
+      SET bot_balance = bot_balance - ?, active_trade_balance = active_trade_balance + ?
+      WHERE id = 'default' AND bot_balance >= ?
+    `, [tradeValue, tradeValue, tradeValue], 'active_trade_addition', tradeValue, 'add_active_trade', undefined, 'Insufficient bot balance');
+  }
 
-    await this.updateBalances(updated);
-
-    // Audit log
-    await this.logAuditBalance('active_trade_addition', current, updated, tradeValue, 'add_active_trade');
+  private validateAmount(amount: number) {
+    if (!Number.isFinite(amount) || amount < 0) throw new Error('Amount must be a finite non-negative number');
   }
 }
