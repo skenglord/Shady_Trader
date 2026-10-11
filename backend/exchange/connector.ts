@@ -111,10 +111,9 @@ export class ExchangeConnector {
       );
 
       this.reconciliationEngine = new PositionReconciliationEngine();
-      this.reconciliationEngine.registerAdapter(this.exchangeName, this.exchangeAdapter);
-
       this.executionAdapter = this.createExecutionAdapter();
       Object.defineProperty(this, 'accountExecutionAdapter', { value: this.createAccountExecutionAdapter(), enumerable: true });
+      this.reconciliationEngine.registerAdapter(this.accountExecutionAdapter);
       this.startReconciliation();
     } else {
       this.exchangeAdapter = null as any;
