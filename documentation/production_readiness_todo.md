@@ -2,14 +2,15 @@
 
 Created: 2026-06-10 | Updated: 2026-10-10
 
-## Current verified gate state (October 11 readiness phase)
+## Current verified gate state (October 11 readiness phases)
 
 - Access-control phase: paper REST and `/symbol` require trader role; invalid API tokens no longer bypass CSRF; paper WebSocket consumers are activated only after authentication; null pre-auth WebSocket JSON is rejected without throwing; Vite source-deny blocks `/@fs/`, encoded protected paths, traversal and SQLite files.
 - Focused access-control tests: **17/17 pass**.
+- Focused trade-safety, stop, pair-price and existing deterministic regression suites: **87/87 pass**.
 - Root lint and production frontend build: **pass**; complexity gate: **pass** (max 50).
 - Full Node 22 test suite: **522 tests / 521 passed / 0 failed / 1 skipped**. Separate ML suite: **28/28 pass**.
 - Production dependency audit: **fail**, still reports 12 vulnerabilities (1 critical, 2 high, 9 moderate); no dependency changes were included in this phase.
-- Full legacy readiness audit below remains active: trading settlement/reconciliation, stop/pair-switch races, deployment validation and dependency remediation are outstanding. This phase does not authorize live funds or untrusted network exposure.
+- Full legacy readiness audit below remains active: transactional settlement/reconciliation, deployment validation and dependency remediation remain outstanding. These phases do not authorize live funds or untrusted network exposure.
 
 ## Baseline verified gate state (October 10 audit)
 
@@ -24,10 +25,11 @@ Created: 2026-06-10 | Updated: 2026-10-10
 
 ## Current release blockers and next actions
 
-**Not ready for live funds or untrusted network exposure.** The [October 10 full audit](full_system_audit_2026-10-10.md) supersedes the historical gate/readiness assessments below. The October 11 access-control phase is in progress; only its focused regression suites have been verified so far.
+**Not ready for live funds or untrusted network exposure.** The [October 10 full audit](full_system_audit_2026-10-10.md) supersedes the historical gate/readiness assessments below. The October 11 access-control phase is complete. Execution safety is in progress; close, pair-price and stop/kill race fixes have focused verification, while reconciliation/accounting findings remain open.
 
 - [x] Secure paper REST and symbol mutations with trader role checks; require valid API tokens for CSRF bypass; reject malformed pre-auth WS JSON safely; delay paper WS initialization until auth; deny Vite filesystem aliases and local database files. Focused tests pass 17/17; full production readiness checks remain pending.
-- [ ] Serialize/durably reconcile entries and all exit paths; prevent post-stop entries and duplicate closes; preserve symbol/venue ownership.
+- [x] Prevent duplicate live closes with a per-trade lock and durable close intent; leave uncertain closes blocked for reconciliation. Price existing positions and kill-switch exits by each trade's own symbol. Stop waits for the active cycle and cancels entries that have not reached exchange submission. Focused trade-safety regressions pass 87/87.
+- [ ] Implement real exchange position/order reconciliation and transactional settlement; cover venue ownership, partial exits, and recovery of uncertain orders.
 - [ ] Make balance settlement transactional and awaited; repair paper order identities, fill prices, P&L and liquidation.
 - [ ] Activate risk configs atomically, remove LLM risk authority, and repair ML/schema/Freqtrade integration and independent OOS evaluation.
 - [ ] Repair Docker runtime imports/Kubernetes volumes, enforce a single engine owner, and verify database-specific backup restoration.

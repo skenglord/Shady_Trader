@@ -4,7 +4,6 @@ import { IndicatorEngine } from './indicators/engine.js';
 import { RegimeDetector, RegimeType } from './regime/detector.js';
 import { SignalGenerator, Signal } from './strategy/signal_generator.js';
 import { ShadowTrader } from './shadow/shadow_trader.js';
-import { calculateTradePnl } from './shadow/pnl.js';
 import { validateModeForLive } from './risk/manager.js';
 import { BalanceManager } from './balance/manager.js';
 import { MarketDataService } from './api/marketDataService.js';
@@ -235,6 +234,7 @@ export class TradingEngine {
   private stopLoopSleep: (() => void) | null = null;
   private cycleInProgress = false;
   private cycleAbortToken = 0;
+  private activeCycleCompletion: Promise<void> | null = null;
   private startupDiagnostics: {
     exchangeEnabled: boolean;
     exchangeName: string;
@@ -504,7 +504,6 @@ export class TradingEngine {
 
   async stopSchedulers() {
     this.cycleAbortToken++;
-    this.cycleInProgress = false;
 
     if (this.marketPollInterval) {
       clearInterval(this.marketPollInterval);
@@ -519,6 +518,11 @@ export class TradingEngine {
       this.stopLoopSleep = null;
       stopSleep();
     }
+
+    // A cycle may already be awaiting an exchange or database operation. Abort
+    // its next entry boundary and wait for that operation to settle before
+    // reporting stop complete or closing shared queues.
+    if (this.activeCycleCompletion) await this.activeCycleCompletion;
 
     await closeQueues().catch((err) =>
       logger.warn('Failed to close job queues during scheduler stop', {
@@ -830,64 +834,36 @@ export class TradingEngine {
   async killBot() {
     await this.stop();
 
-    // Fetch current price to close trades accurately
-    let currentPrice = 0;
-    try {
-      if (this.exchange && typeof this.exchange.getCandles === 'function') {
-        const candles = await this.exchange.getCandles(this.symbol, this.timeframe, 1);
-        if (candles && candles.length > 0) {
-          currentPrice = candles[0].close;
-        }
-      }
-    } catch (e: any) {
-      logger.error('Failed to fetch current price for killBot, using entry prices', { error: e?.message, service: 'trading-engine' });
-    }
-
     // Close all shadow positions
     for (const mode of Object.keys(this.shadowTrader.portfolios)) {
       const portfolio = this.shadowTrader.portfolios[mode as any];
       const remainingTrades: any[] = [];
       
-      for (const trade of portfolio.openTrades) {
-        const exitPrice = currentPrice || trade.price;
-        if (trade.exchangeOrderId) {
-          if (!this.exchange?.hasExecutionCredentials) {
-            logger.error('Kill switch cannot close live position: exchange credentials are incomplete', { service: 'main', tradeId: trade.id });
-            remainingTrades.push(trade);
-            continue;
-          }
-          try {
-            const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
-            const order = await this.exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
-            const filled = Number(order?.filled);
-            const status = String(order?.status || '').toLowerCase();
-            if (!order?.id || !['filled', 'closed'].includes(status) || !Number.isFinite(filled) || filled + Math.max(1e-12, trade.amount * 1e-8) < trade.amount) {
-              throw new Error(`Exchange did not confirm full close fill (${status || 'unknown'})`);
-            }
-          } catch (error: any) {
-            logger.error('Kill switch close failed; position remains open for recovery', {
-              service: 'main', tradeId: trade.id, error: error?.message || String(error)
+      for (const trade of [...portfolio.openTrades]) {
+        let exitPrice = Number.NaN;
+        try {
+          const candles = await this.exchange?.getCandles?.(trade.symbol, this.timeframe, 1);
+          const latest = Array.isArray(candles) ? candles[candles.length - 1] : null;
+          exitPrice = Number(latest?.close);
+        } catch (error: any) {
+          logger.warn('Kill switch could not fetch a price for the position symbol', {
+            service: 'main', tradeId: trade.id, symbol: trade.symbol, error: error?.message || String(error)
+          });
+        }
+        if (!Number.isFinite(exitPrice) || exitPrice <= 0) {
+          if (trade.exchangeOrderId) {
+            logger.error('Kill switch left live position open because its market price is unavailable', {
+              service: 'main', tradeId: trade.id, symbol: trade.symbol
             });
             remainingTrades.push(trade);
             continue;
           }
+          exitPrice = trade.price;
         }
-        const leverage = trade.leverage || 1;
-        const pnl = calculateTradePnl(trade, exitPrice);
-        
-        portfolio.balance += pnl;
-
-        if (mode === this.activeMode) {
-          const tradeCost = trade.amount * trade.price / (trade.exchangeOrderId ? 1 : trade.leverage);
-          await this.balanceManager.recordTradeResult(pnl, tradeCost);
-          
-        }
-
-        await runQuery(`
-          UPDATE shadow_trades
-          SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
-          WHERE id = ?
-        `, [pnl, exitPrice, Date.now(), trade.id]);
+        const closed = await this.shadowTrader.closeTrade(
+          trade.id, exitPrice, this.activeMode, this.balanceManager, this.exchange
+        );
+        if (!closed) remainingTrades.push(trade);
       }
       portfolio.openTrades = remainingTrades;
     }
@@ -1284,7 +1260,8 @@ export class TradingEngine {
             this.balanceManager,
             this.exchange,
             ctx.currentRegime,
-            indicators.df[indicators.df.length - 1]?.time
+            indicators.df[indicators.df.length - 1]?.time,
+            () => this.abortCycleIfNeeded(ctx.cycleToken, 'before_order_submission')
           );
           if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_process_signal')) return false;
         } finally {
@@ -1295,7 +1272,7 @@ export class TradingEngine {
 
     // 6. Update positions
     const currentPrice = df[df.length - 1].close;
-    await this.shadowTrader.updatePositions(currentPrice, ctx.activeMode, this.balanceManager, this.exchange, df[df.length - 1]);
+    await this.shadowTrader.updatePositions(currentPrice, ctx.activeMode, this.balanceManager, this.exchange, df[df.length - 1], ctx.symbol, ctx.timeframe);
     if (this.abortCycleIfNeeded(ctx.cycleToken, 'after_update_positions')) return false;
 
     return true;
@@ -1365,6 +1342,9 @@ export class TradingEngine {
 
     const cycleToken = this.cycleAbortToken;
     this.cycleInProgress = true;
+    let resolveCycle!: () => void;
+    const cycleCompletion = new Promise<void>(resolve => { resolveCycle = resolve; });
+    this.activeCycleCompletion = cycleCompletion;
     try {
       logger.info(`Starting cycle at ${new Date().toISOString()}`, { service: 'cycle' });
 
@@ -1414,6 +1394,8 @@ export class TradingEngine {
       await this.broadcastCycleStage(ctx, indicators);
     } finally {
       this.cycleInProgress = false;
+      resolveCycle();
+      if (this.activeCycleCompletion === cycleCompletion) this.activeCycleCompletion = null;
     }
   }
 

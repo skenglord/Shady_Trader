@@ -93,6 +93,7 @@ export class ShadowTrader {
   costEstimator?: CostEstimator;
   slippageCircuitBreaker?: SlippageCircuitBreaker;
   private runnerStates: Map<string, { tradeId: string, originalAmount: number, remainingAmount: number, partialExits: number, maxPartialExits: number, lastExitPrice: number, cumulativeExited: number }> = new Map();
+  private closingTradeIds = new Set<string>();
 
   constructor() {
     this.portfolios = {
@@ -199,10 +200,12 @@ export class ShadowTrader {
     balanceManager?: any,
     exchange?: any,
     regime: string = 'uncertain',
-    candleTime?: number
+    candleTime?: number,
+    shouldAbort: () => boolean = () => false
   ): Promise<boolean> {
     let activeModeTradeOpened = false;
     for (const mode of Object.values(RiskMode)) {
+      if (shouldAbort()) return activeModeTradeOpened;
       const portfolio = this.portfolios[mode];
       const liveOrderEnabled = mode === activeMode && process.env.LIVE_TRADING_ENABLED === 'true';
 
@@ -359,6 +362,7 @@ export class ShadowTrader {
 
       const intentCandleTime = Number.isFinite(candleTime) ? Number(candleTime) : trade.timestamp;
       const idempotencyKey = `${mode}:${trade.symbol}:${trade.side}:${intentCandleTime}`;
+      if (shouldAbort()) return activeModeTradeOpened;
       const intentResult = await runQuery(`
         INSERT INTO execution_intents
           (idempotency_key, trade_id, symbol, risk_mode, side, candle_time, status, created_at, updated_at)
@@ -375,8 +379,21 @@ export class ShadowTrader {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit, trade.entrySlippageFrac, trade.totalFeeFrac]);
 
+      if (shouldAbort()) {
+        await runQuery(`UPDATE shadow_trades SET status = 'cancelled' WHERE id = ?`, [trade.id]);
+        await runQuery(`UPDATE execution_intents SET status = 'cancelled', updated_at = ? WHERE idempotency_key = ?`,
+          [Date.now(), idempotencyKey]);
+        continue;
+      }
+
       if (liveOrderEnabled) {
         try {
+          if (shouldAbort()) {
+            await runQuery(`UPDATE shadow_trades SET status = 'cancelled' WHERE id = ?`, [trade.id]);
+            await runQuery(`UPDATE execution_intents SET status = 'cancelled', updated_at = ? WHERE idempotency_key = ?`,
+              [Date.now(), idempotencyKey]);
+            continue;
+          }
           const order = await exchange.placeOrder(trade.symbol, trade.side, trade.amount, 'market');
           requireFilledOrder(order, trade.amount);
           trade.exchangeOrderId = order.id;
@@ -538,17 +555,57 @@ export class ShadowTrader {
     ctx: ExitContext,
     exchange?: any
   ): Promise<boolean> {
+    const tradeId = String(trade.id);
+    if (this.closingTradeIds.has(tradeId)) return false;
+    this.closingTradeIds.add(tradeId);
+    try {
+      return await this.performTradeClosure(trade, exitDecision, pnlRef, ctx, exchange);
+    } finally {
+      this.closingTradeIds.delete(tradeId);
+    }
+  }
+
+  private async performTradeClosure(
+    trade: any,
+    exitDecision: ExitDecision,
+    pnlRef: { value: number },
+    ctx: ExitContext,
+    exchange?: any
+  ): Promise<boolean> {
+    const closeIntentKey = `close:${trade.id}`;
+    let liveCloseIntentClaimed = false;
     if (trade.exchangeOrderId) {
       if (!(exchange?.hasExecutionCredentials ?? Boolean(exchange?.apiKey && exchange?.apiSecret))) {
         logger.error('Live close blocked: exchange credentials are incomplete', { service: 'ShadowTrader', tradeId: trade.id });
         return false;
       }
       try {
+        const now = Date.now();
+        // Keep close intents distinct from entry intents: reconciliation joins
+        // entry order IDs by trade_id, so reusing trade.id here would duplicate
+        // local position quantities and replace the entry order ID on reload.
+        const claim = await runQuery(`
+          INSERT INTO execution_intents
+            (idempotency_key, trade_id, symbol, risk_mode, side, candle_time, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+          ON CONFLICT DO NOTHING
+        `, [closeIntentKey, `${trade.id}:close`, trade.symbol, ctx.mode, trade.side === 'buy' ? 'sell' : 'buy', now, now, now], 'run');
+        if (claim?.changes === 0 || claim?.rowCount === 0) {
+          logger.error('Live close blocked by an existing close intent; reconciliation required', { service: 'ShadowTrader', tradeId: trade.id });
+          return false;
+        }
+        liveCloseIntentClaimed = true;
         const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
         const order = await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
+        await runQuery(`UPDATE execution_intents SET status = 'submitted', exchange_order_id = ?, updated_at = ? WHERE idempotency_key = ?`,
+          [order?.id || null, Date.now(), closeIntentKey]);
         requireFilledOrder(order, trade.amount);
         trade.exchangeCloseOrderId = order.id;
       } catch (error) {
+        if (liveCloseIntentClaimed) {
+          await runQuery(`UPDATE execution_intents SET status = 'uncertain', last_error = ?, updated_at = ? WHERE idempotency_key = ?`,
+            [(error instanceof Error ? error.message : String(error)).slice(0, 1000), Date.now(), closeIntentKey]);
+        }
         logger.error('Live close failed; position remains open for recovery', {
           service: 'ShadowTrader', tradeId: trade.id, error: error instanceof Error ? error.message : String(error)
         });
@@ -570,7 +627,7 @@ export class ShadowTrader {
 
     if (ctx.mode === ctx.activeMode && ctx.balanceManager) {
       const tradeCost = trade.amount * trade.price / trade.leverage;
-      ctx.balanceManager.recordTradeResult(pnl, tradeCost);
+      await ctx.balanceManager.recordTradeResult(pnl, tradeCost);
 
     }
 
@@ -579,6 +636,11 @@ export class ShadowTrader {
       SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
       WHERE id = ?
     `, [pnl, ctx.currentPrice, Date.now(), trade.id]);
+
+    if (liveCloseIntentClaimed) {
+      await runQuery(`UPDATE execution_intents SET status = 'complete', updated_at = ? WHERE idempotency_key = ?`,
+        [Date.now(), closeIntentKey]);
+    }
 
     await this.logAuditTrade(
       trade.id,
@@ -598,7 +660,8 @@ export class ShadowTrader {
     return true;
   }
 
-  async updatePositions(currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any, lastCandle: any = null) {
+  async updatePositions(currentPrice: number, activeMode?: string, balanceManager?: any, exchange?: any, lastCandle: any = null, currentSymbol?: string, timeframe = '1m') {
+    const candlesBySymbol = new Map<string, any>();
     for (const mode of Object.values(RiskMode)) {
       const portfolio = this.portfolios[mode];
       const newOpenTrades = [];
@@ -606,23 +669,45 @@ export class ShadowTrader {
       const maintenanceMargin = 0.005;
 
       for (const trade of portfolio.openTrades) {
-        if (lastCandle && (!trade.lastUpdateTime || lastCandle.time > trade.lastUpdateTime)) {
+        let tradePrice = currentPrice;
+        let tradeCandle = lastCandle;
+        if (currentSymbol && trade.symbol !== currentSymbol) {
+          if (!candlesBySymbol.has(trade.symbol)) {
+            try {
+              const candles = await exchange?.getCandles?.(trade.symbol, timeframe, 1);
+              candlesBySymbol.set(trade.symbol, Array.isArray(candles) ? candles[candles.length - 1] : null);
+            } catch (error) {
+              logger.warn('Position update skipped: could not fetch price for its own symbol', {
+                service: 'ShadowTrader', tradeId: trade.id, symbol: trade.symbol,
+                error: error instanceof Error ? error.message : String(error)
+              });
+              candlesBySymbol.set(trade.symbol, null);
+            }
+          }
+          tradeCandle = candlesBySymbol.get(trade.symbol);
+          if (!Number.isFinite(Number(tradeCandle?.close)) || Number(tradeCandle.close) <= 0) {
+            newOpenTrades.push(trade);
+            continue;
+          }
+          tradePrice = Number(tradeCandle.close);
+        }
+        if (tradeCandle && (!trade.lastUpdateTime || tradeCandle.time > trade.lastUpdateTime)) {
           trade.candlesHeld = (trade.candlesHeld || 0) + 1;
-          trade.lastUpdateTime = lastCandle.time;
+          trade.lastUpdateTime = tradeCandle.time;
         }
 
-        console.log(`[ShadowTrader] Checking trade ${trade.id} for ${mode}. Price: ${currentPrice}, SL: ${trade.stopLoss}, TP: ${trade.takeProfit}`);
+        console.log(`[ShadowTrader] Checking trade ${trade.id} for ${mode}. Price: ${tradePrice}, SL: ${trade.stopLoss}, TP: ${trade.takeProfit}`);
         const leverage = trade.leverage || config.leverage || 1;
         const marginUsed = trade.amount * trade.price / leverage;
-        const currentNotional = trade.amount * currentPrice;
+        const currentNotional = trade.amount * tradePrice;
         const currentMargin = currentNotional / leverage;
-        const pnl = calculateTradePnl(trade, currentPrice);
+        const pnl = calculateTradePnl(trade, tradePrice);
         const profitPct = trade.side === 'buy'
-          ? (currentPrice - trade.price) / trade.price
-          : (trade.price - currentPrice) / trade.price;
+          ? (tradePrice - trade.price) / trade.price
+          : (trade.price - tradePrice) / trade.price;
 
         const ctx: ExitContext = {
-          currentPrice, config, mode: mode as RiskMode, leverage, marginUsed, currentMargin,
+          currentPrice: tradePrice, config, mode: mode as RiskMode, leverage, marginUsed, currentMargin,
           profitPct, maintenanceMargin, activeMode, balanceManager, portfolio
         };
 
@@ -664,66 +749,20 @@ export class ShadowTrader {
        
        if (tradeIndex !== -1) {
          const trade = portfolio.openTrades[tradeIndex];
-         if (trade.exchangeOrderId) {
-           if (!(exchange?.hasExecutionCredentials ?? Boolean(exchange?.apiKey && exchange?.apiSecret))) {
-             logger.error('Live close blocked: exchange credentials are incomplete', { service: 'ShadowTrader', tradeId });
-             return false;
-           }
-           try {
-             const closeSide = trade.side === 'buy' ? 'sell' : 'buy';
-             const order = await exchange.placeOrder(trade.symbol, closeSide, trade.amount, 'market');
-             requireFilledOrder(order, trade.amount);
-           } catch (error) {
-             logger.error('Live close failed; position remains open for recovery', {
-               service: 'ShadowTrader', tradeId, error: error instanceof Error ? error.message : String(error)
-             });
-             return false;
-           }
-         }
-         const leverage = trade.leverage || 1;
-         const marginUsed = trade.amount * trade.price / leverage;
-         const currentNotional = trade.amount * currentPrice;
-         const currentMargin = currentNotional / leverage;
          const pnl = calculateTradePnl(trade, currentPrice);
-
-         portfolio.balance += pnl;
-         
-         // Record win/loss for circuit breaker tracking
-         if (pnl > 0) {
-           this.riskManager.recordWin(mode);
-         } else {
-           this.riskManager.recordLoss(mode);
-         }
-         
-         if (mode === activeMode && balanceManager) {
-           const tradeCost = trade.amount * trade.price / trade.leverage;
-           balanceManager.recordTradeResult(pnl, tradeCost);
-           
-         }
-
-          const result = await runQuery(`
-            UPDATE shadow_trades
-            SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
-            WHERE id = ?
-          `, [pnl, currentPrice, Date.now(), trade.id]);
-
-          // Audit log: trade close (manual)
-          await this.logAuditTrade(
-            trade.id,
-            'close',
-            mode,
-            trade.leverage,
-            trade.symbol,
-            trade.side,
-            trade.amount,
-            currentPrice,
-            'manual_close',
-            pnl,
-            { candlesHeld: trade.candlesHeld }
-          );
-
-          portfolio.openTrades.splice(tradeIndex, 1);
-         return true;
+         const leverage = trade.leverage || 1;
+         const ctx: ExitContext = {
+           currentPrice, config: this.riskManager.getConfig(mode), mode,
+           leverage, marginUsed: trade.amount * trade.price / leverage,
+           currentMargin: trade.amount * currentPrice / leverage,
+           profitPct: trade.price ? Math.abs(currentPrice - trade.price) / trade.price : 0,
+           maintenanceMargin: 0.005, activeMode, balanceManager, portfolio
+         };
+         const closed = await this.executeTradeClosure(
+           trade, { exitPrice: currentPrice, reason: 'manual_close' }, { value: pnl }, ctx, exchange
+         );
+         if (closed) portfolio.openTrades.splice(tradeIndex, 1);
+         return closed;
        }
      }
      return false;

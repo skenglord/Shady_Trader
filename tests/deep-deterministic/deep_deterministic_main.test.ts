@@ -307,6 +307,21 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', { concurrency: fa
       
       assert.ok(stopSchedulersCalled);
     });
+
+    test('stop waits for an in-flight cycle to settle', async () => {
+      engine = new TradingEngine(mockWss as any, mockRedis as any);
+      engine.isExchangeEnabled = false;
+      engine.isRunning = true;
+      let finishCycle!: () => void;
+      (engine as any).activeCycleCompletion = new Promise<void>(resolve => { finishCycle = resolve; });
+      let stopped = false;
+      const stopping = engine.stop().then(() => { stopped = true; });
+      await new Promise(resolve => setImmediate(resolve));
+      assert.strictEqual(stopped, false, 'stop must not report completion while a cycle is active');
+      finishCycle();
+      await stopping;
+      assert.strictEqual(stopped, true);
+    });
   });
 
   describe('Run Cycle Methods', () => {
@@ -555,6 +570,35 @@ describe('Deep Deterministic Tests - TradingEngine (main.ts)', { concurrency: fa
       
       await engine.killBot();
       assert.ok(true);
+    });
+
+    test('killBot prices each position using that position symbol', async () => {
+      engine = new TradingEngine(mockWss as any, mockRedis as any);
+      engine.isExchangeEnabled = false;
+      const mode = 'moderate';
+      engine.shadowTrader.portfolios[mode as any].openTrades.push(
+        { id: 'btc-kill', symbol: 'BTC/USDT', side: 'buy', amount: 1, price: 100, leverage: 1 },
+        { id: 'eth-kill', symbol: 'ETH/USDT', side: 'buy', amount: 1, price: 100, leverage: 1 }
+      );
+      const requestedSymbols: string[] = [];
+      engine.exchange = {
+        getCandles: async (symbol: string) => {
+          requestedSymbols.push(symbol);
+          return [{ close: symbol === 'BTC/USDT' ? 101 : 202 }];
+        }
+      } as any;
+      const closed: Array<[string, number]> = [];
+      engine.shadowTrader.closeTrade = async (id: string, price: number) => {
+        closed.push([id, price]);
+        return true;
+      };
+      engine.balanceManager.getBalances = async () => ({ botBalance: 0 } as any);
+      engine.shadowTrader.getPerformance = async () => ({} as any);
+
+      await engine.killBot();
+
+      assert.deepEqual(requestedSymbols, ['BTC/USDT', 'ETH/USDT']);
+      assert.deepEqual(closed, [['btc-kill', 101], ['eth-kill', 202]]);
     });
   });
 });
