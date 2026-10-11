@@ -99,7 +99,7 @@
 - Safety tests prove exact cap behavior and prove that the disabled / invalid-data paths never place an order.
 - Paper trading and exchange testnet pass a documented risk scenario set.
 
-### Phase 3 — Make order lifecycle and multi-instance behavior safe (partial; reconciliation recovery remains)
+### Phase 3 — Make order lifecycle and multi-instance behavior safe (code-level reconciliation implemented; exchange validation remains)
 
 **Work**
 
@@ -107,6 +107,14 @@
 - Add durable idempotency keys based on signal/candle, symbol, mode, and action. A short-lived distributed lock alone is not duplicate protection.
 - Reconcile open positions and balances against the exchange after restarts, timeouts, partial fills, and close failures.
 - Define a single active execution owner or a safe multi-replica leader/queue design; separate stateless API scaling from trading-engine ownership.
+
+**Current implementation evidence (October 11, 2026)**
+
+- Binance Spot, Kraken Spot, OKX Spot, and Coinbase Advanced Trade provide account execution adapters with signed order placement and authenticated order/fill/balance reads. Coinbase uses Advanced Trade JWT authentication and the documented order configuration payload.
+- Client order IDs are persisted with account scope before submission. Fill claims, trade quantity/PnL updates, balance settlement, and balance audit share a transaction; duplicate fills are ignored.
+- Reconciliation serializes per account, reads all returned pages before advancing its fill checkpoint, retries transient reads, and leaves unresolved/ambiguous activity as durable account incidents. Admin resolution stores the actor label, reason, and resolution time.
+- Live entries require a ready account and reject spot short exposure. Pending or uncertain execution intents block additional entries; startup state-read failures are fatal instead of clearing loaded positions.
+- Verification: 569 serial Node 22 tests (568 passed, 1 skipped, 0 failed), plus `npm run lint`. Adapter behavior was tested with HTTP mocks only. Exchange testnet/sandbox calls were not run. Binance order/fill history is presently limited to the connector's active symbol; production rollout requires multi-symbol history coverage and testnet/sandbox scenarios.
 
 **Exit criteria**
 
