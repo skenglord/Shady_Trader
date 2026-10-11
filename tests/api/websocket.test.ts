@@ -15,7 +15,7 @@ const TEST_TOKENS = { adminToken: 'admin-secret', traderToken: 'trader-secret' }
 describe('websocket (first-message auth handshake)', () => {
   let mockWss: { on: any; getWsAuthTokens?: () => { adminToken: string; traderToken: string } };
   let connectionCallback: (ws: any, request?: any) => void;
-  let mockWs: { on: any; send: any; close: any; _handlers: Map<string, any>; authed?: boolean; role?: string };
+  let mockWs: { on: any; emit: any; send: any; close: any; _handlers: Map<string, any>; authed?: boolean; role?: string };
 
   beforeEach(() => {
     mockWs = {
@@ -26,6 +26,7 @@ describe('websocket (first-message auth handshake)', () => {
       send: function() {},
       close: function() {},
       _handlers: new Map(),
+      emit: function(event: string, ...args: any[]) { this._handlers.get(event)?.(...args); return true; },
     };
 
     mockWss = {
@@ -113,6 +114,16 @@ describe('websocket (first-message auth handshake)', () => {
     mockWs._handlers.get('message')!('not json');
 
     assert.strictEqual(closeCode, 4401);
+  });
+
+  test('rejects JSON null before auth without throwing', () => {
+    let closeCode: number | undefined;
+    mockWs.close = (code: number) => { closeCode = code; };
+    setupWebsocket(mockWss as any);
+    connectionCallback(mockWs as any, {});
+    assert.doesNotThrow(() => mockWs._handlers.get('message')!('null'));
+    assert.strictEqual(closeCode, 4401);
+    assert.strictEqual((mockWs as any).authed, false);
   });
 
   test('handles unknown message types gracefully after auth (no reply)', () => {

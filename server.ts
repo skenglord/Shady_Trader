@@ -11,6 +11,7 @@ import { initDatabase } from "./backend/database.js";
 import { runMigrations } from "./backend/migrations/runner.js";
 import { startTradingEngine } from "./backend/main.js";
 import { setupWebsocket } from "./backend/api/websocket.js";
+import { createSourceDenyMiddleware } from "./backend/security/source-deny.js";
 import { apiRouter } from "./backend/api/routes.js";
 import { seedDatabase } from "./seed.js";
 import { performBackup } from "./backend/backup.js";
@@ -391,94 +392,7 @@ async function startServer() {
   // Start trading engine
   startTradingEngine(wss, redis);
 
-  // Vite middleware for development
-  // Top-level deny-list for project files that should never be served to the
-  // network. Used in both dev (Vite) and prod (express.static + SPA fallback)
-  // branches below.
-  const deniedPrefixes = [
-    '/backend/',
-    '/cli/',
-    '/scripts/',
-    '/src/backend/',
-    '/coverage/',
-    '/test-results/',
-    '/playwright-report/',
-    '/backups/',
-    '/logs/',
-    '/uploads/',
-    '/data/',
-    '/.git/',
-    '/.kilo/',
-    '/.hermes/',
-    // Vite dev needs to serve its own dep cache and client runtime; blocking
-    // /node_modules/ wholesale causes 404s on /node_modules/.vite/deps/*.js
-    // and /node_modules/vite/dist/client/env.mjs, which prevent the React
-    // app from bootstrapping in dev mode. We instead block the specific
-    // project-installed packages whose source should never be served
-    // (e.g. typosquatting a request like /node_modules/typescript/lib/...).
-    '/node_modules/typescript/',
-    '/node_modules/.bin/',
-    // Test/build artifacts under node_modules
-    '/node_modules/.cache/',
-    '/tests/',
-    '/docs/',
-    '/documentation/',
-    '/k8s/',
-    '/docker/',
-    '/qa-output',
-  ];
-  const deniedExact = new Set([
-    '/package.json',
-    '/package-lock.json',
-    '/tsconfig.json',
-    '/tsconfig.node.json',
-    '/vite.config.ts',
-    '/server.ts',
-    '/server-clean.log',
-    '/server-clean2.log',
-    '/server-final.log',
-    '/server.pid',
-    '/seed.ts',
-    '/.env',
-    '/.env.example',
-    '/.env.development.local',
-    '/.env.production',
-    '/playwright.config.ts',
-    '/.gitignore',
-    '/.dockerignore',
-    '/AGENTS.md',
-    '/CLAUDE.md',
-    '/CHANGES.md',
-    '/CODEBASE_STRUCTURE.md',
-    '/SYSTEM_DATA_ANALYSIS.md',
-    '/test_audit_report.md',
-    '/build_logic.md',
-    '/README.md',
-    '/COMPONENT_READINESS_MATRIX.md',
-    '/cli-smoke-output.txt',
-    '/docker-compose.yml',
-    '/Dockerfile',
-    '/test-db.js',
-    '/helm.tar.gz',
-    '/Bitcoin Historical Data.html',
-    '/comparecryptoapi.pdf',
-    '/metadata.json',
-    '/highlights.json',
-  ]);
-  const createSourceDenyMiddleware = (): express.RequestHandler => (req, res, next) => {
-    const p = req.path;
-    // Only guard GET/HEAD — POST/PUT/DELETE are not Vite/static-served.
-    if (req.method !== 'GET' && req.method !== 'HEAD') return next();
-    if (deniedExact.has(p)) {
-      return res.status(404).json({ error: 'Not Found' });
-    }
-    for (const prefix of deniedPrefixes) {
-      if (p === prefix.slice(0, -1) || p.startsWith(prefix)) {
-        return res.status(404).json({ error: 'Not Found' });
-      }
-    }
-    next();
-  };
+  // Vite middleware for development; block source and local data before Vite/static handling.
 
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({

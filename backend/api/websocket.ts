@@ -68,7 +68,7 @@ export function setupWebsocket(wss: WebSocketServer) {
           return;
         }
 
-        if (data.type !== 'auth' || typeof data.token !== 'string') {
+        if (!data || typeof data !== 'object' || Array.isArray(data) || data.type !== 'auth' || typeof data.token !== 'string') {
           logger.warn('First message is not auth — closing', { service: 'websocket' });
           clearTimeout(authTimer);
           ws.close(WS_CLOSE_AUTH, 'Auth required');
@@ -101,6 +101,8 @@ export function setupWebsocket(wss: WebSocketServer) {
         (ws as any).role = role;
         logger.debug('Client authenticated', { service: 'websocket', role });
         ws.send(JSON.stringify({ type: 'auth_ok', role }));
+        // Downstream handlers may expose authenticated data only after this event.
+        ws.emit('authenticated', role);
         return;
       }
 
@@ -120,6 +122,10 @@ export function setupWebsocket(wss: WebSocketServer) {
     ws.on('close', () => {
       clearTimeout(authTimer);
       logger.debug('Client disconnected', { service: 'websocket', authed: (ws as any).authed });
+    });
+    ws.on('error', (error: Error) => {
+      clearTimeout(authTimer);
+      logger.warn('WebSocket connection error', { service: 'websocket', error: error.message });
     });
   });
 }

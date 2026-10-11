@@ -331,6 +331,9 @@ const traderRoutes = [
   '/freqtrade/pairs',
   '/freqtrade/info',
   '/freqtrade/jobs',
+  // Symbol changes and all paper-trading operations mutate or expose trading state.
+  '/symbol',
+  '/paper',
 ];
 
 function validateBody(schema: z.ZodTypeAny) {
@@ -506,7 +509,7 @@ function csrfProtection(req: any, res: any, next: any) {
   const sessionToken = req.session?.csrfToken;
   // For API token auth, CSRF is less critical (CORS + token auth mitigates it)
   // But for session auth, require a matching CSRF token
-  if (req.headers.authorization?.startsWith('Bearer ') || req.headers['x-api-token']) {
+  if (resolveRoleFromToken(getProvidedToken(req))) {
     return next(); // API token auth is not vulnerable to CSRF
   }
   if (!token || !sessionToken || token !== sessionToken) {

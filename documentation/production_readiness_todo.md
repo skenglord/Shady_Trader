@@ -2,7 +2,16 @@
 
 Created: 2026-06-10 | Updated: 2026-10-10
 
-## Current verified gate state
+## Current verified gate state (October 11 readiness phase)
+
+- Access-control phase: paper REST and `/symbol` require trader role; invalid API tokens no longer bypass CSRF; paper WebSocket consumers are activated only after authentication; null pre-auth WebSocket JSON is rejected without throwing; Vite source-deny blocks `/@fs/`, encoded protected paths, traversal and SQLite files.
+- Focused access-control tests: **17/17 pass**.
+- Root lint and production frontend build: **pass**; complexity gate: **pass** (max 50).
+- Full Node 22 test suite: **522 tests / 521 passed / 0 failed / 1 skipped**. Separate ML suite: **28/28 pass**.
+- Production dependency audit: **fail**, still reports 12 vulnerabilities (1 critical, 2 high, 9 moderate); no dependency changes were included in this phase.
+- Full legacy readiness audit below remains active: trading settlement/reconciliation, stop/pair-switch races, deployment validation and dependency remediation are outstanding. This phase does not authorize live funds or untrusted network exposure.
+
+## Baseline verified gate state (October 10 audit)
 
 - Root lint/build/complexity: **pass** on October 10.
 - Serial isolated Node 22 tests: **pass**, 518 tests / 517 passed / 0 failed or cancelled / 1 skipped. Whole skipped suites remain; do not infer complete coverage from that counter.
@@ -15,9 +24,9 @@ Created: 2026-06-10 | Updated: 2026-10-10
 
 ## Current release blockers and next actions
 
-**Not ready for live funds or untrusted network exposure.** The [October 10 full audit](full_system_audit_2026-10-10.md) supersedes the historical gate/readiness assessments below; no production fixes were made during the audit.
+**Not ready for live funds or untrusted network exposure.** The [October 10 full audit](full_system_audit_2026-10-10.md) supersedes the historical gate/readiness assessments below. The October 11 access-control phase is in progress; only its focused regression suites have been verified so far.
 
-- [ ] Authenticate paper REST/WebSocket and symbol mutations; reject malformed WS frames safely; close Vite source/data exposure.
+- [x] Secure paper REST and symbol mutations with trader role checks; require valid API tokens for CSRF bypass; reject malformed pre-auth WS JSON safely; delay paper WS initialization until auth; deny Vite filesystem aliases and local database files. Focused tests pass 17/17; full production readiness checks remain pending.
 - [ ] Serialize/durably reconcile entries and all exit paths; prevent post-stop entries and duplicate closes; preserve symbol/venue ownership.
 - [ ] Make balance settlement transactional and awaited; repair paper order identities, fill prices, P&L and liquidation.
 - [ ] Activate risk configs atomically, remove LLM risk authority, and repair ML/schema/Freqtrade integration and independent OOS evaluation.

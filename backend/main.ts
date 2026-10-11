@@ -368,14 +368,15 @@ export class TradingEngine {
 
   private setupPaperTradingWebSocket(): void {
     this.wss.on('connection', (ws, req) => {
-      const url = req.url;
-      
-      // Check if this is a paper trading WebSocket connection
-      if (url && url.includes('paper-trading')) {
+      let pathname: string;
+      try { pathname = new URL(req.url || '/', 'http://localhost').pathname; }
+      catch { return; }
+      if (pathname !== '/paper-trading') return;
+      ws.on('authenticated', () => {
         const clientId = randomUUID();
-        logger.info('Paper trading WebSocket connection established', { clientId, url });
+        logger.info('Paper trading WebSocket connection established', { clientId });
         this.paperTradingWebSocketHandler.handleConnection(ws, clientId);
-      }
+      });
     });
   }
 

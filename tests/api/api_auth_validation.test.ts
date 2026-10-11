@@ -57,6 +57,17 @@ describe('API auth and validation matrix', () => {
     assert.strictEqual(res.status, 400);
   });
 
+  test('requires trader authentication for symbol and paper routes', async () => {
+    const app = createApp();
+    for (const path of ['/api/symbol', '/api/paper/positions']) {
+      assert.strictEqual((await request(app).get(path)).status, 401, `${path} without a token`);
+      assert.strictEqual((await request(app).get(path).set('x-api-token', 'attacker-token')).status, 401, `${path} with a forged token`);
+    }
+    const authorized = await request(app).get('/api/paper/positions').set('x-api-token', 'trader-token');
+    assert.notStrictEqual(authorized.status, 401);
+    assert.notStrictEqual(authorized.status, 403);
+  });
+
   test('propagates request correlation ID header', async () => {
     const res = await request(createApp())
       .get('/api/status')

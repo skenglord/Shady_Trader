@@ -466,7 +466,7 @@ npm run freqtrade:ingest    # Bulk-ingest parquet/feather into candles DB
 - Support partial fills and runner positions
 
 ## Current State
-**October 10, 2026 audit: not ready for live funds or untrusted network exposure.** See `documentation/full_system_audit_2026-10-10.md` and its evidence appendices for current findings, verification and limits. No existing service answered on port 3000 during this audit. The historical feature inventory below describes implementation presence, not verified correctness: in particular, authentication is incomplete on paper/symbol paths, stop/pair-switch guards have gaps, and reconciliation adapters return stub positions.
+**October 11, 2026 access-control phase complete; system remains not ready for live funds or untrusted network exposure.** See `documentation/full_system_audit_2026-10-10.md` and its evidence appendices for audit findings, and `documentation/production_readiness_todo.md` for phase status. Paper REST and symbol routes require trader authorization, CSRF token bypass checks credentials, paper WebSockets wait for auth, malformed null JSON closes safely, and source-deny middleware blocks Vite filesystem aliases and SQLite files. Verification: focused access-control tests 17/17; root lint and production build pass; full Node 22 suite 522 tests (521 pass, 1 skipped); separate ML suite 28/28; complexity gate passes. Production dependency audit still fails with 12 vulnerabilities (1 critical, 2 high, 9 moderate). Stop/pair-switch guards and reconciliation adapters remain audit findings.
 
 **✅ AI Configuration:**
 - **Model**: Gemma 4 E2B (`gemma4:e2b` — 5.1B Q4_K_M) via local Ollama
