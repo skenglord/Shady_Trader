@@ -6,6 +6,7 @@ import { randomUUID } from 'crypto';
 import { ExchangeAdapterFactory, BaseExchangeAdapter } from './adapter.js';
 import { PositionReconciliationEngine } from './reconciliation.js';
 import { ProviderRotator, type ProviderName } from './provider-rotator.js';
+import { getExchangeAccountId, type AccountExecutionAdapter, type ExchangePage, type NormalizedExchangeFill, type NormalizedExchangeOrder, type PlaceExchangeOrderRequest } from './account-execution-adapter.js';
 
 type ExchangeName = 'coinmarketcap' | 'coinapi' | 'coingecko' | 'binance' | 'kraken' | 'okx' | 'coinbase';
 type Capabilities = {
@@ -44,6 +45,7 @@ export class ExchangeConnector {
   private updatingPrice = false;
   private tickHandler: ((tick: { symbol: string; price: number; time: number }) => void) | null = null;
   private executionAdapter: ExecutionAdapter;
+  readonly accountExecutionAdapter!: AccountExecutionAdapter;
   private exchangeAdapter: BaseExchangeAdapter;
   private reconciliationEngine: PositionReconciliationEngine;
   readonly providerRotator: ProviderRotator;
@@ -112,6 +114,7 @@ export class ExchangeConnector {
       this.reconciliationEngine.registerAdapter(this.exchangeName, this.exchangeAdapter);
 
       this.executionAdapter = this.createExecutionAdapter();
+      Object.defineProperty(this, 'accountExecutionAdapter', { value: this.createAccountExecutionAdapter(), enumerable: true });
       this.startReconciliation();
     } else {
       this.exchangeAdapter = null as any;
@@ -194,7 +197,7 @@ export class ExchangeConnector {
   }
 
   private getCoinbaseBaseUrl(): string {
-    return this.testnet ? 'https://api-public.sandbox.exchange.coinbase.com' : 'https://api.coinbase.com';
+    return this.testnet ? 'https://api-sandbox.coinbase.com' : 'https://api.coinbase.com';
   }
 
   private signOkxRequest(timestamp: string, method: string, path: string, body: string = ''): string {
@@ -205,6 +208,122 @@ export class ExchangeConnector {
   private signCoinbaseRequest(timestamp: string, method: string, path: string, body: string = ''): string {
     const message = timestamp + method + path + body;
     return crypto.createHmac('sha256', this.apiSecret).update(message).digest('base64');
+  }
+
+  private createAccountExecutionAdapter(): AccountExecutionAdapter {
+    const exchange = this.exchangeName as 'binance' | 'kraken' | 'okx' | 'coinbase';
+    const environment = exchange === 'coinbase' && this.testnet ? 'sandbox' : (this.testnet ? 'testnet' : 'production');
+    const accountId = getExchangeAccountId(exchange, environment, this.apiKey);
+    const requireCredentials = () => {
+      if (!this.apiKey || !this.apiSecret || ((exchange === 'okx') && !this.apiPassword)) throw new Error(`${exchange} requires EXCHANGE_API_KEY and EXCHANGE_API_SECRET for authenticated account access`);
+    };
+    const coinbaseJwt = (method: string, path: string) => {
+      const header = Buffer.from(JSON.stringify({ alg: 'ES256', kid: this.apiKey, nonce: randomUUID(), typ: 'JWT' })).toString('base64url');
+      const uri = `${method} ${this.testnet ? 'api-sandbox.coinbase.com' : 'api.coinbase.com'}${path}`;
+      const payload = Buffer.from(JSON.stringify({ iss: 'cdp', nbf: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 120, sub: this.apiKey, uri })).toString('base64url');
+      const signingInput = `${header}.${payload}`;
+      const key = this.apiSecret.replace(/\\n/g, '\n');
+      const signature = crypto.sign('sha256', Buffer.from(signingInput), { key, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+      return `${signingInput}.${signature}`;
+    };
+    const auth = async (method: string, path: string, body?: string, params?: Record<string, string>) => {
+      requireCredentials();
+      if (exchange === 'coinbase') {
+        const url = `${this.getCoinbaseBaseUrl()}${path}`;
+        const headers = { Authorization: `Bearer ${coinbaseJwt(method, path)}`, 'Content-Type': 'application/json' };
+        const response = method === 'GET' ? await axios.get(url, { params, headers }) : method === 'DELETE' ? await axios.delete(url, { params, headers }) : await axios.post(url, body, { headers });
+        if (response.data?.success === false || response.data?.error_response) throw new Error(`Coinbase API error: ${response.data?.error_response?.message || response.data?.message || 'request rejected'}`);
+        return response.data;
+      }
+      if (exchange === 'binance') {
+        const query = new URLSearchParams({ ...(params || {}), timestamp: String(Date.now()) });
+        if (body) Object.entries(JSON.parse(body)).forEach(([k, v]) => query.set(k, String(v)));
+        query.set('signature', this.signBinanceQuery(query.toString()));
+        const url = `${this.getBinanceBaseUrl()}${path}`;
+        const config = { params: query, headers: { 'X-MBX-APIKEY': this.apiKey } };
+        if (method === 'GET') return (await axios.get(url, config)).data;
+        if (method === 'DELETE') return (await axios.delete(url, config)).data;
+        return (await axios.post(url, query.toString(), { headers: { ...config.headers, 'Content-Type': 'application/x-www-form-urlencoded' } })).data;
+      }
+      if (exchange === 'kraken') {
+        const nonce = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+        const form = new URLSearchParams({ nonce, ...(params || {}) });
+        if (body) Object.entries(JSON.parse(body)).forEach(([k, v]) => form.set(k, String(v)));
+        const headers = { 'API-Key': this.apiKey, 'API-Sign': this.signKrakenPayload(path, nonce, form), 'Content-Type': 'application/x-www-form-urlencoded' };
+        const response = await axios.post(`https://api.kraken.com${path}`, form.toString(), { headers });
+        if (response.data?.error?.length) throw new Error(`Kraken API error: ${response.data.error.join(', ')}`);
+        return response.data?.result;
+      }
+      const timestamp = new Date().toISOString();
+      const query = params ? `?${new URLSearchParams(params)}` : '';
+      const rawBody = body || '';
+      const signature = this.signOkxRequest(timestamp, method, path + query, rawBody);
+      const headers = { 'OK-ACCESS-KEY': this.apiKey, 'OK-ACCESS-SIGN': signature, 'OK-ACCESS-TIMESTAMP': timestamp, 'OK-ACCESS-PASSPHRASE': this.apiPassword || '', 'Content-Type': 'application/json' };
+      const url = `${this.getOkxBaseUrl()}${path}${query}`;
+      const response = method === 'GET' ? await axios.get(url, { headers }) : await axios.post(url, rawBody, { headers });
+      if (response.data?.code !== '0') throw new Error(`OKX API error: ${response.data?.msg || response.data?.code || 'malformed response'}`);
+      return response.data?.data;
+    };
+    const normalizeOrder = (raw: any, symbolFallback = ''): NormalizedExchangeOrder => {
+      if (!raw || typeof raw !== 'object') throw new Error(`${exchange} returned malformed order data`);
+      const id = String(raw.orderId ?? (Array.isArray(raw.txid) ? raw.txid[0] : raw.txid) ?? raw.ordId ?? raw.order_id ?? '');
+      if (!id) throw new Error(`${exchange} order response omitted order id`);
+      const statusRaw = String(raw.status ?? raw.state ?? raw.order_status ?? '').toLowerCase();
+      const status = /filled|closed/.test(statusRaw) ? (Number(raw.filled_size ?? raw.executedQty ?? raw.vol_exec ?? raw.accFillSz ?? 0) > 0 ? 'filled' : 'filled') : /partial/.test(statusRaw) ? 'partially_filled' : /cancel/.test(statusRaw) ? 'canceled' : /reject/.test(statusRaw) ? 'rejected' : /expired/.test(statusRaw) ? 'expired' : /open|live|new|pending/.test(statusRaw) ? (Number(raw.filled_size ?? raw.executedQty ?? raw.vol_exec ?? raw.accFillSz ?? 0) > 0 ? 'partially_filled' : 'open') : 'unknown';
+      const product = String(raw.product_id ?? raw.symbol ?? raw.pair ?? raw.instId ?? symbolFallback).replace('-', '/');
+      return { exchangeOrderId: id, clientOrderId: raw.clientOrderId ?? raw.cl_ord_id ?? raw.clOrdId ?? raw.client_order_id ?? null, symbol: product, side: String(raw.side ?? '').toLowerCase() === 'sell' ? 'sell' : 'buy', requestedQuantity: Number(raw.origQty ?? raw.vol ?? raw.sz ?? raw.base_size ?? raw.order_configuration?.market_market_ioc?.base_size ?? 0), filledQuantity: Number(raw.executedQty ?? raw.vol_exec ?? raw.accFillSz ?? raw.filled_size ?? raw.filledSize ?? 0), averageFillPrice: Number(raw.avgPrice ?? raw.price ?? raw.avgPx ?? raw.average_filled_price ?? 0) || null, status, updatedAt: Number(raw.updateTime ?? raw.transactTime ?? raw.timestamp ?? (raw.created_time ? Date.parse(raw.created_time) : Date.now())) };
+    };
+    const page = async (kind: 'orders' | 'fills', since: number, cursor?: string): Promise<ExchangePage<any>> => {
+      let data: any;
+      if (exchange === 'binance') data = await auth('GET', kind === 'orders' ? '/api/v3/allOrders' : '/api/v3/myTrades', undefined, { symbol: this.activeSymbol.replace('/', ''), startTime: String(since), ...(cursor ? { fromId: cursor } : {}) });
+      else if (exchange === 'kraken') data = await auth('POST', kind === 'orders' ? '/0/private/ClosedOrders' : '/0/private/TradesHistory', undefined, { start: String(Math.floor(since / 1000)), ...(cursor ? { ofs: cursor } : {}) });
+      else if (exchange === 'okx') data = await auth('GET', kind === 'orders' ? '/api/v5/trade/orders-history' : '/api/v5/trade/fills-history', undefined, { instType: 'SPOT', begin: String(since), ...(cursor ? { after: cursor } : {}) });
+      else data = await auth('GET', kind === 'orders' ? '/api/v3/brokerage/orders/historical/batch' : '/api/v3/brokerage/orders/historical/fills', undefined, { start_date: new Date(since).toISOString(), ...(cursor ? { cursor } : {}) });
+      const items: any[] = exchange === 'kraken' ? Object.values(data?.closed ?? data?.trades ?? {}) : exchange === 'coinbase' ? (kind === 'orders' ? data?.orders : data?.fills) : data;
+      if (!Array.isArray(items)) throw new Error(`${exchange} returned malformed ${kind} page`);
+      const normalized = items.map(raw => kind === 'orders' ? normalizeOrder(raw) : normalizeFill(raw));
+      const next = exchange === 'coinbase' ? (data?.has_next ? String(data?.cursor || '') : null) : (items.length >= (exchange === 'binance' ? 1000 : 100) ? String(items.at(-1)?.id ?? items.at(-1)?.trade_id ?? items.at(-1)?.fillId ?? '') : null);
+      if (next === '') throw new Error(`${exchange} returned incomplete ${kind} pagination`);
+      return { items: normalized, nextCursor: next };
+    };
+    const normalizeFill = (raw: any): NormalizedExchangeFill => {
+      const fillId = String(raw.id ?? raw.trade_id ?? raw.execId ?? raw.entry_id ?? '');
+      const orderId = String(raw.orderId ?? raw.order_id ?? raw.ordertxid ?? raw.ordId ?? '');
+      const quantity = Number(raw.qty ?? raw.vol ?? raw.fillSz ?? raw.size ?? raw.base_size ?? 0);
+      const price = Number(raw.price ?? raw.fillPx ?? raw.average_filled_price ?? 0);
+      if (!fillId || !orderId || !Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price <= 0) throw new Error(`${exchange} returned malformed fill data`);
+      return { exchangeOrderId: orderId, exchangeFillId: fillId, clientOrderId: raw.clientOrderId ?? raw.clOrdId ?? null, symbol: String(raw.symbol ?? raw.product_id ?? raw.instId ?? raw.pair ?? '').replace('-', '/'), side: String(raw.side ?? '').toLowerCase() === 'sell' ? 'sell' : 'buy', quantity, price, fee: Number(raw.commission ?? raw.fee ?? raw.fee_amount ?? 0), feeCurrency: raw.commissionAsset ?? raw.feeCurrency ?? raw.fee_currency ?? null, timestamp: Number(raw.time ?? raw.timestamp ?? (raw.created_time ? Date.parse(raw.created_time) : Date.now())) };
+    };
+    return {
+      exchange, environment, accountId,
+      capabilities: { supportsLiveTrading: true, supportsAuthenticatedReads: true, supportsClientOrderIds: true },
+      placeOrder: async (request: PlaceExchangeOrderRequest) => {
+        const symbol = request.symbol.replace('/', exchange === 'okx' || exchange === 'coinbase' ? '-' : '');
+        let raw: any;
+        if (exchange === 'binance') raw = await auth('POST', '/api/v3/order', JSON.stringify({ symbol, side: request.side.toUpperCase(), type: request.orderType.toUpperCase(), quantity: request.quantity, newClientOrderId: request.clientOrderId, ...(request.price ? { price: request.price, timeInForce: 'GTC' } : {}) }));
+        else if (exchange === 'kraken') raw = await auth('POST', '/0/private/AddOrder', JSON.stringify({ pair: symbol, type: request.side, ordertype: request.orderType, volume: request.quantity, cl_ord_id: request.clientOrderId, ...(request.price ? { price: request.price } : {}) }));
+        else if (exchange === 'okx') raw = (await auth('POST', '/api/v5/trade/order', JSON.stringify({ instId: symbol, tdMode: 'cash', side: request.side, ordType: request.orderType, sz: String(request.quantity), clOrdId: request.clientOrderId, ...(request.price ? { px: String(request.price) } : {}) })))?.[0];
+        else raw = await auth('POST', '/api/v3/brokerage/orders', JSON.stringify({ client_order_id: request.clientOrderId, product_id: symbol, side: request.side.toUpperCase(), order_configuration: request.orderType === 'market' ? { market_market_ioc: { base_size: String(request.quantity) } } : { limit_limit_gtc: { base_size: String(request.quantity), limit_price: String(request.price) } } }));
+        return normalizeOrder(raw, request.symbol);
+      },
+      getOrder: async (query) => {
+        const path = exchange === 'binance' ? '/api/v3/order' : exchange === 'kraken' ? '/0/private/QueryOrders' : exchange === 'okx' ? '/api/v5/trade/order' : `/api/v3/brokerage/orders/historical/${query.exchangeOrderId}`;
+        const params: Record<string, string> = exchange === 'binance' ? { symbol: query.symbol.replace('/', ''), ...(query.exchangeOrderId ? { orderId: query.exchangeOrderId } : { origClientOrderId: query.clientOrderId || '' }) } : exchange === 'kraken' ? { txid: query.exchangeOrderId || query.clientOrderId || '' } : exchange === 'okx' ? { instId: query.symbol.replace('/', '-'), ...(query.exchangeOrderId ? { ordId: query.exchangeOrderId } : { clOrdId: query.clientOrderId || '' }) } : {};
+        try { const raw = await auth(exchange === 'kraken' ? 'POST' : 'GET', path, undefined, params); const value = exchange === 'kraken' ? Object.values(raw || {})[0] : exchange === 'okx' ? raw?.[0] : exchange === 'coinbase' ? raw?.order : raw; return value ? normalizeOrder(value, query.symbol) : null; } catch (error: any) { if (error?.response?.status === 404) return null; throw error; }
+      },
+      listOpenOrders: async () => {
+        let items: any;
+        if (exchange === 'binance') items = await auth('GET', '/api/v3/openOrders', undefined, { symbol: this.activeSymbol.replace('/', '') });
+        else if (exchange === 'kraken') items = (await auth('POST', '/0/private/OpenOrders'))?.open;
+        else if (exchange === 'okx') items = await auth('GET', '/api/v5/trade/orders-pending', undefined, { instType: 'SPOT' });
+        else { const response = await auth('GET', '/api/v3/brokerage/orders/historical/batch', undefined, { order_status: 'OPEN' }); items = response?.orders; }
+        if (!Array.isArray(items)) throw new Error(`${exchange} returned malformed open orders`);
+        return items.map((raw: any) => normalizeOrder(raw));
+      },
+      listOrders: async (since, cursor) => await page('orders', since, cursor) as ExchangePage<NormalizedExchangeOrder>,
+      listFills: async (since, cursor) => await page('fills', since, cursor) as ExchangePage<NormalizedExchangeFill>,
+      getBalances: async () => { const data = exchange === 'binance' ? await auth('GET', '/api/v3/account') : exchange === 'kraken' ? await auth('POST', '/0/private/Balance') : exchange === 'okx' ? (await auth('GET', '/api/v5/account/balance'))?.[0]?.details : await auth('GET', '/api/v3/brokerage/accounts'); if (exchange === 'binance') { if (!Array.isArray(data?.balances)) throw new Error('Binance returned malformed balances'); return Object.fromEntries(data.balances.map((b: any) => [b.asset, Number(b.free)])); } if (exchange === 'kraken') { if (!data || typeof data !== 'object') throw new Error('Kraken returned malformed balances'); return Object.fromEntries(Object.entries(data).map(([asset, value]) => [asset, Number(value)])); } if (exchange === 'okx') { if (!Array.isArray(data)) throw new Error('OKX returned malformed balances'); return Object.fromEntries(data.map((b: any) => [b.ccy, Number(b.cashBal)])); } if (!Array.isArray(data?.accounts)) throw new Error('Coinbase returned malformed balances'); return Object.fromEntries(data.accounts.map((b: any) => [b.currency, Number(b.available_balance?.value)])); }
+    };
   }
 
   private async fetchLatestPrice(symbol: string) {
@@ -1044,11 +1163,16 @@ export class ExchangeConnector {
     };
   }
 
-  async placeOrder(symbol: string, side: 'buy' | 'sell', amount: number, orderType: 'market' | 'limit' = 'market', price?: number) {
+  async placeOrder(symbol: string, side: 'buy' | 'sell', amount: number, orderType: 'market' | 'limit' = 'market', price?: number, clientOrderId = randomUUID()) {
+    if (this.accountExecutionAdapter) {
+      const order = await this.accountExecutionAdapter.placeOrder({ clientOrderId, symbol, side, quantity: amount, orderType, price });
+      return { id: order.exchangeOrderId, status: order.status === 'filled' ? 'closed' : order.status, filled: order.filledQuantity, price: order.averageFillPrice || price || this.currentPrice || 0, timestamp: order.updatedAt, simulated: false, exchange: this.exchangeName };
+    }
     return this.executionAdapter.placeOrder(symbol, side, amount, orderType, price);
   }
 
   async getBalance() {
+    if (this.accountExecutionAdapter) return { ...(await this.accountExecutionAdapter.getBalances()), simulated: false };
     return this.executionAdapter.getBalance();
   }
 
