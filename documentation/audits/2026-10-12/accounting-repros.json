@@ -1,0 +1,89 @@
+{
+  "runner": {
+    "fixture": "Production default aggressive mode; 1-unit long @100, 2x leverage; mark102; zero fees/slippage to isolate arithmetic; DB mocked",
+    "expectedPnl": 2,
+    "actualPortfolioPnl": 3.1999999999970896,
+    "settlements": [
+      {
+        "pnl": 1.2,
+        "principal": 30
+      },
+      {
+        "pnl": 2,
+        "principal": 20
+      }
+    ],
+    "remainingPositions": 0
+  },
+  "modeSwitch": {
+    "fixture": "Positions staged as one initially active moderate trade with 100 reserved, plus one shadow-only aggressive trade worth200; active mode then aggressive; both close flat; actual BalanceManager with in-memory SQLite",
+    "initialWallet": 1000,
+    "reserved": {
+      "mainBalance": 0,
+      "botBalance": 900,
+      "activeTradeBalance": 100,
+      "totalPnl": 0,
+      "totalPnlPct": 0
+    },
+    "afterOldClose": {
+      "mainBalance": 0,
+      "botBalance": 900,
+      "activeTradeBalance": 100,
+      "totalPnl": 0,
+      "totalPnlPct": 0
+    },
+    "afterBothClosed": {
+      "mainBalance": 0,
+      "botBalance": 1100,
+      "activeTradeBalance": 0,
+      "totalPnl": 0,
+      "totalPnlPct": 0
+    },
+    "expectedFinalWallet": 1000
+  },
+  "crossSymbolDailyLoss": {
+    "fixture": "One unchanged BTC long1@50000; entry gate supplied ETH price3000",
+    "expectedUnrealizedLoss": 0,
+    "actualLoss": 47000
+  },
+  "limitFill": {
+    "fixture": "Asks1@100 and1@110; buy limit100 qty2",
+    "expectedMaxFillPrice": 100,
+    "actual": {
+      "filledOrders": [
+        {
+          "id": "audit-limit",
+          "symbol": "BTC/USDT",
+          "side": "buy",
+          "type": "limit",
+          "quantity": "2",
+          "price": "100",
+          "timeInForce": "GTC",
+          "timestamp": 1791805776386,
+          "status": "filled",
+          "filledQuantity": "2",
+          "fillPrice": "105",
+          "fillTimestamp": 1791805776389
+        }
+      ],
+      "remainingOrders": []
+    }
+  },
+  "liquidation": {
+    "fixture": "1-unit long@100, leverage10, mark99; margin10, loss1, remaining equity9",
+    "pnl": {
+      "unrealizedPnl": "-1",
+      "realizedPnl": "0",
+      "totalPnl": "-1",
+      "pnlPercentage": "-1",
+      "marginUsed": "10",
+      "currentMargin": "9.9",
+      "roi": "-10"
+    },
+    "actualLiquidated": true,
+    "expectedLiquidated": false
+  },
+  "restServiceWiring": {
+    "error": "Live market depth is unavailable; paper order was not accepted"
+  }
+}

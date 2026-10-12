@@ -1,0 +1,1539 @@
+{
+  "2026-10-11": {
+    "app-health-live": {
+      "name": "app-health-live",
+      "url": "http://127.0.0.1:3000/api/health/live",
+      "observedAt": "2026-10-11T22:18:53.412Z",
+      "elapsedMs": 53,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:18:53 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "status": "ok",
+        "timestamp": 1791757133402
+      }
+    },
+    "app-health-ready": {
+      "name": "app-health-ready",
+      "url": "http://127.0.0.1:3000/api/health/ready",
+      "observedAt": "2026-10-11T22:18:56.242Z",
+      "elapsedMs": 2829,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:18:56 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "status": "ready",
+        "timestamp": 1791757136239,
+        "components": {
+          "database": "ok",
+          "redis": "degraded",
+          "tradingEngine": "ok"
+        }
+      }
+    },
+    "app-health-providers": {
+      "name": "app-health-providers",
+      "url": "http://127.0.0.1:3000/api/health/providers",
+      "observedAt": "2026-10-11T22:18:56.255Z",
+      "elapsedMs": 13,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:18:56 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "activeProvider": "binance",
+        "providers": [
+          {
+            "name": "coingecko",
+            "available": false,
+            "circuitOpen": true,
+            "circuitRemainingSec": 77,
+            "successes": 10,
+            "failures": 13,
+            "avgLatencyMs": 443,
+            "consecutiveTimeouts": 3
+          },
+          {
+            "name": "binance",
+            "available": true,
+            "circuitOpen": false,
+            "circuitRemainingSec": 0,
+            "successes": 255,
+            "failures": 2,
+            "avgLatencyMs": 348,
+            "consecutiveTimeouts": 0
+          },
+          {
+            "name": "coinmarketcap",
+            "available": true,
+            "circuitOpen": false,
+            "circuitRemainingSec": 0,
+            "successes": 0,
+            "failures": 2,
+            "avgLatencyMs": 0,
+            "consecutiveTimeouts": 2
+          },
+          {
+            "name": "coinapi",
+            "available": true,
+            "circuitOpen": false,
+            "circuitRemainingSec": 0,
+            "successes": 0,
+            "failures": 2,
+            "avgLatencyMs": 0,
+            "consecutiveTimeouts": 2
+          }
+        ]
+      }
+    },
+    "app-diagnostics-startup": {
+      "name": "app-diagnostics-startup",
+      "url": "http://127.0.0.1:3000/api/diagnostics/startup",
+      "observedAt": "2026-10-11T22:18:56.265Z",
+      "elapsedMs": 9,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:18:56 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "exchangeEnabled": true,
+        "exchangeName": "coingecko",
+        "exchangeConfigured": false,
+        "exchangeReason": "no_api_key_live_calls_disabled",
+        "hasExchangeInstance": true,
+        "exchangeCapabilities": {
+          "provider": "coingecko",
+          "supportsLiveTrading": false,
+          "supportsAccountReads": false,
+          "supportsPublicMarketData": true
+        },
+        "isRunning": true,
+        "symbol": "BTC/USDT",
+        "timeframe": "15m"
+      }
+    },
+    "app-diagnostics-health": {
+      "name": "app-diagnostics-health",
+      "url": "http://127.0.0.1:3000/api/diagnostics/health",
+      "observedAt": "2026-10-11T22:19:04.286Z",
+      "elapsedMs": 8019,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:04 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "uptimeSec": 918,
+        "requestId": "a3f3b52d-82b7-4572-9f80-ae631133e0a0",
+        "isRunning": true,
+        "startup": {
+          "exchangeEnabled": true,
+          "exchangeName": "coingecko",
+          "exchangeConfigured": false,
+          "exchangeReason": "no_api_key_live_calls_disabled",
+          "hasExchangeInstance": true,
+          "exchangeCapabilities": {
+            "provider": "coingecko",
+            "supportsLiveTrading": false,
+            "supportsAccountReads": false,
+            "supportsPublicMarketData": true
+          },
+          "isRunning": true,
+          "symbol": "BTC/USDT",
+          "timeframe": "15m"
+        },
+        "infrastructure": {
+          "redis": "degraded"
+        },
+        "api": {
+          "requests": 313,
+          "errors": 299,
+          "errorRate": 0.9552715654952076,
+          "avgLatencyMs": 5.100041801916934,
+          "maxLatencyMs": 612.027525,
+          "slowestRoutes": [
+            {
+              "route": "GET /candles",
+              "requests": 1,
+              "errors": 0,
+              "errorRate": 0,
+              "avgLatencyMs": 612.027525,
+              "maxLatencyMs": 612.027525
+            },
+            {
+              "route": "GET /performance",
+              "requests": 2,
+              "errors": 0,
+              "errorRate": 0,
+              "avgLatencyMs": 6.341809,
+              "maxLatencyMs": 7.768762
+            },
+            {
+              "route": "GET /diagnostics/startup",
+              "requests": 1,
+              "errors": 0,
+              "errorRate": 0,
+              "avgLatencyMs": 5.102701,
+              "maxLatencyMs": 5.102701
+            },
+            {
+              "route": "GET /all",
+              "requests": 2,
+              "errors": 2,
+              "errorRate": 1,
+              "avgLatencyMs": 4.697119,
+              "maxLatencyMs": 6.15142
+            },
+            {
+              "route": "GET /market/news",
+              "requests": 4,
+              "errors": 0,
+              "errorRate": 0,
+              "avgLatencyMs": 4.5721205000000005,
+              "maxLatencyMs": 9.542808
+            }
+          ]
+        },
+        "marketData": {
+          "hasCachedData": true,
+          "lastUpdated": 1791756236101,
+          "metrics": {
+            "marketDataFetchCount": 2,
+            "marketDataFetchFailures": 0,
+            "newsFetchCount": 1,
+            "newsFetchFailures": 0,
+            "lastMarketDataFetchAt": 1791757134723,
+            "lastNewsFetchAt": 1791756234747,
+            "marketDataCircuitOpen": false,
+            "newsCircuitOpen": false,
+            "marketDataCircuitOpenUntil": 0,
+            "newsCircuitOpenUntil": 0
+          }
+        },
+        "ml": {
+          "enabled": false,
+          "modelsReady": false,
+          "gemmaCache": false,
+          "modelCount": 0
+        }
+      }
+    },
+    "app-balances": {
+      "name": "app-balances",
+      "url": "http://127.0.0.1:3000/api/balances",
+      "observedAt": "2026-10-11T22:19:13.490Z",
+      "elapsedMs": 11,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "mainBalance": 0,
+        "botBalance": 100000,
+        "activeTradeBalance": 0,
+        "totalPnl": 0,
+        "totalPnlPct": 0
+      }
+    },
+    "app-positions-open": {
+      "name": "app-positions-open",
+      "url": "http://127.0.0.1:3000/api/positions/open",
+      "observedAt": "2026-10-11T22:19:13.498Z",
+      "elapsedMs": 8,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": []
+    },
+    "app-performance": {
+      "name": "app-performance",
+      "url": "http://127.0.0.1:3000/api/performance",
+      "observedAt": "2026-10-11T22:19:13.508Z",
+      "elapsedMs": 9,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "ultra_conservative": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791670753504,
+              "balance": 100000
+            },
+            {
+              "time": 1791757153504,
+              "balance": 100000
+            }
+          ]
+        },
+        "conservative": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791670753504,
+              "balance": 100000
+            },
+            {
+              "time": 1791757153504,
+              "balance": 100000
+            }
+          ]
+        },
+        "moderate": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791670753505,
+              "balance": 100000
+            },
+            {
+              "time": 1791757153505,
+              "balance": 100000
+            }
+          ]
+        },
+        "aggressive": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791670753505,
+              "balance": 100000
+            },
+            {
+              "time": 1791757153505,
+              "balance": 100000
+            }
+          ]
+        },
+        "degen": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791670753505,
+              "balance": 100000
+            },
+            {
+              "time": 1791757153505,
+              "balance": 100000
+            }
+          ]
+        },
+        "ai_enhanced": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791670753505,
+              "balance": 100000
+            },
+            {
+              "time": 1791757153505,
+              "balance": 100000
+            }
+          ]
+        }
+      }
+    },
+    "app-market-data": {
+      "name": "app-market-data",
+      "url": "http://127.0.0.1:3000/api/market/data",
+      "observedAt": "2026-10-11T22:19:13.468Z",
+      "elapsedMs": 7,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "id": "current",
+        "market_cap": 2809668517046.4585,
+        "total_volume": 52937623215.64983,
+        "fear_greed_index": 61,
+        "fear_greed_value": "Greed",
+        "btc_dominance": 59.60092492762152,
+        "last_updated": 1791757137088
+      }
+    },
+    "app-market-news": {
+      "name": "app-market-news",
+      "url": "http://127.0.0.1:3000/api/market/news",
+      "observedAt": "2026-10-11T22:19:13.477Z",
+      "elapsedMs": 9,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": [
+        {
+          "id": "oj6cgi705",
+          "title": "\u26fd ETH Gas: \ud83d\udc22 0.072444677 | \ud83d\udeb6 0.072452081 | \ud83d\ude80 0.077444677 Gwei",
+          "url": "#",
+          "source": "CryptoNews",
+          "timestamp": 1791756234983,
+          "sentiment": null,
+          "sentiment_score": null
+        },
+        {
+          "id": "af4pb1nnt",
+          "title": "APTUSDT - real trader never miss this!",
+          "url": "#",
+          "source": "CryptoNews",
+          "timestamp": 1791756234983,
+          "sentiment": null,
+          "sentiment_score": null
+        },
+        {
+          "id": "nqz0sq289",
+          "title": "Mirum Pharmaceuticals to report Livmarli trial results Monday",
+          "url": "#",
+          "source": "CryptoNews",
+          "timestamp": 1791756234983,
+          "sentiment": null,
+          "sentiment_score": null
+        }
+      ]
+    },
+    "app-freqtrade-info": {
+      "name": "app-freqtrade-info",
+      "url": "http://127.0.0.1:3000/api/freqtrade/info",
+      "observedAt": "2026-10-11T22:19:13.555Z",
+      "elapsedMs": 11,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "requestId": "23861478-bb2b-4eea-8786-b03ac283e56a",
+        "installed": false,
+        "strategies": []
+      }
+    },
+    "unauth-diagnostics-health": {
+      "name": "unauth-diagnostics-health",
+      "url": "http://127.0.0.1:3000/api/diagnostics/health",
+      "observedAt": "2026-10-11T22:19:13.584Z",
+      "elapsedMs": 9,
+      "status": 401,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "error": "Unauthorized"
+      }
+    },
+    "unauth-paper-positions": {
+      "name": "unauth-paper-positions",
+      "url": "http://127.0.0.1:3000/api/paper/positions",
+      "observedAt": "2026-10-11T22:19:13.592Z",
+      "elapsedMs": 7,
+      "status": 401,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "error": "Unauthorized"
+      }
+    },
+    "unauth-market-data": {
+      "name": "unauth-market-data",
+      "url": "http://127.0.0.1:3000/api/market/data",
+      "observedAt": "2026-10-11T22:19:13.598Z",
+      "elapsedMs": 5,
+      "status": 401,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "error": "Unauthorized"
+      }
+    },
+    "binance-klines": {
+      "name": "binance-klines",
+      "url": "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=10",
+      "observedAt": "2026-10-11T22:19:13.923Z",
+      "elapsedMs": 324,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "cacheControl": "no-cache, no-store, must-revalidate",
+        "contentType": "application/json;charset=UTF-8"
+      },
+      "body": [
+        [
+          1791748800000,
+          "83669.24000000",
+          "83718.00000000",
+          "83669.24000000",
+          "83717.99000000",
+          "32.91174000",
+          1791749699999,
+          "2754240.24715570",
+          7679,
+          "18.47623000",
+          "1546217.66296230",
+          "0"
+        ],
+        [
+          1791749700000,
+          "83717.99000000",
+          "83723.97000000",
+          "83607.66000000",
+          "83642.00000000",
+          "37.07875000",
+          1791750599999,
+          "3102586.56196070",
+          8187,
+          "16.98642000",
+          "1421477.29876250",
+          "0"
+        ],
+        [
+          1791750600000,
+          "83642.00000000",
+          "83697.28000000",
+          "83622.00000000",
+          "83679.28000000",
+          "34.57483000",
+          1791751499999,
+          "2893012.03129490",
+          5003,
+          "15.12826000",
+          "1265739.35703230",
+          "0"
+        ],
+        [
+          1791751500000,
+          "83679.29000000",
+          "83725.95000000",
+          "83610.00000000",
+          "83678.72000000",
+          "32.11245000",
+          1791752399999,
+          "2686819.94102050",
+          10570,
+          "16.44316000",
+          "1375808.06422600",
+          "0"
+        ],
+        [
+          1791752400000,
+          "83678.73000000",
+          "83678.73000000",
+          "83552.00000000",
+          "83556.10000000",
+          "59.01479000",
+          1791753299999,
+          "4933773.46716130",
+          13588,
+          "20.53021000",
+          "1716262.63896600",
+          "0"
+        ],
+        [
+          1791753300000,
+          "83556.10000000",
+          "83556.11000000",
+          "83276.75000000",
+          "83444.91000000",
+          "126.85521000",
+          1791754199999,
+          "10578196.78832180",
+          31377,
+          "47.18756000",
+          "3934018.14022090",
+          "0"
+        ],
+        [
+          1791754200000,
+          "83444.91000000",
+          "83542.09000000",
+          "83430.19000000",
+          "83542.08000000",
+          "66.84991000",
+          1791755099999,
+          "5582240.32612610",
+          13447,
+          "41.63646000",
+          "3476844.25947590",
+          "0"
+        ],
+        [
+          1791755100000,
+          "83542.09000000",
+          "83562.86000000",
+          "83450.00000000",
+          "83529.47000000",
+          "64.87040000",
+          1791755999999,
+          "5417384.79099210",
+          14072,
+          "42.70192000",
+          "3566074.21603540",
+          "0"
+        ],
+        [
+          1791756000000,
+          "83529.48000000",
+          "83650.01000000",
+          "83456.00000000",
+          "83622.01000000",
+          "77.80253000",
+          1791756899999,
+          "6502849.60061560",
+          30480,
+          "37.44864000",
+          "3129864.21212850",
+          "0"
+        ],
+        [
+          1791756900000,
+          "83622.00000000",
+          "83664.39000000",
+          "83612.00000000",
+          "83646.01000000",
+          "11.59877000",
+          1791757799999,
+          "970123.41625070",
+          4470,
+          "7.86663000",
+          "657957.10855080",
+          "0"
+        ]
+      ]
+    },
+    "binance-ticker": {
+      "name": "binance-ticker",
+      "url": "https://api.binance.com/api/v3/ticker/bookTicker?symbol=BTCUSDT",
+      "observedAt": "2026-10-11T22:19:13.929Z",
+      "elapsedMs": 318,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:13 GMT",
+        "cacheControl": "no-cache, no-store, must-revalidate",
+        "contentType": "application/json;charset=UTF-8"
+      },
+      "body": {
+        "symbol": "BTCUSDT",
+        "bidPrice": "83646.00000000",
+        "bidQty": "8.35778000",
+        "askPrice": "83646.01000000",
+        "askQty": "0.52669000"
+      }
+    },
+    "coinbase-ticker": {
+      "name": "coinbase-ticker",
+      "url": "https://api.exchange.coinbase.com/products/BTC-USDT/ticker",
+      "observedAt": "2026-10-11T22:19:14.601Z",
+      "elapsedMs": 978,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:14 GMT",
+        "cacheControl": "public, max-age=1, must-revalidate",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "ask": "83657.58",
+        "bid": "83642.22",
+        "volume": "18.28701149",
+        "trade_id": 37008750,
+        "price": "83644.09",
+        "size": "0.02",
+        "time": "2026-10-11T22:18:33.011382149Z",
+        "rfq_volume": "0.000301"
+      }
+    },
+    "kraken-ohlc": {
+      "name": "kraken-ohlc",
+      "url": "https://api.kraken.com/0/public/OHLC?pair=XBTUSDT&interval=15",
+      "observedAt": "2026-10-11T22:19:23.987Z",
+      "elapsedMs": 10372,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:23 GMT",
+        "cacheControl": "public, max-age=2",
+        "contentType": "application/json"
+      },
+      "summary": {
+        "error": [],
+        "code": null,
+        "count": 721,
+        "first": [
+          [
+            1791108900,
+            "85267.9",
+            "85419.2",
+            "85267.9",
+            "85402.8",
+            "85378.9",
+            "0.24247546",
+            50
+          ]
+        ],
+        "last": [
+          [
+            1791756900,
+            "83621.3",
+            "83663.7",
+            "83621.1",
+            "83663.7",
+            "83662.0",
+            "0.21911635",
+            13
+          ]
+        ]
+      }
+    },
+    "okx-candles": {
+      "name": "okx-candles",
+      "url": "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=15m&limit=10",
+      "observedAt": "2026-10-11T22:19:14.020Z",
+      "elapsedMs": 401,
+      "status": 200,
+      "headers": {
+        "date": "Sun, 11 Oct 2026 22:19:14 GMT",
+        "cacheControl": "no-cache, no-store, max-age=0, must-revalidate",
+        "contentType": "application/json"
+      },
+      "summary": {
+        "error": null,
+        "code": "0",
+        "count": 10,
+        "first": [
+          [
+            "1791756900000",
+            "83606.6",
+            "83655.5",
+            "83596.9",
+            "83642.3",
+            "2.81896001",
+            "235735.694987307",
+            "235735.694987307",
+            "0"
+          ]
+        ],
+        "last": [
+          [
+            "1791748800000",
+            "83660.1",
+            "83723.8",
+            "83660",
+            "83716.1",
+            "7.2129976",
+            "603661.206340827",
+            "603661.206340827",
+            "1"
+          ]
+        ]
+      }
+    }
+  },
+  "2026-10-12": {
+    "app-health-live": {
+      "name": "app-health-live",
+      "url": "http://127.0.0.1:3000/api/health/live",
+      "observedAt": "2026-10-12T11:50:35.662Z",
+      "elapsedMs": 54,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:35 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "status": "ok",
+        "timestamp": 1791805835649
+      }
+    },
+    "app-health-ready": {
+      "name": "app-health-ready",
+      "url": "http://127.0.0.1:3000/api/health/ready",
+      "observedAt": "2026-10-12T11:50:41.089Z",
+      "elapsedMs": 5426,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:41 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "status": "ready",
+        "timestamp": 1791805841086,
+        "components": {
+          "database": "ok",
+          "redis": "degraded",
+          "tradingEngine": "ok"
+        }
+      }
+    },
+    "app-health-providers": {
+      "name": "app-health-providers",
+      "url": "http://127.0.0.1:3000/api/health/providers",
+      "observedAt": "2026-10-12T11:50:41.100Z",
+      "elapsedMs": 10,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:41 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "activeProvider": "binance",
+        "providers": [
+          {
+            "name": "coingecko",
+            "available": false,
+            "circuitOpen": true,
+            "circuitRemainingSec": 163,
+            "successes": 25,
+            "failures": 35,
+            "avgLatencyMs": 434,
+            "consecutiveTimeouts": 5
+          },
+          {
+            "name": "binance",
+            "available": true,
+            "circuitOpen": false,
+            "circuitRemainingSec": 0,
+            "successes": 878,
+            "failures": 9,
+            "avgLatencyMs": 312,
+            "consecutiveTimeouts": 0
+          },
+          {
+            "name": "coinmarketcap",
+            "available": true,
+            "circuitOpen": false,
+            "circuitRemainingSec": 0,
+            "successes": 0,
+            "failures": 7,
+            "avgLatencyMs": 0,
+            "consecutiveTimeouts": 7
+          },
+          {
+            "name": "coinapi",
+            "available": true,
+            "circuitOpen": false,
+            "circuitRemainingSec": 0,
+            "successes": 0,
+            "failures": 7,
+            "avgLatencyMs": 0,
+            "consecutiveTimeouts": 7
+          }
+        ]
+      }
+    },
+    "app-diagnostics-startup": {
+      "name": "app-diagnostics-startup",
+      "url": "http://127.0.0.1:3000/api/diagnostics/startup",
+      "observedAt": "2026-10-12T11:50:41.113Z",
+      "elapsedMs": 12,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:41 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "exchangeEnabled": true,
+        "exchangeName": "coingecko",
+        "exchangeConfigured": false,
+        "exchangeReason": "no_api_key_live_calls_disabled",
+        "hasExchangeInstance": true,
+        "exchangeCapabilities": {
+          "provider": "coingecko",
+          "supportsLiveTrading": false,
+          "supportsAccountReads": false,
+          "supportsPublicMarketData": true
+        },
+        "isRunning": true,
+        "symbol": "BTC/USDT",
+        "timeframe": "15m"
+      }
+    },
+    "app-diagnostics-health": {
+      "name": "app-diagnostics-health",
+      "url": "http://127.0.0.1:3000/api/diagnostics/health",
+      "observedAt": "2026-10-12T11:50:49.139Z",
+      "elapsedMs": 8026,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:49 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "uptimeSec": 3391,
+        "requestId": "9aeff290-2c1f-4c3f-845a-5d6a71403c8e",
+        "isRunning": true,
+        "startup": {
+          "exchangeEnabled": true,
+          "exchangeName": "coingecko",
+          "exchangeConfigured": false,
+          "exchangeReason": "no_api_key_live_calls_disabled",
+          "hasExchangeInstance": true,
+          "exchangeCapabilities": {
+            "provider": "coingecko",
+            "supportsLiveTrading": false,
+            "supportsAccountReads": false,
+            "supportsPublicMarketData": true
+          },
+          "isRunning": true,
+          "symbol": "BTC/USDT",
+          "timeframe": "15m"
+        },
+        "infrastructure": {
+          "redis": "degraded"
+        },
+        "api": {
+          "requests": 1400,
+          "errors": 1335,
+          "errorRate": 0.9535714285714286,
+          "avgLatencyMs": 15.751360940714287,
+          "maxLatencyMs": 9095.774208,
+          "slowestRoutes": [
+            {
+              "route": "GET /diagnostics/health",
+              "requests": 1,
+              "errors": 0,
+              "errorRate": 0,
+              "avgLatencyMs": 8013.065192,
+              "maxLatencyMs": 8013.065192
+            },
+            {
+              "route": "GET /candles",
+              "requests": 3,
+              "errors": 0,
+              "errorRate": 0,
+              "avgLatencyMs": 3425.0688883333332,
+              "maxLatencyMs": 9095.774208
+            },
+            {
+              "route": "GET /ml/status",
+              "requests": 1,
+              "errors": 0,
+              "errorRate": 0,
+              "avgLatencyMs": 11.327165,
+              "maxLatencyMs": 11.327165
+            },
+            {
+              "route": "GET /risk-configs",
+              "requests": 1,
+              "errors": 0,
+              "errorRate": 0,
+              "avgLatencyMs": 9.834242,
+              "maxLatencyMs": 9.834242
+            },
+            {
+              "route": "GET /freqtrade/info",
+              "requests": 2,
+              "errors": 0,
+              "errorRate": 0,
+              "avgLatencyMs": 7.669781499999999,
+              "maxLatencyMs": 8.62431
+            }
+          ]
+        },
+        "marketData": {
+          "hasCachedData": true,
+          "lastUpdated": 1791758936805,
+          "metrics": {
+            "marketDataFetchCount": 4,
+            "marketDataFetchFailures": 0,
+            "newsFetchCount": 1,
+            "newsFetchFailures": 0,
+            "lastMarketDataFetchAt": 1791758934724,
+            "lastNewsFetchAt": 1791756234747,
+            "marketDataCircuitOpen": false,
+            "newsCircuitOpen": false,
+            "marketDataCircuitOpenUntil": 0,
+            "newsCircuitOpenUntil": 0
+          }
+        },
+        "ml": {
+          "enabled": false,
+          "modelsReady": false,
+          "gemmaCache": false,
+          "modelCount": 0
+        }
+      }
+    },
+    "app-balances": {
+      "name": "app-balances",
+      "url": "http://127.0.0.1:3000/api/balances",
+      "observedAt": "2026-10-12T11:50:54.058Z",
+      "elapsedMs": 11,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "mainBalance": 0,
+        "botBalance": 100000,
+        "activeTradeBalance": 0,
+        "totalPnl": 0,
+        "totalPnlPct": 0
+      }
+    },
+    "app-positions-open": {
+      "name": "app-positions-open",
+      "url": "http://127.0.0.1:3000/api/positions/open",
+      "observedAt": "2026-10-12T11:50:54.065Z",
+      "elapsedMs": 6,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": []
+    },
+    "app-performance": {
+      "name": "app-performance",
+      "url": "http://127.0.0.1:3000/api/performance",
+      "observedAt": "2026-10-12T11:50:54.073Z",
+      "elapsedMs": 8,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "ultra_conservative": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791719454071,
+              "balance": 100000
+            },
+            {
+              "time": 1791805854071,
+              "balance": 100000
+            }
+          ]
+        },
+        "conservative": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791719454071,
+              "balance": 100000
+            },
+            {
+              "time": 1791805854071,
+              "balance": 100000
+            }
+          ]
+        },
+        "moderate": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791719454071,
+              "balance": 100000
+            },
+            {
+              "time": 1791805854071,
+              "balance": 100000
+            }
+          ]
+        },
+        "aggressive": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791719454071,
+              "balance": 100000
+            },
+            {
+              "time": 1791805854071,
+              "balance": 100000
+            }
+          ]
+        },
+        "degen": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791719454071,
+              "balance": 100000
+            },
+            {
+              "time": 1791805854071,
+              "balance": 100000
+            }
+          ]
+        },
+        "ai_enhanced": {
+          "balance": 100000,
+          "roi": 0,
+          "winRate": 0,
+          "tradesCount": 0,
+          "totalPnl": 0,
+          "history": [
+            {
+              "time": 1791719454072,
+              "balance": 100000
+            },
+            {
+              "time": 1791805854072,
+              "balance": 100000
+            }
+          ]
+        }
+      }
+    },
+    "app-market-data": {
+      "name": "app-market-data",
+      "url": "http://127.0.0.1:3000/api/market/data",
+      "observedAt": "2026-10-12T11:50:54.037Z",
+      "elapsedMs": 13,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "id": "current",
+        "market_cap": 2813954971231.8965,
+        "total_volume": 52711790285.74459,
+        "fear_greed_index": 61,
+        "fear_greed_value": "Greed",
+        "btc_dominance": 59.601979061734546,
+        "last_updated": 1791758936805
+      }
+    },
+    "app-market-news": {
+      "name": "app-market-news",
+      "url": "http://127.0.0.1:3000/api/market/news",
+      "observedAt": "2026-10-12T11:50:54.046Z",
+      "elapsedMs": 7,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": [
+        {
+          "id": "oj6cgi705",
+          "title": "\u26fd ETH Gas: \ud83d\udc22 0.072444677 | \ud83d\udeb6 0.072452081 | \ud83d\ude80 0.077444677 Gwei",
+          "url": "#",
+          "source": "CryptoNews",
+          "timestamp": 1791756234983,
+          "sentiment": null,
+          "sentiment_score": null
+        },
+        {
+          "id": "af4pb1nnt",
+          "title": "APTUSDT - real trader never miss this!",
+          "url": "#",
+          "source": "CryptoNews",
+          "timestamp": 1791756234983,
+          "sentiment": null,
+          "sentiment_score": null
+        },
+        {
+          "id": "nqz0sq289",
+          "title": "Mirum Pharmaceuticals to report Livmarli trial results Monday",
+          "url": "#",
+          "source": "CryptoNews",
+          "timestamp": 1791756234983,
+          "sentiment": null,
+          "sentiment_score": null
+        }
+      ]
+    },
+    "app-paper-summary": {
+      "name": "app-paper-summary",
+      "url": "http://127.0.0.1:3000/api/paper/summary",
+      "observedAt": "2026-10-12T11:50:54.106Z",
+      "elapsedMs": 9,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "totalUnrealizedPnl": "0",
+        "totalRealizedPnl": "0",
+        "totalMarginUsed": "0",
+        "positionCount": {
+          "total": 0,
+          "open": 0,
+          "closed": 0,
+          "liquidated": 0
+        },
+        "positions": []
+      }
+    },
+    "app-paper-orderbook-BTC%2FUSDT": {
+      "name": "app-paper-orderbook-BTC%2FUSDT",
+      "url": "http://127.0.0.1:3000/api/paper/orderbook/BTC%2FUSDT",
+      "observedAt": "2026-10-12T11:50:54.115Z",
+      "elapsedMs": 8,
+      "status": 404,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "error": "Symbol not found"
+      }
+    },
+    "app-freqtrade-info": {
+      "name": "app-freqtrade-info",
+      "url": "http://127.0.0.1:3000/api/freqtrade/info",
+      "observedAt": "2026-10-12T11:50:54.127Z",
+      "elapsedMs": 12,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "requestId": "37b2a16b-1fcd-4cde-81e3-079e39345108",
+        "installed": false,
+        "strategies": []
+      }
+    },
+    "unauth-diagnostics-health": {
+      "name": "unauth-diagnostics-health",
+      "url": "http://127.0.0.1:3000/api/diagnostics/health",
+      "observedAt": "2026-10-12T11:50:54.132Z",
+      "elapsedMs": 5,
+      "status": 401,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "error": "Unauthorized"
+      }
+    },
+    "unauth-paper-positions": {
+      "name": "unauth-paper-positions",
+      "url": "http://127.0.0.1:3000/api/paper/positions",
+      "observedAt": "2026-10-12T11:50:54.140Z",
+      "elapsedMs": 8,
+      "status": 401,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "error": "Unauthorized"
+      }
+    },
+    "unauth-market-data": {
+      "name": "unauth-market-data",
+      "url": "http://127.0.0.1:3000/api/market/data",
+      "observedAt": "2026-10-12T11:50:54.146Z",
+      "elapsedMs": 6,
+      "status": 401,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:54 GMT",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "error": "Unauthorized"
+      }
+    },
+    "binance-klines": {
+      "name": "binance-klines",
+      "url": "https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=15m&limit=10",
+      "observedAt": "2026-10-12T11:50:56.236Z",
+      "elapsedMs": 2090,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:55 GMT",
+        "cacheControl": "no-cache, no-store, must-revalidate",
+        "contentType": "application/json;charset=UTF-8"
+      },
+      "body": [
+        [
+          1791797400000,
+          "83460.15000000",
+          "83522.01000000",
+          "83368.41000000",
+          "83372.00000000",
+          "112.62255000",
+          1791798299999,
+          "9397858.28597200",
+          20011,
+          "41.94489000",
+          "3500382.30754320",
+          "0"
+        ],
+        [
+          1791798300000,
+          "83372.00000000",
+          "83564.40000000",
+          "83316.00000000",
+          "83556.01000000",
+          "207.28565000",
+          1791799199999,
+          "17293086.90142940",
+          39974,
+          "111.22376000",
+          "9277341.86708690",
+          "0"
+        ],
+        [
+          1791799200000,
+          "83556.00000000",
+          "83556.01000000",
+          "83458.00000000",
+          "83530.01000000",
+          "76.00027000",
+          1791800099999,
+          "6346923.47718630",
+          10693,
+          "27.94971000",
+          "2334020.41218660",
+          "0"
+        ],
+        [
+          1791800100000,
+          "83530.01000000",
+          "83544.01000000",
+          "83465.18000000",
+          "83500.01000000",
+          "63.10953000",
+          1791800999999,
+          "5269555.09303820",
+          11165,
+          "43.23303000",
+          "3609790.43452080",
+          "0"
+        ],
+        [
+          1791801000000,
+          "83500.01000000",
+          "83522.71000000",
+          "83429.27000000",
+          "83520.29000000",
+          "79.31644000",
+          1791801899999,
+          "6621681.04477220",
+          13648,
+          "44.60879000",
+          "3724001.63876310",
+          "0"
+        ],
+        [
+          1791801900000,
+          "83520.28000000",
+          "83618.60000000",
+          "83500.00000000",
+          "83500.72000000",
+          "60.53574000",
+          1791802799999,
+          "5057645.18289440",
+          10681,
+          "33.25776000",
+          "2778812.70330210",
+          "0"
+        ],
+        [
+          1791802800000,
+          "83500.73000000",
+          "83509.09000000",
+          "83403.03000000",
+          "83413.00000000",
+          "40.35359000",
+          1791803699999,
+          "3366939.43392590",
+          11669,
+          "17.97047000",
+          "1499219.82085740",
+          "0"
+        ],
+        [
+          1791803700000,
+          "83413.00000000",
+          "83448.01000000",
+          "83360.00000000",
+          "83448.00000000",
+          "134.13997000",
+          1791804599999,
+          "11186827.96373120",
+          15190,
+          "86.18809000",
+          "7187341.07895090",
+          "0"
+        ],
+        [
+          1791804600000,
+          "83448.01000000",
+          "83448.01000000",
+          "83294.67000000",
+          "83388.57000000",
+          "127.42470000",
+          1791805499999,
+          "10624668.58066680",
+          23534,
+          "75.73726000",
+          "6314691.81645370",
+          "0"
+        ],
+        [
+          1791805500000,
+          "83388.57000000",
+          "83415.90000000",
+          "83285.10000000",
+          "83338.01000000",
+          "63.45677000",
+          1791806399999,
+          "5287778.86303510",
+          11473,
+          "41.40010000",
+          "3449457.87792840",
+          "0"
+        ]
+      ]
+    },
+    "binance-ticker": {
+      "name": "binance-ticker",
+      "url": "https://api.binance.com/api/v3/ticker/bookTicker?symbol=BTCUSDT",
+      "observedAt": "2026-10-12T11:50:56.240Z",
+      "elapsedMs": 2084,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:55 GMT",
+        "cacheControl": "no-cache, no-store, must-revalidate",
+        "contentType": "application/json;charset=UTF-8"
+      },
+      "body": {
+        "symbol": "BTCUSDT",
+        "bidPrice": "83338.00000000",
+        "bidQty": "8.83525000",
+        "askPrice": "83338.01000000",
+        "askQty": "0.14301000"
+      }
+    },
+    "coinbase-ticker": {
+      "name": "coinbase-ticker",
+      "url": "https://api.exchange.coinbase.com/products/BTC-USDT/ticker",
+      "observedAt": "2026-10-12T11:51:04.963Z",
+      "elapsedMs": 10797,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:51:04 GMT",
+        "cacheControl": "public, max-age=1, must-revalidate",
+        "contentType": "application/json; charset=utf-8"
+      },
+      "body": {
+        "ask": "83358.47",
+        "bid": "83332.43",
+        "volume": "31.48368291",
+        "trade_id": 37010919,
+        "price": "83311.77",
+        "size": "0.00097",
+        "time": "2026-10-12T11:47:02.067360894Z",
+        "rfq_volume": "0.000301"
+      }
+    },
+    "kraken-ohlc": {
+      "name": "kraken-ohlc",
+      "url": "https://api.kraken.com/0/public/OHLC?pair=XBTUSDT&interval=15",
+      "observedAt": "2026-10-12T11:50:58.500Z",
+      "elapsedMs": 4341,
+      "status": 200,
+      "headers": {
+        "date": "Mon, 12 Oct 2026 11:50:56 GMT",
+        "cacheControl": "public, max-age=2",
+        "contentType": "application/json"
+      },
+      "summary": {
+        "error": [],
+        "code": null,
+        "count": 721,
+        "first": [
+          [
+            1791157500,
+            "86516.3",
+            "86539.1",
+            "86444.3",
+            "86532.6",
+            "86486.7",
+            "0.32931446",
+            28
+          ]
+        ],
+        "last": [
+          [
+            1791805500,
+            "83388.2",
+            "83388.3",
+            "83300.0",
+            "83306.0",
+            "83366.6",
+            "0.15096076",
+            11
+          ]
+        ]
+      }
+    },
+    "okx-candles": {
+      "name": "okx-candles",
+      "url": "https://www.okx.com/api/v5/market/candles?instId=BTC-USDT&bar=15m&limit=10",
+      "observedAt": "2026-10-12T11:50:54.774Z",
+      "elapsedMs": 611,
+      "error": "connect ETIMEDOUT 172.64.144.82:443; connect ENETUNREACH 2a06:98c1:3103::ac40:9052:443 - Local (:::0); connect ETIMEDOUT 104.18.43.174:443; connect ENETUNREACH 2a06:98c1:3108::6812:2bae:443 - Local (:::0)"
+    }
+  }
+}

@@ -1,0 +1,61 @@
+import fs from 'node:fs';
+import {createRequire} from 'node:module';
+import {setMockRunQuery,setMockRunTransaction} from '/tmp/shady-trader-human-test/backend/database.ts';
+import {ShadowTrader} from '/tmp/shady-trader-human-test/backend/shadow/shadow_trader.ts';
+import {calculateTradePnl} from '/tmp/shady-trader-human-test/backend/shadow/pnl.ts';
+import {BalanceManager} from '/tmp/shady-trader-human-test/backend/balance/manager.ts';
+import {RiskMode,getDailyRealizedLoss} from '/tmp/shady-trader-human-test/backend/risk/manager.ts';
+import {OrderBookSimulator} from '/tmp/shady-trader-human-test/backend/paper-trading/order-book.ts';
+import {PaperPositionTracker} from '/tmp/shady-trader-human-test/backend/paper-trading/position-tracker.ts';
+import {PaperTradingService} from '/tmp/shady-trader-human-test/backend/paper-trading/paper-trading-service.ts';
+const req=createRequire('/tmp/shady-trader-human-test/package.json');
+const {Decimal}=req('decimal.js');
+const Database=req('better-sqlite3');
+async function main(){
+ process.env.LIVE_TRADING_ENABLED='false';
+ process.env.TAKER_FEE_RATE='0';
+ process.env.FIXED_SLIPPAGE_FALLBACK='0';
+ const sqlLog:any[]=[];
+ setMockRunQuery(async(sql,p,type)=>{sqlLog.push({sql,p});return type==='all'?[]:{changes:1};});
+ const trader=new ShadowTrader();
+ const trade={id:'audit-runner',symbol:'BTC/USDT',side:'buy',amount:1,price:100,leverage:2,stopLoss:97,takeProfit:103,risk_mode:RiskMode.AGGRESSIVE,status:'open',candlesHeld:0,totalFeeFrac:0};
+ trader.portfolios.aggressive.openTrades.push({...trade});
+ const baseline=trader.portfolios.aggressive.balance;
+ const settlements:any[]=[];
+ await trader.updatePositions(102,RiskMode.AGGRESSIVE,{recordTradeResult:async(pnl:number,principal:number)=>{settlements.push({pnl,principal});}});
+ const result:any={runner:{fixture:'Production default aggressive mode; 1-unit long @100, 2x leverage; mark102; zero fees/slippage to isolate arithmetic; DB mocked',expectedPnl:calculateTradePnl(trade as any,102),actualPortfolioPnl:trader.portfolios.aggressive.balance-baseline,settlements,remainingPositions:trader.portfolios.aggressive.openTrades.length}};
+ const db=new Database(':memory:');
+ db.exec(`CREATE TABLE balances(id TEXT PRIMARY KEY,main_balance REAL,bot_balance REAL,active_trade_balance REAL,total_pnl REAL,total_pnl_pct REAL);
+ INSERT INTO balances VALUES('default',0,1000,0,0,0);
+ CREATE TABLE audit_balances(id TEXT,balance_id TEXT,event_type TEXT,timestamp INTEGER,before_main_balance REAL,before_bot_balance REAL,before_active_balance REAL,after_main_balance REAL,after_bot_balance REAL,after_active_balance REAL,change_amount REAL,reason TEXT,metadata TEXT);`);
+ const query=async(sql:string,p:any[]=[],type:string='run')=>{
+  if(sql.includes('balances')){const stmt=db.prepare(sql);return type==='all'?stmt.all(...p):stmt.run(...p);}
+  return type==='all'?[]:{changes:1};
+ };
+ setMockRunQuery(query);setMockRunTransaction(async work=>work(query));
+ const manager=new BalanceManager();
+ const switched=new ShadowTrader();
+ switched.portfolios.moderate.openTrades.push({...trade,id:'reserved-moderate',amount:1,leverage:1,risk_mode:RiskMode.MODERATE});
+ switched.portfolios.aggressive.openTrades.push({...trade,id:'shadow-only-aggressive',amount:2,leverage:1,risk_mode:RiskMode.AGGRESSIVE});
+ await manager.addActiveTrade(100);
+ const reserved=await manager.getBalances();
+ await switched.closeTrade('reserved-moderate',100,RiskMode.AGGRESSIVE,manager);
+ const afterOldClose=await manager.getBalances();
+ await switched.closeTrade('shadow-only-aggressive',100,RiskMode.AGGRESSIVE,manager);
+ result.modeSwitch={fixture:'Positions staged as one initially active moderate trade with 100 reserved, plus one shadow-only aggressive trade worth200; active mode then aggressive; both close flat; actual BalanceManager with in-memory SQLite',initialWallet:1000,reserved,afterOldClose,afterBothClosed:await manager.getBalances(),expectedFinalWallet:1000};
+ db.close();
+ setMockRunQuery(async(sql,p,type)=>sql.includes('netPnl')?[{netPnl:0}]:sql.includes('SELECT side, amount, price')?[{side:'buy',amount:1,price:50000}]:type==='all'?[]:{changes:1});
+ result.crossSymbolDailyLoss={fixture:'One unchanged BTC long1@50000; entry gate supplied ETH price3000',expectedUnrealizedLoss:0,actualLoss:await getDailyRealizedLoss('moderate',Date.now(),3000)};
+ const book=new OrderBookSimulator();
+ book.updateOrderBook({symbol:'BTC/USDT',timestamp:Date.now(),bids:[[99,10]],asks:[[100,1],[110,1]]});
+ book.addPaperOrder({id:'audit-limit',symbol:'BTC/USDT',side:'buy',type:'limit',quantity:new Decimal(2),price:new Decimal(100),timeInForce:'GTC',timestamp:Date.now(),status:'pending'});
+ const match=book.matchOrders('BTC/USDT');
+ result.limitFill={fixture:'Asks1@100 and1@110; buy limit100 qty2',expectedMaxFillPrice:100,actual:match};
+ const tracker=new PaperPositionTracker();
+ const pos=tracker.openPosition({symbol:'BTC/USDT',side:'buy',quantity:new Decimal(1),entryPrice:new Decimal(100),leverage:10});
+ result.liquidation={fixture:'1-unit long@100, leverage10, mark99; margin10, loss1, remaining equity9',pnl:tracker.calculatePnl(pos,new Decimal(99)),actualLiquidated:tracker.checkLiquidation(pos,new Decimal(99)),expectedLiquidated:false};
+ try{await new PaperTradingService().createPaperTrade({symbol:'BTC/USDT',side:'buy',type:'market',quantity:0.0001,timeInForce:'GTC'} as any);}catch(e:any){result.restServiceWiring={error:e.message};}
+ fs.writeFileSync('/tmp/shady-live-review/accounting-repros.json',JSON.stringify(result,null,2));
+ console.log(JSON.stringify(result,null,2));
+}
+main().catch(e=>{console.error(e);process.exitCode=1;});

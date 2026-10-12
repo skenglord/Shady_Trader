@@ -1,8 +1,19 @@
 # Production Readiness Todo
 
-Created: 2026-06-10 | Updated: 2026-10-11
+Created: 2026-06-10 | Updated: 2026-10-12
 
-## Current verified gate state (October 11 readiness phases)
+## Current verified gate state (October 12 live review)
+
+**Blocked for trustworthy paper-performance evaluation and live funds.** The [live-system review](live_system_review_2026-10-12.md) records actual API/browser observations and isolated production-method reproductions at commit `52fdae3`. Its findings supersede any implication that the earlier accounting tests establish complete paper correctness.
+
+- Real BTC/USDT 15m market data flows through Binance fallback. The first comparison found one incorrect finalized candle among nine; the later nine matched. Candle persistence and stale fallback remain blockers.
+- Isolated reproductions: runner profit **3.20 vs 2.00 expected**; mode-switch wallet **1,100 vs 1,000 expected**; mixed-symbol risk loss **47,000 vs 0 expected**; limit-100 buy fills at average **105**; 10x long liquidates after a **1%** adverse price move.
+- Live browser: empty performance WS frames erase six REST portfolios; 390px viewport overflows to 1,282px. Paper REST has no connected exchange getter. Provider/age labels and candle cache identity need repair.
+- Source review: fallback symbol/timeframe and volume contracts are unsafe; partial-runner persistence needs restart verification.
+- Running clone: Redis degraded, Freqtrade not installed, ML disabled. Public venue GETs do not verify credentialed exchange execution. No orders were placed by this review.
+- Review changed documentation only. Subsequent October 12 publication verification: serial Node 22 suite **617 tests / 616 passed / 0 failed / 1 skipped**; whole skipped suites remain and the count does not establish complete coverage. Root lint and production build pass. The dependency audit was not rerun. All local work branches are already included in main.
+
+## Historical verified gate state (October 11 readiness phases)
 
 - Access-control phase: paper REST and `/symbol` require trader role; invalid API tokens no longer bypass CSRF; paper WebSocket consumers are activated only after authentication; null pre-auth WebSocket JSON is rejected without throwing; Vite source-deny blocks `/@fs/`, encoded protected paths, traversal and SQLite files.
 - Focused access-control tests: **17/17 pass**.
@@ -29,7 +40,15 @@ Created: 2026-06-10 | Updated: 2026-10-11
 
 ## Current release blockers and next actions
 
-**Not ready for live funds or untrusted network exposure.** The [October 10 full audit](full_system_audit_2026-10-10.md) supersedes the historical gate/readiness assessments below. The October 11 access-control, paper-accounting, and transactional balance audit phases are complete. Close, pair-price, stop/kill, balance concurrency and audit rollback fixes have focused verification; real reconciliation remains blocked on authoritative venue pagination, native payload coverage, complete order/fill consistency checks, and exchange sandbox validation.
+**Not ready for trustworthy paper-performance evaluation, live funds or untrusted network exposure.** The [October 12 live review](live_system_review_2026-10-12.md) supplements the [October 10 full audit](full_system_audit_2026-10-10.md) and reopens paper-accounting/data gates after October 11 focused fixes. Close, pair-price position updates, stop/kill, balance concurrency and audit rollback have historical focused verification; the daily-loss gate and reservation ownership require separate repairs. Reconciliation still requires unsupported-symbol recovery, third-asset fee valuation and credentialed sandbox validation.
+
+- [ ] Repair runner same-cycle partial/final settlement and durable partial state; verify restart and balance conservation.
+- [ ] Persist trade reservation ownership across active-mode changes; reject excess principal release.
+- [ ] Value each symbol independently in the daily-loss gate; verify missing/stale-price handling.
+- [ ] Enforce limit prices, partial-fill/time-in-force semantics and consistent paper liquidation math.
+- [ ] Update unfinished candles through finalization; enforce age, provenance, symbol, quote, interval and volume contracts across fallbacks.
+- [ ] Share the paper service between REST and WebSocket; await performance snapshots; repair cache identity, source/age labels and mobile layout.
+- [ ] Validate the intended full runtime including Redis queues, Freqtrade and configured ML, followed by real-data paper lifecycle/restart scenarios.
 
 - [x] Secure paper REST and symbol mutations with trader role checks; require valid API tokens for CSRF bypass; reject malformed pre-auth WS JSON safely; delay paper WS initialization until auth; deny Vite filesystem aliases and local database files. Focused tests pass 17/17; full production readiness checks remain pending.
 - [x] Prevent duplicate live closes with a per-trade lock and durable close intent; leave uncertain closes blocked for reconciliation. Price existing positions and kill-switch exits by each trade's own symbol. Stop waits for the active cycle and cancels entries that have not reached exchange submission. Focused trade-safety regressions pass 87/87.

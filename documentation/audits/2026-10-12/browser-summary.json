@@ -1,0 +1,247 @@
+{
+  "observedAt": "2026-10-11T22:20:14.772Z",
+  "requests": [
+    {
+      "url": "http://127.0.0.1:3000/api/status",
+      "status": 200,
+      "at": 1791757217557
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/performance",
+      "status": 200,
+      "at": 1791757217559
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/risk-configs",
+      "status": 200,
+      "at": 1791757217559
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/trades?limit=10",
+      "status": 200,
+      "at": 1791757217560
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/shadow-trades/closed?limit=100",
+      "status": 200,
+      "at": 1791757217560
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/positions/open",
+      "status": 200,
+      "at": 1791757217560
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/market/data",
+      "status": 200,
+      "at": 1791757217561
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/balances",
+      "status": 200,
+      "at": 1791757217567
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/shadow-trades/all",
+      "status": 200,
+      "at": 1791757217567
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/signals?limit=500",
+      "status": 200,
+      "at": 1791757217567
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/market/news",
+      "status": 200,
+      "at": 1791757217567
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/settings",
+      "status": 200,
+      "at": 1791757217567
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/candles?history=90d",
+      "status": 200,
+      "at": 1791757218099
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/shadow-trades/closed?limit=100",
+      "status": 200,
+      "at": 1791757223258
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/trades?limit=10",
+      "status": 200,
+      "at": 1791757223281
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/shadow-trades/all",
+      "status": 200,
+      "at": 1791757223283
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/candles?history=90d",
+      "status": 200,
+      "at": 1791757223371
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/positions/open",
+      "status": 200,
+      "at": 1791757227388
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/balances",
+      "status": 200,
+      "at": 1791757227400
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/shadow-trades/closed?limit=100",
+      "status": 200,
+      "at": 1791757233273
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/trades?limit=10",
+      "status": 200,
+      "at": 1791757233277
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/shadow-trades/all",
+      "status": 200,
+      "at": 1791757233278
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/candles?history=90d",
+      "status": 200,
+      "at": 1791757233314
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/positions/open",
+      "status": 200,
+      "at": 1791757237490
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/balances",
+      "status": 200,
+      "at": 1791757237490
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/ml/status",
+      "status": 200,
+      "at": 1791757238079
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/ml/accuracy?symbol=BTC%2FUSDT&days=7",
+      "status": 200,
+      "at": 1791757238113
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/ml/predictions?symbol=BTC%2FUSDT&limit=50",
+      "status": 200,
+      "at": 1791757238114
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/freqtrade/info",
+      "status": 200,
+      "at": 1791757241644
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/freqtrade/pairs",
+      "status": 200,
+      "at": 1791757241656
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/freqtrade/jobs",
+      "status": 200,
+      "at": 1791757241657
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/shadow-trades/closed?limit=100",
+      "status": 200,
+      "at": 1791757243231
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/trades?limit=10",
+      "status": 200,
+      "at": 1791757243231
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/shadow-trades/all",
+      "status": 200,
+      "at": 1791757243232
+    },
+    {
+      "url": "http://127.0.0.1:3000/api/candles?history=90d",
+      "status": 200,
+      "at": 1791757243238
+    }
+  ],
+  "console": [
+    {
+      "type": "warning",
+      "text": "Error with Permissions-Policy header: Unrecognized feature: 'ambient-light-sensor'."
+    },
+    {
+      "type": "warning",
+      "text": "Error with Permissions-Policy header: Unrecognized feature: 'battery'."
+    },
+    {
+      "type": "warning",
+      "text": "Error with Permissions-Policy header: Unrecognized feature: 'document-domain'."
+    },
+    {
+      "type": "warning",
+      "text": "Error with Permissions-Policy header: Unrecognized feature: 'web-share'."
+    },
+    {
+      "type": "warning",
+      "text": "The width(-1) and height(-1) of chart should be greater than 0,\n       please check the style of container, or the props width(100%) and height(100%),\n       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the\n       height and width."
+    }
+  ],
+  "pageErrors": [],
+  "preAuthRequests": [],
+  "mobile": {
+    "viewport": 390,
+    "scrollWidth": 1282,
+    "bodyWidth": 1282
+  },
+  "desktopText": "Adaptive Trading System\n\u2022 Multi-Regime Shadow Trading\nBTC/USDT\nETH/USDT\nSOL/USDT\nAPI: Coingecko\nAUTO\nSTRONG BULL\nWEAK BULL\nBEAR\nSIDEWAYS\nUNCERTAIN\nUNCERTAIN\nAWAITING SIGNAL\nBUY(live)\n13%\nEntry\n$---\nSL\n$---\nTP\n$---\nWaiting for next cycle...\nStop Engine\nEnter High\nEnter Low\nML Dashboard\n\nMARKET CAP\n\n$2.81T\n\n24H VOLUME\n\n$52.94B\n\nBTC DOMINANCE\n\n59.6%\n\nFEAR & GREED\n\nGreed\n\n61\n\nRefresh Market Data\nLive Market Data\nBacktest\n1m\n5m\n15m\n1h\n4h\nINDICATORS:\nTechnical indicators used to identify market trends and potential entry/exit points.\nEMA 9\nExponential Moving Average (9 periods). Short-term trend indicator.\nEMA 21\nExponential Moving Average (21 periods). Medium-term trend indicator.\nEMA 50\nExponential Moving Average (50 periods). Long-term trend indicator.\nVWAP\nVolume Weighted Average Price. Benchmark for the average price a security has traded at throughout the day.\nBollinger Bands\nVolatility indicator consisting of a middle SMA and two standard deviation bands.\n\t\n\t\n\n\t\n\t\n10/10/2026, 5:45:00 AM\nO 82676.00\nH 82706.85\nL 82668.39\nC 82686.87\nShadow Trade History\n\t\n\t\n\n\t\n\t\nShadow Portfolio Comparison\nNo performance data yet\nRISK MODE\tBALANCE\tROI\tWIN RATE\tTRADES\nCHART MARKERS\nSignals\nTrades\nultra conservative\nconservative\nmoderate\naggressive\ndegen\nai enhanced\nBalance Management\nKILL BOT\n\nMAIN BALANCE\n\n$0.00\n\nBOT BALANCE\n\n$100,000.00\n\nIN TRADES\n\n$0.00\n\nAVAILABLE\n\n$100,000.00\n\nPROFIT/LOSS\n\n+0.00\n(0.00%)\n+ Allocate\n- Withdraw\n1/2 Balance\nx2 Balance\nModerate Mode\nultra conservative\nconservative\nmoderate\naggressive\ndegen\nConfigure\nActive\n\nTotal P&L\n\n$0.00\n\nWin Rate\n\n0.0%\n\nOpen Positions\n\nTOTAL VALUE\n\n$0.00\n\nNo open positions\n\nClosed Bot Trades\nTIME\tCLOSED\tSIDE\tENTRY/EXIT\tAMOUNT\tPNL $\tSTATUS\nNo bot trades yet \u2014 only shadow trading active\nAll Closed Shadow Trades\nTIME\tCLOSED\tMODE\tSIDE\tENTRY/EXIT\tAMOUNT\tWAGER\tPNL $\tPNL %\tSTATUS\nNo trades yet \u2014 trades appear as the engine runs\n1791670817391",
+  "performanceFrames": [
+    {
+      "event": "received",
+      "type": "performance",
+      "at": 1791757223226,
+      "payload": {
+        "type": "performance",
+        "data": {}
+      }
+    },
+    {
+      "event": "received",
+      "type": "performance",
+      "at": 1791757233223,
+      "payload": {
+        "type": "performance",
+        "data": {}
+      }
+    },
+    {
+      "event": "received",
+      "type": "performance",
+      "at": 1791757243230,
+      "payload": {
+        "type": "performance",
+        "data": {}
+      }
+    }
+  ],
+  "websocketMessageTypes": [
+    "auth_ok",
+    "balances",
+    "candle",
+    "performance",
+    "signal_record",
+    "signal_status"
+  ]
+}
