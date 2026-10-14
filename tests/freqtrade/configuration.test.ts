@@ -25,7 +25,10 @@ describe('Freqtrade deployment configuration', () => {
   });
 
   test('builds the CLI runtime into the app image with compatible strategy dependencies', () => {
-    assert.match(dockerfile, /python3-venv/);
+    assert.match(dockerfile, /^FROM node:22-bookworm-slim AS node$/m);
+    assert.match(dockerfile, /^FROM python:3\.12-slim-bookworm AS base$/m);
+    assert.match(dockerfile, /COPY --from=node \/usr\/local\/bin\/node/);
+    assert.match(dockerfile, /COPY --from=node \/usr\/local\/lib\/node_modules/);
     assert.match(dockerfile, /pip install[^\n]*requirements\.txt/);
     assert.match(dockerfile, /COPY --from=deps[^\n]*backend\/freqtrade\/venv/);
     assert.match(requirements, /^freqtrade\[plotting\]==\d/m);
