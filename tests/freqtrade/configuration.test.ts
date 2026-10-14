@@ -8,6 +8,8 @@ const config = JSON.parse(readFileSync(resolve(root, 'backend/freqtrade/user_dat
 const compose = readFileSync(resolve(root, 'docker-compose.yml'), 'utf8');
 const dockerfile = readFileSync(resolve(root, 'Dockerfile'), 'utf8');
 const requirements = readFileSync(resolve(root, 'backend/freqtrade/requirements.txt'), 'utf8');
+const workflow = readFileSync(resolve(root, '.github/workflows/ci-cd.yml'), 'utf8');
+const deployment = readFileSync(resolve(root, 'k8s/deployment.yaml'), 'utf8');
 
 describe('Freqtrade deployment configuration', () => {
   test('keeps the reference trader safe while enabling futures backtesting', () => {
@@ -44,5 +46,16 @@ describe('Freqtrade deployment configuration', () => {
     assert.equal((compose.match(/freqtrade_data:\/app\/backend\/freqtrade\/user_data\/data/g) || []).length, 2);
     assert.match(compose, /127\.0\.0\.1:\$\{FREQTRADE_LISTEN_PORT:-8081\}:8081/);
     assert.match(compose, /FREQTRADE__API_SERVER__LISTEN_IP_ADDRESS: 0\.0\.0\.0/);
+  });
+
+  test('publishes and deploys the same namespaced commit image to both app containers', () => {
+    assert.match(workflow, /if: github\.ref == 'refs\/heads\/main' \|\| github\.ref == 'refs\/heads\/develop'/);
+    assert.match(workflow, /docker tag shady-trader:\$\{\{ github\.sha \}\} "\$DOCKERHUB_USERNAME\/shady-trader:\$\{\{ github\.sha \}\}"/);
+    assert.match(workflow, /docker push "\$DOCKERHUB_USERNAME\/shady-trader:\$\{\{ github\.sha \}\}"/);
+    assert.match(workflow, /DOCKERHUB_USERNAME\/shady-trader:latest/);
+    assert.match(workflow, /shady-trader="\$DOCKERHUB_USERNAME\/shady-trader:\$\{\{ github\.sha \}\}"/);
+    assert.match(workflow, /freqtrade-webserver="\$DOCKERHUB_USERNAME\/shady-trader:\$\{\{ github\.sha \}\}"/);
+    assert.match(deployment, /- name: shady-trader\n        image: shady-trader:latest/);
+    assert.match(deployment, /- name: freqtrade-webserver\n        image: shady-trader:latest/);
   });
 });

@@ -122,17 +122,23 @@ jobs:
       run: docker build -t shady-trader:${{ github.sha }} .
 
     - name: Login to Docker Hub
-      if: github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKER_USERNAME }}
         password: ${{ secrets.DOCKER_PASSWORD }}
 
     - name: Push Docker image
-      if: github.ref == 'refs/heads/main'
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop'
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKER_USERNAME }}
       run: |
-        docker tag shady-trader:${{ github.sha }} shady-trader:latest
-        docker push shady-trader:latest
+        docker tag shady-trader:${{ github.sha }} "$DOCKERHUB_USERNAME/shady-trader:${{ github.sha }}"
+        docker push "$DOCKERHUB_USERNAME/shady-trader:${{ github.sha }}"
+        if [[ "$GITHUB_REF" == "refs/heads/main" ]]; then
+          docker tag "$DOCKERHUB_USERNAME/shady-trader:${{ github.sha }}" "$DOCKERHUB_USERNAME/shady-trader:latest"
+          docker push "$DOCKERHUB_USERNAME/shady-trader:latest"
+        fi
 
   # Validate Kubernetes manifests before any deploy job runs.
   # Both deploy-staging and deploy-production depend on this job so that a
@@ -170,13 +176,17 @@ jobs:
         kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
 
     - name: Deploy to staging
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKER_USERNAME }}
       run: |
         kubectl apply -f k8s/configmap.yaml
         kubectl get secret shady-trader-secrets -o name
         kubectl apply -f k8s/pvc.yaml
         kubectl apply -f k8s/service.yaml
         kubectl apply -f k8s/deployment.yaml
-        kubectl set image deployment/shady-trader-app shady-trader=shady-trader:${{ github.sha }}
+        kubectl set image deployment/shady-trader-app \
+          shady-trader="$DOCKERHUB_USERNAME/shady-trader:${{ github.sha }}" \
+          freqtrade-webserver="$DOCKERHUB_USERNAME/shady-trader:${{ github.sha }}"
 
     - name: Run health check
       run: |
@@ -198,13 +208,17 @@ jobs:
         kubeconfig: ${{ secrets.KUBE_CONFIG_PRODUCTION }}
 
     - name: Deploy to production
+      env:
+        DOCKERHUB_USERNAME: ${{ secrets.DOCKER_USERNAME }}
       run: |
         kubectl apply -f k8s/configmap.yaml
         kubectl get secret shady-trader-secrets -o name
         kubectl apply -f k8s/pvc.yaml
         kubectl apply -f k8s/service.yaml
         kubectl apply -f k8s/deployment.yaml
-        kubectl set image deployment/shady-trader-app shady-trader=shady-trader:latest
+        kubectl set image deployment/shady-trader-app \
+          shady-trader="$DOCKERHUB_USERNAME/shady-trader:${{ github.sha }}" \
+          freqtrade-webserver="$DOCKERHUB_USERNAME/shady-trader:${{ github.sha }}"
 
     - name: Run health check
       run: |
