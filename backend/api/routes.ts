@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { CANDLE_INTERVAL_MS } from '../exchange/candle-contract.js';
 import Redis from 'ioredis';
 import crypto from 'crypto';
 import { runQuery } from '../database.js';
@@ -32,56 +33,6 @@ import path from 'path';
 import { freqtradeMetricsRegistry } from '../observability/freqtrade_metrics.js';
 import monteCarloRouter from '../monte-carlo/api/monte-carlo.controller.js';
 import wfaDeprecatedRouter from '../validation/wfa/wfa-deprecated-controller.js';
-
-// Fallback function to fetch historical data from CoinGecko
-async function fetchCoinGeckoHistoricalData(symbol: string, timeframe: string, days: number) {
-  try {
-    // Map symbol to CoinGecko ID
-    const coinId = symbol === 'BTC/USDT' ? 'bitcoin' : symbol === 'ETH/USDT' ? 'ethereum' : 'bitcoin';
-
-    // Map timeframe to CoinGecko days parameter
-    let cgDays = '365';
-    if (days === 30) cgDays = '30';
-    else if (days === 7) cgDays = '7';
-    else if (days === 1) cgDays = '1';
-
-    const response = await axios.get(`https://api.coingecko.com/api/v3/coins/${coinId}/ohlc`, {
-      params: {
-        vs_currency: 'usd',
-        days: cgDays
-      },
-      timeout: 10000
-    });
-
-    if (response.data && Array.isArray(response.data)) {
-      // Convert CoinGecko OHLC format [timestamp, open, high, low, close] to our format
-      const candles = response.data.map((ohlc: number[]) => ({
-        time: ohlc[0],
-        open: ohlc[1],
-        high: ohlc[2],
-        low: ohlc[3],
-        close: ohlc[4],
-        volume: 0 // CoinGecko free tier doesn't provide volume
-      }));
-
-      // Sort by time ascending
-      candles.sort((a, b) => a.time - b.time);
-
-      // Resample to requested timeframe if needed
-      if (timeframe !== '1d') {
-        // For now, return daily data. Could implement resampling later
-        return candles;
-      }
-
-      return candles;
-    }
-
-    return null;
-  } catch (error: any) {
-    logger.error('CoinGecko historical data fetch failed', { error: error.message, symbol, timeframe, days });
-    return null;
-  }
-}
 
 export const apiRouter = Router();
 
@@ -496,7 +447,7 @@ apiRouter.get('/health/providers', async (_req, res) => {
     return res.status(503).json({ error: 'Exchange not initialized' });
   }
   const summary = engine.exchange.providerRotator.getSummary();
-  res.status(200).json(summary);
+  res.status(200).json({ ...summary, candles: engine.exchange.getCandleStatus(engine.symbol, engine.timeframe) });
 });
 
 // WFA route ownership: retired public deprecation notice.
@@ -864,89 +815,33 @@ apiRouter.post('/symbol', validateSymbolBody, async (req, res) => {
 });
 
 apiRouter.get('/candles', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
   const engine = getTradingEngine();
-  if (engine) {
-    try {
-      const history = req.query.history as string;
-      let candles;
-
-      if (history === '1y') {
-        const oneYearAgo = Date.now() - (365 * 24 * 60 * 60 * 1000);
-        // Calculate limit based on timeframe
-        let limit = 35000; // default for 15m
-        if (engine.timeframe === '1h') limit = 8760;
-        else if (engine.timeframe === '1d') limit = 365;
-        else if (engine.timeframe === '5m') limit = 105120;
-
-        if (engine.exchange) {
-          candles = await engine.exchange.getHistoricalCandles(engine.symbol, engine.timeframe, oneYearAgo, limit);
-        } else {
-          candles = [];
-        }
-      } else {
-        if (engine.exchange) {
-          candles = await engine.exchange.getCandles(engine.symbol, engine.timeframe, 1000);
-        } else {
-          candles = [];
-        }
-      }
-
-      // Check if we have sufficient data - try fallbacks if insufficient
-      if (candles.length < 50) {
-        logger.info('Insufficient candles from primary source, trying fallbacks', { requestId: req.requestId, count: candles.length, exchange: engine.exchange?.exchangeName });
-
-        // Try CryptoCompare first (most reliable fallback)
-        try {
-          const ccCandles = await engine.exchange?.fetchCryptoCompareHistorical?.(engine.symbol, engine.timeframe, 500);
-          if (ccCandles && ccCandles.length >= 50) {
-            candles = ccCandles;
-            logger.info('CryptoCompare fallback succeeded', { requestId: req.requestId, count: candles.length });
-          }
-        } catch (ccError: any) {
-          logger.warn('CryptoCompare fallback failed', { requestId: req.requestId, error: ccError.message });
-        }
-
-        // If still insufficient, try CoinGecko
-        if (candles.length < 50) {
-          try {
-            const cgCandles = await fetchCoinGeckoHistoricalData(engine.symbol, engine.timeframe, history === '1y' ? 365 : 30);
-            if (cgCandles && cgCandles.length >= 50) {
-              candles = cgCandles;
-              logger.info('CoinGecko fallback succeeded', { requestId: req.requestId, count: candles.length });
-            }
-          } catch (cgError: any) {
-            logger.warn('CoinGecko fallback failed', { requestId: req.requestId, error: cgError.message });
-          }
-        }
-
-        // If still no data, return error
-        if (candles.length < 50) {
-          return res.status(503).json({
-            error: 'DATA_UNAVAILABLE',
-            message: 'Unable to fetch sufficient historical data. Please check your exchange configuration or API keys.',
-            providers_tried: ['primary_exchange', 'cryptocompare', 'coingecko']
-          });
-        }
-      }
-
-      // Set cache headers for recent data
-      const isRecentData = history === '1y' ? false : true; // Recent data gets cached
-      if (isRecentData) {
-        res.setHeader('Cache-Control', 'public, max-age=3600'); // 1 hour cache for recent data
-      }
-
-      if (candles.length >= 50) {
-        const df = engine.indicators.calculateAll(candles);
-        res.json(df);
-      } else {
-        res.json(candles);
-      }
-    } catch (e: any) {
-      logger.error('Candles fetch failed', { requestId: req.requestId, error: e.message });
-      res.status(500).json({ error: e.message });
-    }
-  } else {
-    res.status(500).json({ error: 'Engine not initialized' });
+  const symbol = req.query.symbol ?? engine?.symbol;
+  const timeframe = req.query.timeframe ?? engine?.timeframe;
+  if (typeof symbol !== 'string' || !(SUPPORTED_SPOT_SYMBOLS as readonly string[]).includes(symbol)
+    || typeof timeframe !== 'string' || !CANDLE_INTERVAL_MS[timeframe]) {
+    return res.status(400).json({ error: 'INVALID_MARKET', message: 'A supported symbol and timeframe are required.' });
+  }
+  if (!engine?.exchange) return res.status(503).json({ error: 'DATA_UNAVAILABLE', message: 'Exchange not initialized' });
+  try {
+    const historical = req.query.history === '1y';
+    const yearMs = 365 * 86_400_000;
+    const candles = historical
+      ? await engine.exchange.getHistoricalCandles(symbol, timeframe, Date.now() - yearMs, Math.ceil(yearMs / CANDLE_INTERVAL_MS[timeframe]))
+      : await engine.exchange.getCandles(symbol, timeframe, 1000);
+    if (!candles.length) return res.status(503).json({ error: 'DATA_UNAVAILABLE', message: 'Verified market candles are unavailable for this symbol and timeframe.', symbol, timeframe });
+    const latest = candles.at(-1);
+    const status = engine.exchange.getCandleStatus?.(symbol, timeframe);
+    res.setHeader('X-Market-Data-Provider', historical ? 'historical-database' : String(status?.provider || latest.provider || 'unknown'));
+    res.setHeader('X-Market-Data-Latest-Time', String(latest.time));
+    res.setHeader('X-Market-Data-Stale', String(historical || status?.stale === true));
+    res.setHeader('X-Market-Data-Symbol', symbol);
+    res.setHeader('X-Market-Data-Timeframe', timeframe);
+    return res.json(candles.length >= 50 ? engine.indicators.calculateAll(candles) : candles);
+  } catch (error: any) {
+    logger.error('Candles fetch failed', { requestId: req.requestId, error: error.message });
+    return res.status(503).json({ error: 'DATA_UNAVAILABLE', message: 'Market data could not be loaded.', symbol, timeframe });
   }
 });
 
@@ -1067,14 +962,19 @@ apiRouter.get('/trades/closed', async (req, res) => {
   const requestedLimit = parseInt(req.query.limit as string) || 100;
   const limit = Math.max(1, Math.min(requestedLimit, 500));
   
-  const trades = await runQuery(`
-    SELECT id, timestamp, symbol, strategy, side, entry_price, exit_price, amount, pnl, status
+  try {
+    const trades = await runQuery(`
+    SELECT id, timestamp, symbol, NULL AS strategy, side, price AS entry_price, exit_price, amount, pnl, status
     FROM trades
     WHERE status = 'closed'
     ORDER BY timestamp DESC
     LIMIT ?
   `, [limit], 'all');
-  res.json(trades);
+    res.json(trades);
+  } catch (error) {
+    logger.error('Closed trade history unavailable', { error: String(error), requestId: req.requestId });
+    res.status(503).json({ error: 'Closed trade history is unavailable' });
+  }
 });
 
 apiRouter.get('/history/regime', async (req, res) => {
@@ -1475,7 +1375,8 @@ apiRouter.post('/manual-trade', validateManualTradeBody, async (req, res) => {
   const engine = getTradingEngine();
   if (engine) {
     if (!engine.isRunning) {
-      await engine.start().catch(console.error);
+      // start() resolves when the engine stops, so it cannot gate an HTTP response.
+      void engine.start().catch(error => logger.error('Engine start failed', { error: String(error) }));
     }
     const { side, symbol, price, stopLoss, takeProfit } = req.body;
     

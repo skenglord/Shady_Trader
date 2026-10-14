@@ -1,11 +1,15 @@
 import { Router } from 'express';
 import { PaperTradingService, PaperTradeRequest, PaperTradeResponse, PositionResponse } from './paper-trading-service';
 import { z } from 'zod';
+import { getPaperTradingService } from './service-registry.js';
 import { getRequestId, logger } from '../logging/logger.js';
 import { recordApiRequest } from '../observability/requestMetrics.js';
 
 const paperTradingRouter = Router();
-const paperTradingService = new PaperTradingService();
+paperTradingRouter.use((_req, res, next) => {
+  try { getPaperTradingService(); next(); }
+  catch { res.status(503).json({ error: 'Paper trading service is unavailable' }); }
+});
 
 // Validation schemas
 const paperTradeSchema = z.object({
@@ -179,7 +183,7 @@ paperTradingRouter.post('/order', async (req, res) => {
       });
     }
 
-    const result = await paperTradingService.createPaperTrade(tradeRequest);
+    const result = await getPaperTradingService().createPaperTrade(tradeRequest);
     
     recordApiRequest('/api/paper/order', 'POST', 200, Date.now() - startTime);
     
@@ -201,7 +205,7 @@ paperTradingRouter.post('/order', async (req, res) => {
       stack: error.stack,
     });
     
-    res.status(500).json({
+    res.status(error.message.includes('conflict') ? 409 : 503).json({
       error: 'Failed to create paper trade',
       message: error.message,
     });
@@ -256,7 +260,7 @@ paperTradingRouter.put('/order/:id/cancel', async (req, res) => {
     }
 
     const idempotencyKey = parsed.data.idempotencyKey;
-    const result = await paperTradingService.cancelPaperTrade(orderId, idempotencyKey);
+    const result = await getPaperTradingService().cancelPaperTrade(orderId, idempotencyKey);
     
     recordApiRequest('/api/paper/order/{id}/cancel', 'PUT', 200, Date.now() - startTime);
     
@@ -365,7 +369,7 @@ paperTradingRouter.get('/positions', async (req, res) => {
   const startTime = Date.now();
 
   try {
-    const positions = await paperTradingService.getOpenPositions();
+    const positions = await getPaperTradingService().getOpenPositions();
     
     recordApiRequest('/api/paper/positions', 'GET', 200, Date.now() - startTime);
     
@@ -418,7 +422,7 @@ paperTradingRouter.get('/positions/:id', async (req, res) => {
   const positionId = req.params.id;
 
   try {
-    const position = await paperTradingService.getPosition(positionId);
+    const position = await getPaperTradingService().getPosition(positionId);
     
     if (!position) {
       recordApiRequest('/api/paper/positions/{id}', 'GET', 404, Date.now() - startTime);
@@ -469,7 +473,7 @@ paperTradingRouter.get('/summary', async (req, res) => {
   const startTime = Date.now();
 
   try {
-    const summary = await paperTradingService.getSummary();
+    const summary = await getPaperTradingService().getSummary();
     
     recordApiRequest('/api/paper/summary', 'GET', 200, Date.now() - startTime);
     
@@ -522,7 +526,7 @@ paperTradingRouter.get('/orderbook/:symbol', async (req, res) => {
   const symbol = req.params.symbol;
 
   try {
-    const snapshot = paperTradingService.getOrderBookSnapshot(symbol);
+    const snapshot = getPaperTradingService().getOrderBookSnapshot(symbol);
     
     if (!snapshot) {
       recordApiRequest('/api/paper/orderbook/{symbol}', 'GET', 404, Date.now() - startTime);
@@ -547,6 +551,25 @@ paperTradingRouter.get('/orderbook/:symbol', async (req, res) => {
       error: 'Failed to retrieve order book snapshot',
       message: error.message,
     });
+  }
+});
+
+paperTradingRouter.get('/order/:id', async (req, res) => {
+  try {
+    const order = await getPaperTradingService().getOrder(req.params.id);
+    if (!order) return res.status(404).json({ error: 'Order not found' });
+    res.json(order);
+  } catch (error: any) { res.status(503).json({ error: error.message }); }
+});
+
+paperTradingRouter.put('/positions/:id/close', async (req, res) => {
+  try {
+    const parsed = cancelTradeSchema.safeParse(req.body || {});
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid request parameters' });
+    const position = await getPaperTradingService().closePaperPosition(req.params.id, parsed.data.idempotencyKey);
+    res.json(await getPaperTradingService().getPosition(position.id));
+  } catch (error: any) {
+    res.status(error.message.includes('not found') ? 404 : error.message.includes('conflict') || error.message.includes('already closed') ? 409 : 503).json({ error: error.message });
   }
 });
 

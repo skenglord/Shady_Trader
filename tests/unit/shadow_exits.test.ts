@@ -2,8 +2,8 @@ import { describe, test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { ShadowTrader } from '../../backend/shadow/shadow_trader.js';
 import { RiskMode, RiskManager } from '../../backend/risk/manager.js';
-import { setMockRunQuery, clearMockRunQuery } from '../../backend/database.js';
-import { calculateTradePnl } from '../../backend/shadow/pnl.js';
+import { clearMockRunQuery } from '../../backend/database.js';
+import { createShadowTestStore, persistShadowTestTrade } from '../utils/shadow-sqlite-store.js';
 
 // ---------------------------------------------------------------------------
 // Helpers – construct realistic trade + ExitContext objects matching the
@@ -71,20 +71,9 @@ function makeCtx(overrides: Partial<any> = {}): any {
 
 // Recording mock for DB writes – captures UPDATE shadow_trades calls so we
 // can assert columns (pnl, exit_price, exit_reason).
-let dbCalls: { sql: string; params: any[] }[] = [];
-
-beforeEach(() => {
-  dbCalls = [];
-  setMockRunQuery(async (sql: string, params: any[] = [], _type: 'run' | 'all' = 'run') => {
-    dbCalls.push({ sql, params });
-    if (sql.includes('SELECT')) return [];
-    return { changes: 1 };
-  });
-});
-
-afterEach(() => {
-  clearMockRunQuery();
-});
+let store: ReturnType<typeof createShadowTestStore>;
+beforeEach(() => { store = createShadowTestStore(); });
+afterEach(() => { clearMockRunQuery(); store.db.close(); });
 
 // ---------------------------------------------------------------------------
 // evaluateStopLoss
@@ -337,6 +326,7 @@ describe('ShadowTrader.updatePositions precedence [T5]', () => {
       risk_mode: RiskMode.MODERATE,
     });
 
+    persistShadowTestTrade(store.db, trade);
     trader.portfolios[RiskMode.MODERATE].openTrades = [trade];
     trader.portfolios[RiskMode.MODERATE].balance = 100000;
 
@@ -345,11 +335,8 @@ describe('ShadowTrader.updatePositions precedence [T5]', () => {
     // Trade should be closed (removed from openTrades)
     assert.equal(trader.portfolios[RiskMode.MODERATE].openTrades.length, 0, 'trade should be closed');
 
-    // The DB UPDATE should have exit_reason = multi_candle_expiry
-    const updateCall = dbCalls.find(c => c.sql.includes('UPDATE shadow_trades'));
-    assert.ok(updateCall, 'should have UPDATE shadow_trades call');
-    // params: [pnl, exitPrice, exitTimestamp, tradeId]
-    assert.equal(updateCall.params[3], 'precedence-1');
+    const row: any = store.db.prepare('SELECT * FROM shadow_trades WHERE id = ?').get(trade.id);
+    assert.equal(row.close_reason, 'multi_candle_expiry');
   });
 
   test('stop_loss overrides take_profit when both fire', async () => {
@@ -370,16 +357,16 @@ describe('ShadowTrader.updatePositions precedence [T5]', () => {
       risk_mode: RiskMode.MODERATE,
     });
 
+    persistShadowTestTrade(store.db, trade);
     trader.portfolios[RiskMode.MODERATE].openTrades = [trade];
     trader.portfolios[RiskMode.MODERATE].balance = 100000;
 
     await trader.updatePositions(49000, undefined, undefined, undefined, { time: Date.now() });
 
     assert.equal(trader.portfolios[RiskMode.MODERATE].openTrades.length, 0, 'trade should be closed');
-    const updateCall = dbCalls.find(c => c.sql.includes('UPDATE shadow_trades'));
-    assert.ok(updateCall);
-    // pnl should be negative (loss), confirming SL took precedence over TP
-    assert.ok(updateCall.params[0] < 0, 'pnl should be negative (stop_loss, not take_profit)');
+    const row: any = store.db.prepare('SELECT * FROM shadow_trades WHERE id = ?').get(trade.id);
+    assert.equal(row.close_reason, 'stop_loss');
+    assert.ok(row.pnl < 0);
   });
 
   test('trade remains open when no exit conditions fire', async () => {
@@ -401,6 +388,7 @@ describe('ShadowTrader.updatePositions precedence [T5]', () => {
       risk_mode: RiskMode.ULTRA_CONSERVATIVE,
     });
 
+    persistShadowTestTrade(store.db, trade);
     trader.portfolios[RiskMode.ULTRA_CONSERVATIVE].openTrades = [trade];
     trader.portfolios[RiskMode.ULTRA_CONSERVATIVE].balance = 100000;
 
@@ -408,9 +396,9 @@ describe('ShadowTrader.updatePositions precedence [T5]', () => {
     await trader.updatePositions(50100, undefined, undefined, undefined, { time: Date.now() });
 
     assert.equal(trader.portfolios[RiskMode.ULTRA_CONSERVATIVE].openTrades.length, 1, 'trade should remain open');
-    // No UPDATE should have been issued
-    const updateCall = dbCalls.find(c => c.sql.includes('UPDATE shadow_trades'));
-    assert.equal(updateCall, undefined);
+    const row: any = store.db.prepare('SELECT * FROM shadow_trades WHERE id = ?').get(trade.id);
+    assert.equal(row.status, 'open');
+    assert.equal(row.pnl, null);
   });
 });
 
@@ -434,6 +422,7 @@ describe('ShadowTrader.executeTradeClosure fee/slippage [T5]', () => {
       risk_mode: RiskMode.DEGEN,
     });
 
+    persistShadowTestTrade(store.db, trade);
     trader.portfolios[RiskMode.DEGEN].openTrades = [trade];
     trader.portfolios[RiskMode.DEGEN].balance = 100000;
 
@@ -449,9 +438,8 @@ describe('ShadowTrader.executeTradeClosure fee/slippage [T5]', () => {
     // balance should have decreased by 10000
     assert.equal(trader.portfolios[RiskMode.DEGEN].balance, initialBalance - 10000);
 
-    const updateCall = dbCalls.find(c => c.sql.includes('UPDATE shadow_trades'));
-    assert.ok(updateCall);
-    assert.equal(updateCall.params[0], -10000, 'pnl should be -marginUsed from override');
+    const row: any = store.db.prepare('SELECT * FROM shadow_trades WHERE id = ?').get(trade.id);
+    assert.equal(row.pnl, -10000);
   });
 
   test('normal closure computes pnl from margin difference and updates balance', async () => {
@@ -471,18 +459,18 @@ describe('ShadowTrader.executeTradeClosure fee/slippage [T5]', () => {
       risk_mode: RiskMode.MODERATE,
     });
 
+    persistShadowTestTrade(store.db, trade);
     trader.portfolios[RiskMode.MODERATE].openTrades = [trade];
     const initialBalance = trader.portfolios[RiskMode.MODERATE].balance;
 
     await trader.updatePositions(51000, undefined, undefined, undefined, { time: Date.now() });
 
     assert.equal(trader.portfolios[RiskMode.MODERATE].openTrades.length, 0, 'trade should be closed');
-    const expectedPnl = calculateTradePnl(trade, 51000);
+    const expectedPnl = 893.9153; // 1 unit: exit 50974.5, entry fee50, exit fee30.5847
     assert.equal(trader.portfolios[RiskMode.MODERATE].balance, initialBalance + expectedPnl);
 
-    const updateCall = dbCalls.find(c => c.sql.includes('UPDATE shadow_trades'));
-    assert.ok(updateCall);
-    assert.equal(updateCall.params[0], expectedPnl, 'pnl includes the adverse exit fill and both trading fees');
-    assert.equal(updateCall.params[1], 51000, 'exit_price should be 51000');
+    const row: any = store.db.prepare('SELECT * FROM shadow_trades WHERE id = ?').get(trade.id);
+    assert.ok(Math.abs(row.pnl - expectedPnl) < 1e-8);
+    assert.equal(row.exit_price, 51000);
   });
 });

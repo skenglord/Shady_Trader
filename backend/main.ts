@@ -12,13 +12,15 @@ import { MonteCarloEngine } from './monte-carlo/engine/monte-carlo-engine.js';
 import { SlippageEngine, CostEstimator, LiquidityAnalyzer, SlippageCircuitBreaker } from './slippage/index.js';
 import { Decimal } from 'decimal.js';
 import { randomUUID } from 'crypto';
-import { getMarketDataQueue, getOptimizationQueue, getQueueHealth, initializeWorkers, closeQueues, registerFreqtradeWorkers } from './job_queues.js';
+import { getMarketDataQueue, getOptimizationQueue, getQueueHealth, initializeWorkers, closeQueues, registerFreqtradeWorkers, awaitQueueReady } from './job_queues.js';
 import fs from 'fs';
 import path from 'path';
 import { logger } from './logging/logger.js';
 import { runQuery } from './database.js';
 import paperTradingRouter from './paper-trading/paper-trading.controller.js';
 import { PaperTradingService } from './paper-trading/paper-trading-service.js';
+import { registerPaperTradingService } from './paper-trading/service-registry.js';
+import { DatabasePaperTradingStateStore } from './paper-trading/state-store.js';
 import { PaperTradingWebSocketHandler } from './paper-trading/websocket-handler.js';
 import { getServiceManager, StatelessServiceManager } from './stateless-manager.js';
 import { acquireTradeLock, releaseTradeLock } from './execution/executionLock.js';
@@ -257,7 +259,7 @@ export class TradingEngine {
 
     // Initialize state manager with Redis (handle gracefully if unavailable)
     let redisInstance: Redis | undefined;
-    if (redis && redis.status === 'ready') {
+    if (redis) {
       redisInstance = redis;
     } else if (!redis) {
       try {
@@ -299,6 +301,7 @@ export class TradingEngine {
 
     // Initialize paper trading components
     this.paperTradingService = new PaperTradingService(() => this.exchange);
+    registerPaperTradingService(this.paperTradingService);
     this.paperTradingWebSocketHandler = new PaperTradingWebSocketHandler(this.paperTradingService);
 
     // Setup WebSocket handler for paper trading
@@ -572,6 +575,7 @@ export class TradingEngine {
       }
     }
     await this.loadSettings();
+    await this.paperTradingService.initializeState(new DatabasePaperTradingStateStore());
     // ── v6.0 Block 6: degen live-mode safety guard ──
     if (process.env.LIVE_TRADING_ENABLED === 'true') {
       try {
@@ -712,9 +716,13 @@ export class TradingEngine {
   }
 
   async start() {
-    // Initialize job queues (only if Redis is available)
-    this.startSchedulers();
+    if (this.isRunning) return;
     this.isRunning = true;
+    const startupToken = this.cycleAbortToken;
+    // Initialize job queues (only if Redis is available)
+    await awaitQueueReady();
+    if (!this.isRunning || startupToken !== this.cycleAbortToken) return;
+    this.startSchedulers();
     // ShadowTrader.init() already restored balances and open trades from the
     // database. Resetting here silently erased that in-memory state on every
     // restart, so startup must preserve the restored paper portfolio.
@@ -1299,7 +1307,7 @@ export class TradingEngine {
         }
       : { symbol: tick.symbol, time: candleTime, open: tick.price, high: tick.price, low: tick.price, close: tick.price, volume: 0 };
     this.liveCandle = candle;
-    this.broadcast({ type: 'candle', data: { ...candle, source: 'live_tick' } });
+    this.broadcast({ type: 'candle', data: { ...candle, timeframe: this.timeframe, source: 'live_tick' } });
   }
 
   private async broadcastCycleStage(
@@ -1310,7 +1318,7 @@ export class TradingEngine {
     // cosmetic for the dashboard, but if it throws, it aborts the cycle.
     let performance: any;
     try {
-      performance = this.shadowTrader.getPerformance();
+      performance = await this.shadowTrader.getPerformance();
       this.lastPerformance = { ...performance, _cachedAt: Date.now() };
     } catch (perfErr: any) {
       logger.error('getPerformance failed in broadcast (using last good snapshot)', {
@@ -1330,7 +1338,7 @@ export class TradingEngine {
     const latestCandle = indicators.df[indicators.df.length - 1];
     if (latestCandle) {
       this.liveCandle = { symbol: ctx.symbol, ...latestCandle };
-      this.broadcast({ type: 'candle', data: latestCandle });
+      this.broadcast({ type: 'candle', data: { ...latestCandle, symbol: ctx.symbol, timeframe: ctx.timeframe } });
     }
     return true;
   }

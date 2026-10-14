@@ -7,6 +7,8 @@ import { up as m0004 } from './0004_freqtrade_hyperopt_results.js';
 import { up as m0005 } from './0005_shadow_trades_close_reason_and_indexes.js';
 import { up as m0006 } from './0006_execution_intents.js';
 import { up as m0007 } from './0007_exchange_reconciliation.js';
+import { up as m0008 } from './0008_shadow_accounting.js';
+import { up as m0009 } from './0009_candle_provenance.js';
 import { logger }       from '../logging/logger.js';
 import { runQuery }     from '../database.js';
 
@@ -54,6 +56,8 @@ export async function runMigrations(): Promise<void> {
     { id: '0005', name: 'shadow_trades_close_reason_and_indexes', run: m0005 },
     { id: '0006', name: 'durable_execution_intents', run: m0006 },
     { id: '0007', name: 'exchange_reconciliation', run: m0007 },
+    { id: '0008', name: 'shadow_accounting', run: m0008 },
+    { id: '0009', name: 'candle_provenance', run: m0009 },
   ];
 
   logger.info('Starting migration runner', { service: 'migrations' });

@@ -1,5 +1,5 @@
 import { enforceDegenDollarCap, enforceRiskCap, getDailyRealizedLoss, RiskMode, RiskManager, validateModeForLive } from '../risk/manager.js';
-import { runQuery } from '../database.js';
+import { runQuery, withDatabaseTransaction } from '../database.js';
 import { randomUUID } from 'crypto';
 import { CostEstimator, OrderRequest, SlippageCircuitBreaker } from '../slippage/index.js';
 import { computeFill } from '../slippage/fillCalculator.js';
@@ -33,13 +33,13 @@ function requireFilledOrder(order: any, expectedAmount: number): void {
 }
 
 async function canOpenNewTrade({
-  riskManager, mode, activeMode, portfolio, currentPrice, exchange
+  riskManager, mode, activeMode, portfolio, resolvePrice, exchange
 }: {
   riskManager: RiskManager;
   mode: RiskMode;
   activeMode?: string;
   portfolio: { balance: number; initialBalance: number; openTrades: any[] };
-  currentPrice: number;
+  resolvePrice: (symbol: string) => Promise<number>;
   exchange?: any;
 }): Promise<boolean> {
   const isLiveEntry = mode === activeMode && process.env.LIVE_TRADING_ENABLED === 'true';
@@ -59,7 +59,7 @@ async function canOpenNewTrade({
 
   let dailyLoss: number;
   try {
-    dailyLoss = await getDailyRealizedLoss(mode, Date.now(), currentPrice);
+    dailyLoss = await getDailyRealizedLoss(mode, Date.now(), resolvePrice);
   } catch (error) {
     logger.error('Entry blocked: daily realized loss could not be read', {
       service: 'ShadowTrader', mode, error: error instanceof Error ? error.message : String(error)
@@ -194,13 +194,14 @@ export class ShadowTrader {
           : (inMemoryStop || persistedStop || previous.stopLoss);
         return {
           ...previous, ...t,
-          amount: live ? Number(t.remaining_amount ?? t.amount) : (previous.amount ?? t.amount),
+          amount: Number(t.remaining_amount ?? t.amount),
           stopLoss,
           takeProfit: previous.takeProfit ?? t.take_profit,
           exchangeOrderId,
-          isRunner: previous.isRunner ?? false,
-          candlesHeld: previous.candlesHeld ?? 0,
-          lastUpdateTime: previous.lastUpdateTime,
+          isRunner: Boolean(t.is_runner),
+          candlesHeld: Number(t.candles_held ?? 0),
+          lastUpdateTime: t.last_update_time ?? undefined,
+          totalFeeFrac: t.total_fee_frac ?? previous.totalFeeFrac,
           trailingStop: previous.trailingStop
         };
       });
@@ -216,7 +217,7 @@ export class ShadowTrader {
         throw error;
       }
       
-      const totalPnl = result[0]?.totalPnl || 0;
+      const totalPnl = Number(result[0]?.totalPnl || 0) + openTrades.reduce((sum, trade) => sum + Number(trade.realized_pnl || 0), 0);
       this.portfolios[mode].balance = this.portfolios[mode].initialBalance + totalPnl;
     }
   }
@@ -232,6 +233,12 @@ export class ShadowTrader {
     shouldAbort: () => boolean = () => false
   ): Promise<boolean> {
     let activeModeTradeOpened = false;
+    const marks = new Map<string, Promise<number>>();
+    const resolvePrice = async (symbol: string): Promise<number> => {
+      if (symbol === signal.symbol) return currentPrice;
+      if (!marks.has(symbol)) marks.set(symbol, Promise.resolve().then(() => exchange?.getCurrentPrice?.(symbol)));
+      return marks.get(symbol)!;
+    };
     for (const mode of Object.values(RiskMode)) {
       if (shouldAbort()) return activeModeTradeOpened;
       const portfolio = this.portfolios[mode];
@@ -243,7 +250,7 @@ export class ShadowTrader {
       }
 
       if (!await canOpenNewTrade({
-        riskManager: this.riskManager, mode, activeMode, portfolio, currentPrice, exchange
+        riskManager: this.riskManager, mode, activeMode, portfolio, resolvePrice, exchange
       })) continue;
 
       const balances = balanceManager ? await balanceManager.getBalances() : null;
@@ -393,30 +400,13 @@ export class ShadowTrader {
         continue;
       }
 
-      const intentCandleTime = Number.isFinite(candleTime) ? Number(candleTime) : trade.timestamp;
-      const idempotencyKey = `${mode}:${trade.symbol}:${trade.side}:${intentCandleTime}`;
-      const accountAdapter = exchange?.accountExecutionAdapter;
-      const clientOrderId = randomUUID().replace(/-/g, '');
-      if (shouldAbort()) return activeModeTradeOpened;
-      const intentResult = await runQuery(`
-        INSERT INTO execution_intents
-          (idempotency_key, trade_id, symbol, risk_mode, side, candle_time, status, created_at, updated_at, exchange_name, account_id, client_order_id, intent_type, requested_quantity)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'entry', ?)
-        ON CONFLICT DO NOTHING
-      `, [idempotencyKey, trade.id, trade.symbol, mode, trade.side, intentCandleTime,
-        liveOrderEnabled ? 'pending' : 'simulated', trade.timestamp, trade.timestamp, liveOrderEnabled ? accountAdapter?.exchange || exchange?.exchangeName || null : null,
-        liveOrderEnabled ? accountAdapter?.accountId || null : null, liveOrderEnabled ? clientOrderId : null, trade.amount], 'run');
-      if (intentResult?.changes === 0 || intentResult?.rowCount === 0) continue;
+      const entry = await this.persistTradeEntry(trade, {
+        liveOrderEnabled, activeMode, balanceManager, exchange, candleTime, tradeCost, shouldAbort,
+      });
+      if (!entry) continue;
+      const { idempotencyKey, clientOrderId } = entry;
 
-      // Persist the pending position before contacting the exchange. If the
-      // process dies or times out, the durable intent blocks another entry.
-      await runQuery(`
-        INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage, stop_loss, take_profit, entry_slippage_frac, total_fee_frac, exchange_name, account_id, remaining_amount)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit, trade.entrySlippageFrac, trade.totalFeeFrac,
-        liveOrderEnabled ? accountAdapter?.exchange || exchange?.exchangeName || null : null, liveOrderEnabled ? accountAdapter?.accountId || null : null, liveOrderEnabled ? 0 : trade.amount]);
-
-      if (shouldAbort()) {
+      if (liveOrderEnabled && shouldAbort()) {
         await runQuery(`UPDATE shadow_trades SET status = 'cancelled' WHERE id = ?`, [trade.id]);
         await runQuery(`UPDATE execution_intents SET status = 'cancelled', updated_at = ? WHERE idempotency_key = ?`,
           [Date.now(), idempotencyKey]);
@@ -447,17 +437,10 @@ export class ShadowTrader {
           });
           continue;
         }
-      } else {
-        await runQuery(`UPDATE execution_intents SET status = 'complete', updated_at = ? WHERE idempotency_key = ?`,
-          [Date.now(), idempotencyKey]);
       }
 
       portfolio.openTrades.push(trade);
       if (mode === activeMode) activeModeTradeOpened = true;
-
-      if (mode === activeMode && balanceManager) {
-        await balanceManager.addActiveTrade(trade.amount * trade.price / (liveOrderEnabled ? 1 : trade.leverage));
-      }
 
        // Audit log: trade open
        await this.logAuditTrade(
@@ -477,15 +460,116 @@ export class ShadowTrader {
     return activeModeTradeOpened;
   }
 
+  private async persistTradeEntry(trade: any, context: {
+    liveOrderEnabled: boolean; activeMode?: string; balanceManager?: any; exchange?: any;
+    candleTime?: number; tradeCost: number; shouldAbort: () => boolean;
+  }): Promise<{ idempotencyKey: string; clientOrderId: string } | null> {
+    const { liveOrderEnabled, activeMode, balanceManager, exchange, candleTime, tradeCost, shouldAbort } = context;
+    const mode = trade.risk_mode;
+    const intentCandleTime = Number.isFinite(candleTime) ? Number(candleTime) : trade.timestamp;
+    const idempotencyKey = `${mode}:${trade.symbol}:${trade.side}:${intentCandleTime}`;
+    const accountAdapter = exchange?.accountExecutionAdapter;
+    const clientOrderId = randomUUID().replace(/-/g, '');
+    if (shouldAbort()) return null;
+    const intentResult = await runQuery(`
+      INSERT INTO execution_intents
+        (idempotency_key, trade_id, symbol, risk_mode, side, candle_time, status, created_at, updated_at, exchange_name, account_id, client_order_id, intent_type, requested_quantity)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'entry', ?)
+      ON CONFLICT DO NOTHING
+    `, [idempotencyKey, trade.id, trade.symbol, mode, trade.side, intentCandleTime,
+      liveOrderEnabled ? 'pending' : 'simulated', trade.timestamp, trade.timestamp, liveOrderEnabled ? accountAdapter?.exchange || exchange?.exchangeName || null : null,
+      liveOrderEnabled ? accountAdapter?.accountId || null : null, liveOrderEnabled ? clientOrderId : null, trade.amount], 'run');
+    if (intentResult?.changes === 0 || intentResult?.rowCount === 0) return null;
+
+    // Paper ownership and its cash reservation are committed together. Live
+    // positions are reserved only when authoritative exchange fills arrive.
+    const walletOwned = !liveOrderEnabled && mode === activeMode && Boolean(balanceManager);
+    const persistEntry = async (query: typeof runQuery) => {
+      await query(`
+        INSERT INTO shadow_trades (id, symbol, side, amount, price, status, timestamp, risk_mode, leverage, stop_loss, take_profit, entry_slippage_frac, total_fee_frac, exchange_name, account_id, remaining_amount, wallet_owned, reserved_margin)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `, [trade.id, trade.symbol, trade.side, trade.amount, trade.price, trade.status, trade.timestamp, trade.risk_mode, trade.leverage, trade.stopLoss, trade.takeProfit, trade.entrySlippageFrac, trade.totalFeeFrac,
+        liveOrderEnabled ? accountAdapter?.exchange || exchange?.exchangeName || null : null, liveOrderEnabled ? accountAdapter?.accountId || null : null, liveOrderEnabled ? 0 : trade.amount,
+        walletOwned ? 1 : 0, walletOwned ? tradeCost : 0]);
+      if (walletOwned) await balanceManager.addActiveTradeInTransaction(query, tradeCost, { tradeId: trade.id });
+    };
+    if (liveOrderEnabled) await persistEntry(runQuery);
+    else await withDatabaseTransaction(async query => {
+      if (shouldAbort()) throw new Error('Paper entry cancelled before reservation');
+      await persistEntry(query);
+      await query(`UPDATE execution_intents SET status = 'complete', updated_at = ? WHERE idempotency_key = ?`,
+        [Date.now(), idempotencyKey]);
+    });
+    return { idempotencyKey, clientOrderId };
+  }
+
+  private async settlePaperTrade(
+    trade: any, ctx: ExitContext, quantity: number, pnl: number,
+    options: { stopLoss: number; isRunner: boolean; closeReason?: string },
+  ): Promise<void> {
+    const now = Date.now();
+    const state = await withDatabaseTransaction(async query => {
+      const rows = await query(`SELECT * FROM shadow_trades WHERE id = ?`, [trade.id], 'all');
+      const persisted = rows[0];
+      if (!persisted || persisted.status !== 'open' || persisted.exchange_name) {
+        throw new Error('Paper position is not open for settlement');
+      }
+      const remaining = Number(persisted.remaining_amount ?? persisted.amount);
+      const tolerance = Math.max(1e-12, remaining * 1e-10);
+      if (!Number.isFinite(quantity) || quantity <= 0 || quantity > remaining + tolerance ||
+          Math.abs(remaining - trade.amount) > tolerance) {
+        throw new Error('Paper position quantity changed; reload before settlement');
+      }
+      if (persisted.wallet_owned !== 0 && persisted.wallet_owned !== 1) {
+        throw new Error('Legacy paper reservation ownership is unavailable; reconcile before settlement');
+      }
+      const closed = Boolean(options.closeReason);
+      const reserved = Number(persisted.reserved_margin);
+      if (!Number.isFinite(reserved) || reserved < 0 || (!persisted.wallet_owned && reserved !== 0)) {
+        throw new Error('Paper reservation principal is invalid');
+      }
+      const principal = closed ? reserved : reserved * quantity / remaining;
+      const remainingAmount = closed ? 0 : remaining - quantity;
+      const realizedPnl = Number(persisted.realized_pnl || 0) + pnl;
+      const reservedMargin = closed ? 0 : reserved - principal;
+      const updated = await query(`UPDATE shadow_trades SET
+        remaining_amount = ?, realized_pnl = ?, reserved_margin = ?, stop_loss = ?,
+        is_runner = ?, candles_held = ?, last_update_time = ?, status = ?,
+        pnl = ?, exit_price = ?, exit_timestamp = ?, close_reason = ?
+        WHERE id = ? AND status = 'open' AND COALESCE(remaining_amount, amount) = ?`,
+      [remainingAmount, realizedPnl, reservedMargin, options.stopLoss, options.isRunner ? 1 : 0,
+        trade.candlesHeld || 0, trade.lastUpdateTime ?? null, closed ? 'closed' : 'open',
+        closed ? realizedPnl : null, closed ? ctx.currentPrice : null, closed ? now : null,
+        options.closeReason ?? null, trade.id, remaining]);
+      if (updated?.changes === 0 || updated?.rowCount === 0) throw new Error('Paper settlement lost its position claim');
+      if (persisted.wallet_owned) {
+        if (!ctx.balanceManager) throw new Error('Wallet-owned paper position requires its balance manager');
+        await ctx.balanceManager.recordTradeResultInTransaction(query, pnl, principal, { tradeId: trade.id });
+      }
+      await query(`INSERT INTO shadow_settlements (id, trade_id, risk_mode, quantity, pnl, timestamp)
+        VALUES (?, ?, ?, ?, ?, ?)`, [randomUUID(), trade.id, ctx.mode, quantity, pnl, now]);
+      return { remainingAmount, realizedPnl, reservedMargin, walletOwned: persisted.wallet_owned };
+    });
+    trade.amount = state.remainingAmount;
+    trade.remaining_amount = state.remainingAmount;
+    trade.realized_pnl = state.realizedPnl;
+    trade.reserved_margin = state.reservedMargin;
+    trade.wallet_owned = state.walletOwned;
+    trade.stopLoss = options.stopLoss;
+    trade.isRunner = options.isRunner;
+    ctx.portfolio.balance += pnl;
+  }
+
   private async evaluateRatchet(trade: any, ctx: ExitContext): Promise<RatchetUpdate> {
     let trailingStopApplied = false;
     let runnerTriggered = false;
+    let stopLoss = trade.stopLoss;
 
     if (trade.side === 'buy') {
       if (ctx.config.multiCandleHoldEnabled && ctx.profitPct > 0.005) {
         const trailStop = ctx.currentPrice * 0.996;
         if (trailStop > trade.stopLoss) {
-          trade.stopLoss = trailStop;
+          stopLoss = trailStop;
           trailingStopApplied = true;
         }
       }
@@ -494,17 +578,10 @@ export class ShadowTrader {
         console.log(`[ShadowTrader] [${ctx.mode}] Runner triggered for ${trade.id}`);
         const exitFactor = ctx.config.runnerConditions?.partialExit || 0.6;
         const closeAmount = trade.amount * exitFactor;
+        if (!(exitFactor > 0 && exitFactor < 1)) throw new Error('Runner partial exit fraction must be between zero and one');
         const partialPnl = calculateTradePnl({ ...trade, amount: closeAmount }, ctx.currentPrice);
-
-        ctx.portfolio.balance += partialPnl;
-        trade.amount -= closeAmount;
-        trade.isRunner = true;
-        trade.stopLoss = Math.max(trade.stopLoss, trade.price * 1.005);
-
-        if (ctx.mode === ctx.activeMode && ctx.balanceManager) {
-          const tradeCost = closeAmount * trade.price / trade.leverage;
-          ctx.balanceManager.recordTradeResult(partialPnl, tradeCost);
-        }
+        stopLoss = Math.max(stopLoss, trade.price * 1.005);
+        await this.settlePaperTrade(trade, ctx, closeAmount, partialPnl, { stopLoss, isRunner: true });
 
         await this.logAuditTrade(
           trade.id,
@@ -525,12 +602,16 @@ export class ShadowTrader {
       if (ctx.config.multiCandleHoldEnabled && ctx.profitPct > 0.005) {
         const trailStop = ctx.currentPrice * 1.004;
         if (trailStop < trade.stopLoss) {
-          trade.stopLoss = trailStop;
+          stopLoss = trailStop;
           trailingStopApplied = true;
         }
       }
     }
 
+    if (trailingStopApplied && !runnerTriggered) {
+      await runQuery(`UPDATE shadow_trades SET stop_loss = ? WHERE id = ? AND status = 'open'`, [stopLoss, trade.id]);
+      trade.stopLoss = stopLoss;
+    }
     if (!trailingStopApplied && !runnerTriggered) return null;
     return { trailingStopApplied, runnerTriggered };
   }
@@ -664,25 +745,16 @@ export class ShadowTrader {
     }
 
     const pnl = pnlRef.value;
-    ctx.portfolio.balance += pnl;
+    const closedQuantity = trade.amount;
+    await this.settlePaperTrade(trade, ctx, closedQuantity, pnl, {
+      stopLoss: trade.stopLoss, isRunner: Boolean(trade.isRunner), closeReason: exitDecision.reason,
+    });
 
     if (pnl > 0) {
       this.riskManager.recordWin(ctx.mode);
     } else {
       this.riskManager.recordLoss(ctx.mode);
     }
-
-    if (ctx.mode === ctx.activeMode && ctx.balanceManager && !trade.exchangeOrderId) {
-      const tradeCost = trade.amount * trade.price / trade.leverage;
-      await ctx.balanceManager.recordTradeResult(pnl, tradeCost);
-
-    }
-
-    await runQuery(`
-      UPDATE shadow_trades
-      SET status = 'closed', pnl = ?, exit_price = ?, exit_timestamp = ?
-      WHERE id = ?
-    `, [pnl, ctx.currentPrice, Date.now(), trade.id]);
 
     if (liveCloseIntentClaimed) {
       await runQuery(`UPDATE execution_intents SET status = 'complete', updated_at = ? WHERE idempotency_key = ?`,
@@ -696,7 +768,7 @@ export class ShadowTrader {
       trade.leverage,
       trade.symbol,
       trade.side,
-      trade.amount,
+      closedQuantity,
       ctx.currentPrice,
       exitDecision.reason,
       pnl,
@@ -751,7 +823,6 @@ export class ShadowTrader {
         const marginUsed = trade.amount * trade.price / leverage;
         const currentNotional = trade.amount * tradePrice;
         const currentMargin = currentNotional / leverage;
-        const pnl = calculateTradePnl(trade, tradePrice);
         const profitPct = trade.side === 'buy'
           ? (tradePrice - trade.price) / trade.price
           : (trade.price - tradePrice) / trade.price;
@@ -763,6 +834,12 @@ export class ShadowTrader {
 
         // 1. Ratchet: trailing stop + runner (mutates trade, side effects)
         await this.evaluateRatchet(trade, ctx);
+        // A partial exit changes both the remaining economics and its margin.
+        const pnl = calculateTradePnl(trade, tradePrice);
+        ctx.marginUsed = trade.amount * trade.price / leverage;
+        ctx.currentMargin = trade.amount * tradePrice / leverage;
+        await runQuery(`UPDATE shadow_trades SET candles_held = ?, last_update_time = ?
+          WHERE id = ? AND status = 'open'`, [trade.candlesHeld || 0, trade.lastUpdateTime ?? null, trade.id]);
 
         // 2. Take profit / early exit (lowest precedence — can be overridden)
         let exitDecision: ExitDecision | null = this.evaluateTakeProfit(trade, ctx);
@@ -887,7 +964,7 @@ export class ShadowTrader {
       // `wins` somehow came back empty (e.g. partial DB failure), default to 0.
       const winCount = wins[0]?.count ?? 0;
       const winRate = stat.count > 0 ? winCount / stat.count : 0;
-      const totalPnl = stat.totalPnl || 0;
+      const totalPnl = Number(stat.totalPnl || 0) + portfolio.openTrades.reduce((sum, trade) => sum + Number(trade.realized_pnl || 0), 0);
       const roi = ((portfolio.balance - portfolio.initialBalance) / portfolio.initialBalance) * 100;
 
       performance[mode] = {

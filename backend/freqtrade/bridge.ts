@@ -20,7 +20,8 @@
  * - All emitted logs include: jobId, exchange, duration, exit code.
  */
 
-import { spawn, ChildProcess } from 'child_process';
+import { spawn, execFile, ChildProcess } from 'child_process';
+import { promisify } from 'node:util';
 import { randomUUID } from 'crypto';
 import { promises as fs, existsSync } from 'fs';
 import os from 'os';
@@ -384,6 +385,7 @@ export class FreqtradeBridge {
     const start = Date.now();
     const args = buildArgs([
       'list-strategies',
+      '--one-column',
       '-c', this.configPath,
       '--userdir', this.userDataDir
     ]);
@@ -450,33 +452,27 @@ export class FreqtradeBridge {
 
   // ── runBacktest ────────────────────────────────────────────────────
 
-  /** Run `freqtrade backtesting ... --export trades --export-filename
-   *  <temp>` and parse the resulting JSON. Always passes `--cache none`
-   *  (B5 mitigation). The temp file is deleted on success; on failure the
-   *  path is preserved in `result.metadata.exportPath` for inspection. */
+  /** Run backtesting in a unique output directory and parse its JSON/ZIP result.
+   * Always pass --cache none and retain the result path for inspection. */
   public async runBacktest(req: RunBacktestRequest): Promise<BacktestResult> {
     const parsed = RunBacktestRequestSchema.parse(req);
     const jobId = randomUUID();
     const start = Date.now();
     const timerange = normalizeFreqtradeTimerange(parsed.timerange, 'backtest timerange');
 
-    // Freqtrade writes to a relative dir, so use an absolute temp file
-    // to avoid CWD surprises.
-    const exportFilename = path.join(
-      os.tmpdir(),
-      `freqtrade-backtest-${jobId}.json`
-    );
+    // Each run owns its directory; a failed job must never reuse an older result.
+    const exportDirectory = await fs.mkdtemp(path.join(os.tmpdir(), 'freqtrade-backtest-'));
 
     const args = buildArgs([
       'backtesting',
       '--strategy', parsed.strategy,
-      '--timerange', timerange ? `${timerange.start}-${timerange.end || ''}` : undefined,
+      timerange ? ['--timerange', `${timerange.start}-${timerange.end || ''}`] : undefined,
       '--timeframe', parsed.timeframe,
       '--pairs', parsed.pairs,
       '--dry-run-wallet', String(parsed.dryRunWallet),
-      '--fee', parsed.fee !== undefined ? String(parsed.fee) : undefined,
+      parsed.fee !== undefined ? ['--fee', String(parsed.fee)] : undefined,
       '--export', 'trades',
-      '--export-filename', exportFilename,
+      '--backtest-directory', exportDirectory,
       '--cache', 'none', // B5: never poison the indicator cache
       '-c', this.configPath,
       '--userdir', this.userDataDir,
@@ -510,37 +506,28 @@ export class FreqtradeBridge {
       );
     }
 
-    // Read & parse the export. Some Freqtrade versions emit a
-    // backtest-result-*.json that the engine writes alongside; the
-    // explicit --export-filename is authoritative.
-    if (!existsSync(exportFilename)) {
-      const fallback = await this.findLastResultJson();
-      if (!fallback) {
-        throw new Error(
-          `freqtrade backtesting did not produce ${exportFilename}` +
-            (result.stderr ? `\nstderr: ${result.stderr.slice(0, 2000)}` : '')
-        );
-      }
-      const parsedExport = await readAndParseJson(fallback);
-      if (parsedExport.ok === false) {
-        throw new Error(`failed to parse ${fallback}: ${parsedExport.error}`);
-      }
-      return withMetadata(parsedExport.data, {
-        jobId, exchange, durationMs: duration, exitCode: result.exitCode, success, warnings, exportPath: fallback
-      });
+    const entries = await fs.readdir(exportDirectory);
+    const candidates = entries.filter(name => /^backtest-result-.*\.(json|zip)$/.test(name) && !name.endsWith('.meta.json') && !name.endsWith('_config.json'));
+    if (candidates.length !== 1) throw new Error('Freqtrade did not produce exactly one result for the current job');
+    const exportPath = path.join(exportDirectory, candidates[0]);
+    let data: any;
+    if (exportPath.endsWith('.zip')) {
+      const python = path.join(this.venvDir, 'bin', 'python3');
+      const script = path.resolve(path.dirname(new URL(import.meta.url).pathname), 'scripts/read_backtest_result.py');
+      const { stdout } = await promisify(execFile)(existsSync(python) ? python : 'python3', [script, exportPath], { maxBuffer: 64 * 1024 * 1024, timeout: 30_000 });
+      data = JSON.parse(stdout);
+    } else {
+      const parsedExport = await readAndParseJson(exportPath);
+      if (!parsedExport.ok) throw new Error('Failed to parse current backtest result');
+      data = parsedExport.data;
     }
-
-    const parsedExport = await readAndParseJson(exportFilename);
-    if (parsedExport.ok === false) {
-      throw new Error(`failed to parse ${exportFilename}: ${parsedExport.error}`);
+    if (data?.strategy && typeof data.strategy === 'object') {
+      const stats = data.strategy[parsed.strategy];
+      if (!stats) throw new Error('Current backtest result does not contain the requested strategy');
+      data = { ...stats, strategy: parsed.strategy, pair_results: stats.results_per_pair,
+        max_drawdown: stats.max_drawdown_account ?? stats.max_drawdown };
     }
-
-    // Best-effort cleanup of the temp file.
-    void fs.unlink(exportFilename).catch(() => undefined);
-
-    return withMetadata(parsedExport.data, {
-      jobId, exchange, durationMs: duration, exitCode: result.exitCode, success, warnings, exportPath: exportFilename
-    });
+    return withMetadata(data, { jobId, exchange, durationMs: duration, exitCode: result.exitCode, success, warnings, exportPath });
   }
 
   // ── cancel ─────────────────────────────────────────────────────────
@@ -612,7 +599,7 @@ export class FreqtradeBridge {
       };
 
       const exitCodePromise = new Promise<number>((res) => {
-        proc.on('close', (code) => res(code ?? 0));
+        proc.on('close', (code) => res(code ?? 1));
         proc.on('error', (err) => {
           cleanup();
           reject(err);
@@ -673,7 +660,7 @@ export class FreqtradeBridge {
       };
 
       const exitCodePromise = new Promise<number>((res) => {
-        proc.on('close', (code) => res(code ?? 0));
+        proc.on('close', (code) => res(code ?? 1));
         proc.on('error', (err) => {
           cleanup();
           reject(err);
@@ -779,7 +766,7 @@ export class FreqtradeBridge {
         if (proc.exitCode !== null) {
           resolve(proc.exitCode);
         } else {
-          proc.once('close', (code) => resolve(code ?? 0));
+          proc.once('close', (code) => resolve(code ?? 1));
         }
       });
       const durationMs = Date.now() - start;

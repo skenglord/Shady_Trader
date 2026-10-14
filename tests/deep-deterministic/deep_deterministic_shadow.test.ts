@@ -3,26 +3,14 @@ import assert from 'node:assert';
 import { ShadowTrader } from '../../backend/shadow/shadow_trader.js';
 import { RiskMode } from '../../backend/risk/manager.js';
 import { setMockRunQuery, clearMockRunQuery } from '../../backend/database.js';
-
-function setupShadowMocks() {
-  setMockRunQuery(async (sql: string, params?: any[], method?: string) => {
-    if (sql.includes('SELECT SUM(pnl)')) return [{ totalPnl: 0 }];
-    if (sql.includes('SELECT COUNT(*) as count')) return [{ count: 0 }, { count: 0 }];
-    if (sql.includes('SELECT exit_timestamp as time, pnl')) return [];
-    if (sql.includes('SELECT * FROM shadow_trades WHERE risk_mode')) return [];
-    if (sql.includes('DELETE FROM shadow_trades')) return { changes: 1 };
-    if (sql.includes('INSERT INTO shadow_trades')) return { changes: 1 };
-    if (sql.includes('INSERT INTO audit_trades')) return { changes: 1 };
-    if (sql.includes('UPDATE shadow_trades')) return { changes: 1 };
-    return [];
-  });
-}
+import { createShadowTestStore, persistShadowTestTrade } from '../utils/shadow-sqlite-store.js';
 
 describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () => {
   let shadowTrader: ShadowTrader;
+  let store: ReturnType<typeof createShadowTestStore>;
 
   beforeEach(() => {
-    setupShadowMocks();
+    store = createShadowTestStore();
     shadowTrader = new ShadowTrader();
   });
 
@@ -30,6 +18,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
     // CRITICAL: reset the global DB mock so it doesn't leak into other test
     // files running concurrently in the same process.
     clearMockRunQuery();
+    store.db.close();
   });
 
   describe('Constructor and Initial State', () => {
@@ -163,6 +152,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
         risk_mode: RiskMode.MODERATE,
         candlesHeld: 0
       };
+      persistShadowTestTrade(store.db, trade);
       shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push(trade as any);
 
       // Price hits stop loss
@@ -188,6 +178,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
         candlesHeld: 0,
         isRunner: false
       };
+      persistShadowTestTrade(store.db, trade);
       shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push(trade as any);
 
       await shadowTrader.updatePositions(50600, RiskMode.MODERATE);
@@ -211,6 +202,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
         candlesHeld: 0,
         isRunner: false
       };
+      persistShadowTestTrade(store.db, trade);
       shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push(trade as any);
 
       await shadowTrader.updatePositions(50600, RiskMode.MODERATE);
@@ -235,6 +227,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
         lastUpdateTime: Date.now() - 120000, // 2 minutes ago
         isRunner: false
       };
+      persistShadowTestTrade(store.db, trade);
       shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push(trade as any);
 
       await shadowTrader.updatePositions(50200, RiskMode.MODERATE, undefined, undefined, { time: Date.now() });
@@ -264,6 +257,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
         lastUpdateTime: Date.now() - 120000,
         isRunner: false
       };
+      persistShadowTestTrade(store.db, trade);
       shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push(trade as any);
 
       await shadowTrader.updatePositions(50200, RiskMode.MODERATE);
@@ -288,6 +282,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
         candlesHeld: 0,
         isRunner: false
       };
+      persistShadowTestTrade(store.db, trade);
       shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push(trade as any);
 
       // Massive price drop to trigger liquidation
@@ -314,6 +309,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
         candlesHeld: 0,
         isRunner: false
       };
+      persistShadowTestTrade(store.db, trade);
       shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push(trade as any);
 
       const result = await shadowTrader.closeTrade('test-trade-close', 50200, RiskMode.MODERATE);
@@ -345,6 +341,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
         candlesHeld: 0,
         isRunner: false
       };
+      persistShadowTestTrade(store.db, trade);
       shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push(trade as any);
 
       const result = await shadowTrader.updateTradeParams('test-trade-update', 49000, 52000);
@@ -399,6 +396,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
         lastUpdateTime: Date.now() - 120000,
         isRunner: false
       };
+      persistShadowTestTrade(store.db, trade);
       shadowTrader.portfolios[RiskMode.AGGRESSIVE].openTrades.push(trade as any);
 
       // 1.5% profit = 50750
@@ -431,6 +429,7 @@ describe('Deep Deterministic Tests - ShadowTrader', { concurrency: false }, () =
         lastUpdateTime: Date.now() - 120000,
         isRunner: false
       };
+      persistShadowTestTrade(store.db, trade);
       shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push(trade as any);
 
       // 1% profit = 50500

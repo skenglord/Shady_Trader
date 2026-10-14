@@ -1,9 +1,15 @@
-import { describe, test } from 'node:test';
+import { afterEach, beforeEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RiskMode } from '../../backend/risk/manager.js';
 import { ShadowTrader } from '../../backend/shadow/shadow_trader.js';
 
+import { clearMockRunQuery } from '../../backend/database.js';
+import { createShadowTestStore } from '../utils/shadow-sqlite-store.js';
+
 describe('position symbol price isolation', () => {
+  let store: ReturnType<typeof createShadowTestStore>;
+  beforeEach(() => { store = createShadowTestStore(); });
+  afterEach(() => { clearMockRunQuery(); store.db.close(); });
   test('prices an older-symbol position from that symbol after pair switch', async () => {
     const trader = new ShadowTrader();
     const mode = RiskMode.MODERATE;

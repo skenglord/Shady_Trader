@@ -61,7 +61,8 @@ const ADMIN_PATHS = ['/settings', '/risk-configs', '/start', '/stop', '/kill', '
 
 export async function safeFetch(url: string, options?: RequestInit): Promise<{ ok: boolean; data?: any; error?: string }> {
   const method = options?.method?.toUpperCase() || 'GET';
-  if (method === 'GET') {
+  const cacheable = method === 'GET' && options?.cache !== 'no-store' && options?.cache !== 'reload';
+  if (cacheable) {
     const cached = cacheGet(url);
     if (cached) {
       return { ok: true, data: cached.data };
@@ -84,14 +85,15 @@ export async function safeFetch(url: string, options?: RequestInit): Promise<{ o
 
   const request = (async () => {
     try {
-      const res = await fetch(url, { ...options, headers });
+      const res = await fetch(url, { cache: 'no-store', ...options, headers });
       const text = await res.text();
       if (!res.ok) {
         return { ok: false, error: `HTTP ${res.status}: ${text.slice(0, 100)}` };
       }
       try {
         const data = JSON.parse(text);
-        if (method === 'GET') {
+        if (method !== 'GET') responseCache.clear();
+        if (cacheable) {
           cacheSet(url, data);
         }
         return { ok: true, data };
@@ -101,13 +103,13 @@ export async function safeFetch(url: string, options?: RequestInit): Promise<{ o
     } catch (e: any) {
       return { ok: false, error: e.message || 'Network error' };
     } finally {
-      if (method === 'GET') {
+      if (cacheable) {
         inflightRequests.delete(url);
       }
     }
   })();
 
-  if (method === 'GET') {
+  if (cacheable) {
     inflightRequests.set(url, request);
   }
   return request;

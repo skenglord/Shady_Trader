@@ -10,6 +10,18 @@ afterEach(() => {
 });
 
 describe('MarketDataService', () => {
+  test('preserves the original publisher and publication time and rejects placeholder news links', async () => {
+    axios.get = (async () => ({ data: { articles: [
+      { id: 'original', title: 'Bitcoin markets', url: 'https://example.com/bitcoin', source: 'Original publisher', published_at: '2026-10-10T10:00:00Z' },
+      { id: 'bad', title: 'Placeholder', url: '#', source: 'Unknown', published_at: '2026-10-10T10:00:00Z' }
+    ] } })) as any;
+    const service = new MarketDataService();
+    (service as any).saveNews = async () => undefined;
+    const news = await service.fetchNews();
+    assert.strictEqual(news.length, 1);
+    assert.strictEqual(news[0].source, 'Original publisher');
+    assert.strictEqual(news[0].timestamp, Date.parse('2026-10-10T10:00:00Z'));
+  });
   test('fetchMarketData saves and returns normalized payload', async () => {
     let saveCalls = 0;
     axios.get = (async (url: string) => {

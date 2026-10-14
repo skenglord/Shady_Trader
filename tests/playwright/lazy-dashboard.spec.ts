@@ -93,3 +93,38 @@ for (const hasHistory of [false, true]) {
     expect(errors).toEqual([]);
   });
 }
+
+test('mobile dashboard fits the viewport, identifies the active source and reloads the selected pair', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const candleQueries: URLSearchParams[] = [];
+  const barTime = Math.floor(Date.now() / 900000) * 900000;
+  await page.routeWebSocket('**/*', ws => ws.onMessage(() => {
+    ws.send(JSON.stringify({ type: 'auth_ok' }));
+    ws.send(JSON.stringify({ type: 'candle', data: { symbol: 'BTC/USDT', timeframe: '15m', time: barTime, open: 100, high: 102, low: 99, close: 101, source: 'live_tick' } }));
+  }));
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url());
+    if (url.pathname === '/api/candles') candleQueries.push(url.searchParams);
+    const responses: Record<string, unknown> = {
+      '/api/status': { isRunning: false, symbol: 'BTC/USDT', timeframe: '15m', currentRegime: 'uncertain', exchange: 'coingecko' },
+      '/api/performance': { moderate: { balance: 1000, roi: 0, winRate: 0, tradesCount: 0, history: [] } },
+      '/api/health/providers': { activeProvider: 'binance', providers: [{ name: 'coingecko', circuitOpen: true }, { name: 'binance', available: true }] },
+      '/api/settings': {}, '/api/risk-configs': {}, '/api/balances': {},
+      '/api/symbol': { success: true },
+      '/api/candles': [{ time: barTime - 900000, open: 100, high: 102, low: 99, close: 101 }, { time: barTime, open: 101, high: 103, low: 100, close: 102 }],
+      '/api/market/data': { market_cap: 1e12, total_volume: 1e9, btc_dominance: 50, fear_greed_index: 50, fear_greed_value: 'Neutral', last_updated: Date.now() - 13 * 3600000 },
+    };
+    await route.fulfill({ json: responses[url.pathname] ?? [] });
+  });
+  await page.goto(baseUrl);
+  await page.locator('input[type="password"]').nth(0).fill('test-admin');
+  await page.locator('input[type="password"]').nth(1).fill('test-trader');
+  await page.getByRole('button', { name: /Enter Dashboard/i }).click();
+  await expect(page.locator('canvas').first()).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await expect(page.getByText('API: Binance', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Market overview.*stale/i)).toBeVisible();
+  await page.getByRole('button', { name: 'ETH/USDT', exact: true }).click();
+  await expect.poll(() => candleQueries.some(q => q.get('symbol') === 'ETH/USDT' && q.get('timeframe') === '15m')).toBe(true);
+  await expect(page.getByRole('button', { name: 'Start Engine', exact: true })).toBeInViewport();
+});

@@ -20,6 +20,15 @@ function makeCandles(count: number): Candle[] {
 }
 
 describe('IndicatorEngine', () => {
+  test('absent volume never creates overbought MFI or a volume pressure signal', () => {
+    const rows = new IndicatorEngine().calculateAll(makeCandles(90).map(c => ({ ...c, volume: 0, volumeAvailable: false })));
+    const last = rows.at(-1)!;
+    assert.strictEqual(last.mfi, null);
+    assert.strictEqual(last.vpi, null);
+    assert.strictEqual(last.vwap, null);
+    assert.strictEqual(last.volume_sma_20, null);
+    assert.strictEqual(last.mfi_overbought, false);
+  });
   test('returns an empty series when candle count is below warmup minimum', () => {
     const engine = new IndicatorEngine();
     assert.deepStrictEqual(engine.calculateAll(makeCandles(10)), []);

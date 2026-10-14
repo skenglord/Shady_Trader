@@ -242,6 +242,9 @@ graph TD
         MIG -->|0002 Migrate Strings| DB
         MIG -->|0003 Freqtrade Jobs| DB
         MIG -->|0004 Freqtrade Hyperopt Results| DB
+        MIG -->|0005-0007 execution and reconciliation| DB
+        MIG -->|0008 shadow reservations and settlement journal| DB
+        MIG -->|0009 candle provenance| DB
     end
 
     subgraph Infrastructure
@@ -287,6 +290,7 @@ graph TD
         API --> TE
         API -->|Cost Estimation| SE
         API -->|Paper Trading| PTS[PaperTradingService]
+        PTS -->|Orders, positions, retry records| PSTATE[(settings: paper_account_v1)]
         PTS --> PTW[PaperTradingWS Handler]
         API -->|Public liveness| HQ2[/api/health/quick/]
         API -->|Auth-gated detail| DIAG3[/api/diagnostics/*/]
@@ -409,7 +413,7 @@ npm run freqtrade:ingest    # Bulk-ingest parquet/feather into candles DB
 
 1. **Runtime MVP Launch**: Verified locally on May 12, 2026 via `npm run dev` with frontend served and backend endpoints responding on `PORT=3000`
 2. **Graceful Degradation**: Verified Redis-offline startup path with database and engine still reporting ready while Redis is marked `degraded`
-3. **Current Audit Baseline (October 10, 2026)**: Fresh root lint, frontend build, complexity gate and 2 isolated Chromium tests pass. Production dependency audit reports 12 affected packages (1 critical, 2 high, 9 moderate); the CLI-specific TypeScript project fails. These gates do not establish live readiness: reproduced authorization, order lifecycle, reconciliation, and accounting failures are recorded in `documentation/full_system_audit_2026-10-10.md`.
+3. **Historical Audit Baseline (October 10, 2026)**: Fresh root lint, frontend build, complexity gate and 2 isolated Chromium tests pass. Production dependency audit reports 12 affected packages (1 critical, 2 high, 9 moderate); the CLI-specific TypeScript project fails. These gates do not establish live readiness: reproduced authorization, order lifecycle, reconciliation, and accounting failures are recorded in `documentation/full_system_audit_2026-10-10.md`.
 4. **Phase 1B Lifecycle Stabilization (June 10, 2026)**: Chose production strategy B over the test-only DB init workaround. `stopSchedulers()` now aborts in-flight work, clears intervals/timers, and closes queues; `stop()`, `killBot()`, `/stop`, `/timeframe`, and settings reload await engine lifecycle work; `runCycle()` is overlap-guarded and abortable via `cycleInProgress` + `cycleAbortToken`.
 5. **Redis Online (June 3, 2026)**: Installed `redis-server` 8.0.2 via apt, daemonized on `127.0.0.1:6379`, added `REDIS_HOST`/`REDIS_PORT` to `.env`, and fixed three IORedis clients (`backend/main.ts`, `backend/api/routes.ts`, `backend/job_queues.ts`) that were configured with `lazyConnect: true` and `retryStrategy: () => null` — preventing any connection from ever being established. Now Redis reports `ok`, BullMQ workers initialize, and state is persisted under `service:trading-engine:*` keys.
 
@@ -466,10 +470,14 @@ npm run freqtrade:ingest    # Bulk-ingest parquet/feather into candles DB
 - Support partial fills and runner positions
 
 ## Current State
-**October 12, 2026 live-system review: real public market data reaches the local human-test clone, but paper results are not trustworthy and the system remains unready for live funds or untrusted network exposure.** See `documentation/live_system_review_2026-10-12.md` and its archived evidence. Live checks reproduced a completed-candle mismatch, empty performance WebSocket frames and mobile overflow; isolated production-method fixtures reproduced runner profit overcredit, mode-switch wallet inflation, cross-symbol daily-loss errors, limit-price violations and premature liquidation. Paper REST uses a disconnected service; fallback symbol/timeframe contracts also need repair. Redis is degraded, Freqtrade is absent and ML is disabled in the reviewed clone. These findings reopen the affected accounting/data readiness gates; no fixes were made in this review. October 12 publication verification on local main: serial Node 22 tests reported 617 tests, 616 passed, 0 failed, 1 skipped; whole skipped suites remain outside that single-test skip count. Root lint and production frontend build passed. All local work-branch commits are included in main. October 11 access-control, accounting, transactionality, reconciliation and dependency work below records historical implementation and verification only. See `documentation/full_system_audit_2026-10-10.md` and `documentation/production_readiness_todo.md` for audit findings and phase status. Paper REST and symbol routes require trader authorization, CSRF token bypass checks credentials, paper WebSockets wait for auth, malformed null JSON closes safely, and source-deny middleware blocks Vite filesystem aliases and SQLite files. Live closes use a per-trade lock and durable close intent; position updates and kill-switch exits use each position's symbol; stop waits for the active cycle and prevents not-yet-submitted entries. Balance snapshots, conditional mutation and audit insert now commit or roll back together through SQLite and PostgreSQL transaction adapters; PostgreSQL client lifecycle is verified with a mocked pool, not a live server. Paper positions now share order identity, open only after fills with actual fill price and quantity, use full notional P&L, and record liquidation/close outcomes without overwriting entry fills. Binance order and fill history now pages over the app-supported Spot pairs BTC/USDT, ETH/USDT, and SOL/USDT; base/quote currency fees are valued at fill price and adjust inventory, while third-asset fees, trades outside that allowlist, and exchange sandbox validation remain blockers. Live execution remains disabled. Production dependencies now pass `npm audit --omit=dev` with zero advisories; the full dependency graph still has 14 development-dependency advisories (5 high, 5 moderate, 4 low). Verification: OpenTelemetry startup/shutdown smoke, fee and reconciliation tests, frontend build and full serial Node 22 suite pass (586 tests, 585 passed, 0 failed, 1 skipped); lint passes.
+**October 14, 2026 usability repairs: the local public-data paper application is verified for human testing; live execution remains disabled.** The eleven reproduced October 12 audit findings are repaired, with durable shadow reservation/runner settlement, per-symbol daily loss, validated OHLCV/provenance, one persistent paper service, correct limit/liquidation behavior, resolved performance broadcasts and a 390px layout. Independent review also identified and drove fixes for partial-entry growth during closure, depth rollback after save failure, stale liquidation marks and pending-entry cancellation. See `documentation/usability_repair_2026-10-14.md` and archived evidence in `documentation/audits/2026-10-14`.
 
-**✅ AI Configuration:**
-- **Model**: Gemma 4 E2B (`gemma4:e2b` — 5.1B Q4_K_M) via local Ollama
+The test checkout at `/tmp/shady-trader-usability` serves `http://localhost:3001` with isolated SQLite state; the earlier port-3000 clone is preserved. Authenticated live checks verified readiness (database/Redis/engine), paper buy/retry/close with exact P&L, restart recovery, closed-history responses and a queued Freqtrade backtest. All 18 finalized candle comparisons matched Binance across the three supported pairs and six intervals. Real Chromium observed populated performance frames, no page errors and a 390/390px mobile layout. Freqtrade 2026.5.1 discovery, public historical download and current ZIP export parsing work; the reference sample produced zero trades, so this is workflow verification rather than strategy validation. Redis workers handle delayed readiness and restart. The CLI project and recursive test discovery are fixed; tests isolate Redis from the running app.
+
+The final verification summary is in `documentation/audits/2026-10-14/verification.json`. Root/CLI TypeScript, frontend build, complexity and three isolated browser checks pass. Production dependencies were last audited October 11 (zero advisories); the 14 known development advisories were not re-audited here. Native credentialed sandbox execution, unsupported external symbols/third-asset fees, real PostgreSQL restore and deployment gates remain open. Legacy shadow positions with unknown wallet ownership require explicit reconciliation; no ownership is inferred. ML Python dependencies are installed, but no trained model is loaded and ML remains disabled.
+
+**Optional AI configuration (inactive in this test instance):**
+- **Configured model**: Gemma 4 E2B (`gemma4:e2b`) via local Ollama; inference was not enabled or validated in the October 14 test instance.
 - **Endpoint**: `http://localhost:11434/api/generate` (native Ollama API)
 - **Fallback**: When Ollama unreachable, falls back to rule-based logit adjustments
 - **Cache**: 5-min TTL in-memory cache for meta-label adjustments
@@ -487,21 +495,21 @@ npm run freqtrade:ingest    # Bulk-ingest parquet/feather into candles DB
 - **Dynamic Configuration**: Provider selection dropdown with exchange/market-data providers, contextual API credential fields, and CoinGecko fallback.
 - **Freqtrade Sidecar**: Python venv-based sidecar, bridge, workers, migrations, REST endpoints, CLI commands, and React panel are implemented; TypeScript validation now passes.
 
-**Quality Gate Status:**
-- **TypeScript Compilation**: October 10 root `npm run lint` passes; `tsc --noEmit -p cli/tsconfig.json` fails TS6059 because backend imports are outside CLI rootDir.
-- **Build**: October 10 `npm run build` passes; largest frontend chunk is 332.43 kB.
-- **Tests and Coverage**: October 10 isolated serial Node 22 run: 518 tests, 517 passed, 0 failed/cancelled, 1 skipped. Coverage gate passes: lines 56.97%, branches 74.68%. TAP also contains skipped whole suites, so the one-test skip count is not a completeness claim. The normal shell test glob excludes root-level `tests/ml.test.ts`, which independently passes 28/28. Default Node 24 fails the installed SQLite native ABI; see report.
-- **Complexity Gate**: October 10 `npm run quality:complexity` passes (configured max 50).
-- **Audit Gate**: October 10 production npm audit fails: 12 affected packages, including 1 critical and 2 high. Advisory reachability is qualified in the report.
-- **Playwright Tests**: October 10 isolated production frontend checks pass 2/2 with mocked APIs/WebSocket. No live backend/browser pass is claimed.
+**Quality Gate Status (October 14, 2026):**
+- **TypeScript Compilation**: Root and CLI-specific projects pass.
+- **Build**: Production build passes; largest frontend chunk is 332.43 kB.
+- **Tests**: Recursive serial Node 22 suite: 667 tests, 666 passed, zero failed, one skipped; 38 final focused regressions pass. Dated evidence is in `documentation/audits/2026-10-14/verification.json`. Whole skipped suites remain outside the individual skip count. Node 22 is required for the installed SQLite native ABI.
+- **Complexity Gate**: Pass (configured max 50); entry persistence is extracted from signal processing.
+- **Audit Gate**: October 11 production dependency audit passed; no dependency changes or fresh security audit in this repair.
+- **Browser**: Three isolated production scenarios pass. Real authenticated desktop/mobile, public candles, paper lifecycle/restart and research-job checks are archived separately.
 - **Environment/API Gaps (June 15, 2026)**: Source scan found 68 env vars. `.env.example` is missing Redis/Postgres/Freqtrade/Gemma/ML/slippage vars; several `.env.example` keys are not in `backend/config/validation.ts`; and several validation-only vars are absent from `.env.example`. Details are in `documentation/production_readiness_todo.md` and `documentation/current_state_and_recommendations.md`.
 - **API Controller Ownership (June 15, 2026)**: Monte Carlo REST routes are mounted at `/api/mc` with admin/trader role protection. WFA HTTP API is retired behind `/api/wfa/*` `410 Gone` responses; the WFA component modules remain available for offline validation. Monte Carlo WebSocket remains unwired future work. Details are in `documentation/production_readiness_todo.md`.
 - **Audit Fix Implementation (June 17, 2026)**: Implemented the revised audit-fix workstream. Removed duplicate per-cycle signal persistence in `backend/main.ts`, fixed `TRADER_TOKEN_PLACEHOLDER` initialization order in `src/App.tsx`, replaced request middleware `console.log` calls with structured `logger.debug` in `server.ts`, added `.gitignore` artifact entries, verified `shadow_trades` schema/index/WAL/timeout work, added interval `.unref()` coverage, optimized backtest exit lookup with a time-to-index map, reused the single `/api/balances` balance snapshot, and pruned `SELECT *` from stable high-volume API endpoints.
 
 **Last Known Working Configuration:**
-- Server: `PORT=3000 npm run dev`
-- Exchange: CoinGecko (default fallback)
-- Database: SQLite (trading.db)
+- Server: `PORT=3001 npm run app` from the human-test checkout, after stopping the existing listener.
+- Exchange: Binance public market data; live orders disabled (October 14 local test configuration).
+- Database: isolated SQLite (`trading_usability.db`) in the October 14 human-test checkout.
 
 ### Recently Completed Tasks
 

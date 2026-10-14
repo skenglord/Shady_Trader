@@ -12,6 +12,29 @@ let redisAvailable = false;
 let marketDataWorker: Worker | null = null;
 let optimizationWorker: Worker | null = null;
 let connectionAttempted = false;
+let pendingWorkers: [MarketDataService, OptimizationEngine] | null = null;
+let freqtradeRequested = false;
+let queueGeneration = 0;
+const cancelReadiness = new Set<() => void>();
+
+export async function awaitQueueReady(timeoutMs = 1500): Promise<boolean> {
+  const connection = getRedisConnection();
+  if (!connection) return false;
+  if (connection.status === 'ready') return true;
+  return new Promise(resolve => {
+    const finish = (ready: boolean) => {
+      clearTimeout(timer);
+      connection.off('ready', onReady);
+      cancelReadiness.delete(cancel);
+      resolve(ready);
+    };
+    const onReady = () => finish(connection === redisConnection);
+    const cancel = () => finish(false);
+    const timer = setTimeout(cancel, timeoutMs);
+    cancelReadiness.add(cancel);
+    connection.once('ready', onReady);
+  });
+}
 
 function getRedisConnection(): IORedis | null {
   if (redisConnection) return redisConnection;
@@ -28,10 +51,16 @@ function getRedisConnection(): IORedis | null {
       retryStrategy: (times) => Math.min(times * 200, 2000),
     });
     
-    redisConnection.on('connect', () => {
+    const connection = redisConnection;
+    redisConnection.on('ready', () => {
+      if (connection !== redisConnection) return;
       redisAvailable = true;
       logger.info('Redis connection established', { service: 'JobQueue' });
+      if (pendingWorkers) initializeWorkers(...pendingWorkers);
+      if (freqtradeRequested) void registerFreqtradeWorkers().catch(error =>
+        logger.warn('Freqtrade worker registration failed', { error: String(error), service: 'JobQueue' }));
     });
+    redisConnection.on('close', () => { if (connection === redisConnection) redisAvailable = false; });
     
     redisConnection.on('error', (err) => {
       redisAvailable = false;
@@ -241,16 +270,22 @@ export async function registerFreqtradeWorkers(): Promise<void> {
     return;
   }
 
-  const conn = getRedisConnection();
-  if (!conn || !redisAvailable) {
+  freqtradeRequested = true;
+  const generation = queueGeneration;
+  if (!await awaitQueueReady() || generation !== queueGeneration) {
     logger.warn('Redis not available — cannot register freqtrade workers', { service: 'JobQueue' });
     return;
   }
+  if (freqtradeWorkersRegistered) return;
+  freqtradeWorkersRegistered = true;
+  const conn = getRedisConnection()!;
 
   // Lazy-import workers to avoid hard dep when freqtrade isn't installed
-  const { processFreqtradeDataJob } = await import('./freqtrade/workers/dataWorker.js');
-  const { processFreqtradeBacktestJob } = await import('./freqtrade/workers/backtestWorker.js');
-  const { processFreqtradeValidateJob } = await import('./freqtrade/workers/validateWorker.js');
+  const [{ processFreqtradeDataJob }, { processFreqtradeBacktestJob }, { processFreqtradeValidateJob }] = await Promise.all([
+    import('./freqtrade/workers/dataWorker.js'), import('./freqtrade/workers/backtestWorker.js'),
+    import('./freqtrade/workers/validateWorker.js')
+  ]).catch(error => { freqtradeWorkersRegistered = false; throw error; });
+  if (generation !== queueGeneration) return;
 
   const concurrency = parseInt(process.env.FREQTRADE_QUEUE_CONCURRENCY || '1', 10);
 
@@ -321,6 +356,8 @@ export async function registerFreqtradeWorkers(): Promise<void> {
 // ──────────────────────────────────────────────────────────────────────
 
 export function initializeWorkers(marketDataService: MarketDataService, optimizationEngine: OptimizationEngine) {
+  pendingWorkers = [marketDataService, optimizationEngine];
+  if (marketDataWorker) return;
   const conn = getRedisConnection();
   if (!conn || !redisAvailable) {
     logger.warn('Cannot initialize workers: Redis not available', { service: 'JobQueue' });
@@ -506,6 +543,10 @@ export async function getQueueHealth() {
 
 export async function closeQueues() {
   logger.info('Closing job queues', { service: 'JobQueue' });
+  queueGeneration++;
+  pendingWorkers = null;
+  freqtradeRequested = false;
+  for (const cancel of [...cancelReadiness]) cancel();
 
   const closePromises: Promise<void>[] = [];
 
@@ -521,9 +562,16 @@ export async function closeQueues() {
   if (freqtradeDataQueue)      closePromises.push(freqtradeDataQueue.close().then(() => {}).catch(() => {}));
   if (freqtradeBacktestQueue)  closePromises.push(freqtradeBacktestQueue.close().then(() => {}).catch(() => {}));
   if (freqtradeValidateQueue)  closePromises.push(freqtradeValidateQueue.close().then(() => {}).catch(() => {}));
-  if (redisConnection)         closePromises.push(redisConnection.quit().then(() => {}).catch(() => {}));
-
   await Promise.all(closePromises);
+  if (redisConnection) redisConnection.disconnect();
+  redisConnection = null;
+  redisAvailable = false;
+  connectionAttempted = false;
+  marketDataWorker = optimizationWorker = dataPipelineWorker = null;
+  freqtradeDataWorker = freqtradeBacktestWorker = freqtradeValidateWorker = null;
+  marketDataQueue = optimizationQueue = dataPipelineQueue = null;
+  freqtradeDataQueue = freqtradeBacktestQueue = freqtradeValidateQueue = null;
+  freqtradeWorkersRegistered = false;
 
   logger.info('Job queues closed successfully', { service: 'JobQueue' });
 }

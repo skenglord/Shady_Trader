@@ -48,6 +48,8 @@ models/
 
 # Freqtrade sidecar (Python venv, downloaded data, runtime artifacts)
 backend/freqtrade/venv/
+backend/freqtrade/venv
+backend/ml/venv/
 backend/freqtrade/.pid
 backend/freqtrade/freqtrade.log
 backend/freqtrade/user_data/data/

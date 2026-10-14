@@ -1,0 +1,20 @@
+{
+  "requestId": "c26dcf05-16e9-432c-b7bd-7f80a4187c3f",
+  "job": {
+    "id": "14d9adb2-01c3-446a-854d-7abc56d9c443",
+    "type": "download",
+    "status": "completed",
+    "exchange": "binance",
+    "strategy": null,
+    "timerange_start": "20260901",
+    "timerange_end": "20261014",
+    "params_json": "{\"exchange\":\"binance\",\"pairs\":[\"BTC/USDT:USDT\"],\"timeframes\":[\"1h\"],\"timerange\":{\"start\":\"20260901\",\"end\":\"20261014\"},\"tradingMode\":\"futures\",\"dataFormat\":\"feather\",\"jobId\":\"14d9adb2-01c3-446a-854d-7abc56d9c443\"}",
+    "result_json": "{\"ok\":true,\"warnings\":[]}",
+    "error": null,
+    "pid": null,
+    "started_at": 1791967427496,
+    "completed_at": 1791967448643,
+    "created_at": 1791967427136,
+    "updated_at": 1791967448643
+  }
+}

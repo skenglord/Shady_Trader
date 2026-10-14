@@ -330,14 +330,16 @@ describe('Deep Deterministic Tests - API Routes', { concurrency: false }, () => 
   });
 
   describe('Candles Endpoint', () => {
-    test('GET /api/candles returns candles or empty array', async () => {
-      const response = await request(app).get('/api/candles');
-      assert.ok([200, 500].includes(response.status));
+    test('GET /api/candles reports unavailable when the exchange is not initialized', async () => {
+      const response = await request(app).get('/api/candles?symbol=BTC%2FUSDT&timeframe=15m');
+      assert.strictEqual(response.status, 503);
+      assert.strictEqual(response.body.error, 'DATA_UNAVAILABLE');
     });
 
     test('GET /api/candles/history=1y uses long history', async () => {
-      const response = await request(app).get('/api/candles?history=1y');
-      assert.ok([200, 500].includes(response.status));
+      const response = await request(app).get('/api/candles?history=1y&symbol=BTC%2FUSDT&timeframe=4h');
+      assert.strictEqual(response.status, 503);
+      assert.strictEqual(response.body.error, 'DATA_UNAVAILABLE');
     });
   });
 

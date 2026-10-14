@@ -1,0 +1,541 @@
+{
+  "observedAt": "2026-10-14T18:06:10.948Z",
+  "pageErrors": [],
+  "console": [
+    {
+      "type": "warning",
+      "text": "Error with Permissions-Policy header: Unrecognized feature: 'ambient-light-sensor'."
+    },
+    {
+      "type": "warning",
+      "text": "Error with Permissions-Policy header: Unrecognized feature: 'battery'."
+    },
+    {
+      "type": "warning",
+      "text": "Error with Permissions-Policy header: Unrecognized feature: 'document-domain'."
+    },
+    {
+      "type": "warning",
+      "text": "Error with Permissions-Policy header: Unrecognized feature: 'web-share'."
+    },
+    {
+      "type": "warning",
+      "text": "The width(-1) and height(-1) of chart should be greater than 0,\n       please check the style of container, or the props width(100%) and height(100%),\n       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the\n       height and width."
+    }
+  ],
+  "mobile": {
+    "viewport": 390,
+    "scrollWidth": 390,
+    "bodyWidth": 390
+  },
+  "responses": [
+    {
+      "url": "http://127.0.0.1:3001/api/status",
+      "status": 200,
+      "at": 1792001174348
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/performance",
+      "status": 200,
+      "at": 1792001174348
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/trades?limit=10",
+      "status": 200,
+      "at": 1792001174348
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/balances",
+      "status": 200,
+      "at": 1792001174355
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/positions/open",
+      "status": 200,
+      "at": 1792001174355
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/shadow-trades/all",
+      "status": 200,
+      "at": 1792001174355
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/shadow-trades/closed?limit=100",
+      "status": 200,
+      "at": 1792001174376
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/market/data",
+      "status": 200,
+      "at": 1792001174377
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/market/news",
+      "status": 200,
+      "at": 1792001174377
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/signals?limit=500",
+      "status": 200,
+      "at": 1792001174377
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/settings",
+      "status": 200,
+      "at": 1792001174377
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/health/providers",
+      "status": 200,
+      "at": 1792001174377
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/trades/closed?limit=100",
+      "status": 200,
+      "at": 1792001174377
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/risk-configs",
+      "status": 200,
+      "at": 1792001174378
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/candles?symbol=BTC%2FUSDT&timeframe=15m",
+      "status": 200,
+      "at": 1792001175081
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/candles?symbol=BTC%2FUSDT&timeframe=15m",
+      "status": 200,
+      "at": 1792001175318
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/candles?symbol=BTC%2FUSDT&timeframe=15m",
+      "status": 200,
+      "at": 1792001175527
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/positions/open",
+      "status": 200,
+      "at": 1792001184070
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/balances",
+      "status": 200,
+      "at": 1792001184078
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/shadow-trades/closed?limit=100",
+      "status": 200,
+      "at": 1792001185917
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/shadow-trades/all",
+      "status": 200,
+      "at": 1792001185919
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/trades?limit=10",
+      "status": 200,
+      "at": 1792001185956
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/candles?symbol=BTC%2FUSDT&timeframe=15m",
+      "status": 200,
+      "at": 1792001186548
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/positions/open",
+      "status": 200,
+      "at": 1792001194084
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/balances",
+      "status": 200,
+      "at": 1792001194119
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/ml/status",
+      "status": 200,
+      "at": 1792001195356
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/ml/accuracy?symbol=BTC%2FUSDT&days=7",
+      "status": 200,
+      "at": 1792001195368
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/ml/predictions?symbol=BTC%2FUSDT&limit=50",
+      "status": 200,
+      "at": 1792001195400
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/shadow-trades/closed?limit=100",
+      "status": 200,
+      "at": 1792001195947
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/trades?limit=10",
+      "status": 200,
+      "at": 1792001195954
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/shadow-trades/all",
+      "status": 200,
+      "at": 1792001195967
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/candles?symbol=BTC%2FUSDT&timeframe=15m",
+      "status": 200,
+      "at": 1792001196663
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/freqtrade/pairs",
+      "status": 200,
+      "at": 1792001200391
+    },
+    {
+      "url": "http://127.0.0.1:3001/api/freqtrade/jobs",
+      "status": 200,
+      "at": 1792001200442
+    }
+  ],
+  "performanceFrames": [
+    {
+      "event": "received",
+      "type": "performance",
+      "at": 1792001175909,
+      "payload": {
+        "type": "performance",
+        "data": {
+          "ultra_conservative": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914775872,
+                "balance": 100000
+              },
+              {
+                "time": 1792001175872,
+                "balance": 100000
+              }
+            ]
+          },
+          "conservative": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914775872,
+                "balance": 100000
+              },
+              {
+                "time": 1792001175872,
+                "balance": 100000
+              }
+            ]
+          },
+          "moderate": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914775872,
+                "balance": 100000
+              },
+              {
+                "time": 1792001175872,
+                "balance": 100000
+              }
+            ]
+          },
+          "aggressive": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914775872,
+                "balance": 100000
+              },
+              {
+                "time": 1792001175872,
+                "balance": 100000
+              }
+            ]
+          },
+          "degen": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914775873,
+                "balance": 100000
+              },
+              {
+                "time": 1792001175873,
+                "balance": 100000
+              }
+            ]
+          },
+          "ai_enhanced": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914775873,
+                "balance": 100000
+              },
+              {
+                "time": 1792001175873,
+                "balance": 100000
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "event": "received",
+      "type": "performance",
+      "at": 1792001185930,
+      "payload": {
+        "type": "performance",
+        "data": {
+          "ultra_conservative": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914785915,
+                "balance": 100000
+              },
+              {
+                "time": 1792001185915,
+                "balance": 100000
+              }
+            ]
+          },
+          "conservative": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914785919,
+                "balance": 100000
+              },
+              {
+                "time": 1792001185919,
+                "balance": 100000
+              }
+            ]
+          },
+          "moderate": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914785919,
+                "balance": 100000
+              },
+              {
+                "time": 1792001185919,
+                "balance": 100000
+              }
+            ]
+          },
+          "aggressive": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914785919,
+                "balance": 100000
+              },
+              {
+                "time": 1792001185919,
+                "balance": 100000
+              }
+            ]
+          },
+          "degen": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914785919,
+                "balance": 100000
+              },
+              {
+                "time": 1792001185919,
+                "balance": 100000
+              }
+            ]
+          },
+          "ai_enhanced": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914785920,
+                "balance": 100000
+              },
+              {
+                "time": 1792001185920,
+                "balance": 100000
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "event": "received",
+      "type": "performance",
+      "at": 1792001195946,
+      "payload": {
+        "type": "performance",
+        "data": {
+          "ultra_conservative": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914795916,
+                "balance": 100000
+              },
+              {
+                "time": 1792001195916,
+                "balance": 100000
+              }
+            ]
+          },
+          "conservative": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914795916,
+                "balance": 100000
+              },
+              {
+                "time": 1792001195916,
+                "balance": 100000
+              }
+            ]
+          },
+          "moderate": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914795917,
+                "balance": 100000
+              },
+              {
+                "time": 1792001195917,
+                "balance": 100000
+              }
+            ]
+          },
+          "aggressive": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914795917,
+                "balance": 100000
+              },
+              {
+                "time": 1792001195917,
+                "balance": 100000
+              }
+            ]
+          },
+          "degen": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914795917,
+                "balance": 100000
+              },
+              {
+                "time": 1792001195917,
+                "balance": 100000
+              }
+            ]
+          },
+          "ai_enhanced": {
+            "balance": 100000,
+            "roi": 0,
+            "winRate": 0,
+            "tradesCount": 0,
+            "totalPnl": 0,
+            "history": [
+              {
+                "time": 1791914795917,
+                "balance": 100000
+              },
+              {
+                "time": 1792001195917,
+                "balance": 100000
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

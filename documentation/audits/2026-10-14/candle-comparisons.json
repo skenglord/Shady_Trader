@@ -1,0 +1,167 @@
+{
+  "observedAt": "2026-10-14T08:51:12.413Z",
+  "results": [
+    {
+      "symbol": "BTC/USDT",
+      "timeframe": "1m",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791967740000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "BTC/USDT",
+      "timeframe": "5m",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791967500000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "BTC/USDT",
+      "timeframe": "15m",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791966600000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "BTC/USDT",
+      "timeframe": "1h",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791961200000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "BTC/USDT",
+      "timeframe": "4h",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791950400000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "BTC/USDT",
+      "timeframe": "1d",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791849600000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "ETH/USDT",
+      "timeframe": "1m",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791967800000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "ETH/USDT",
+      "timeframe": "5m",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791967500000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "ETH/USDT",
+      "timeframe": "15m",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791966600000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "ETH/USDT",
+      "timeframe": "1h",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791961200000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "ETH/USDT",
+      "timeframe": "4h",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791950400000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "ETH/USDT",
+      "timeframe": "1d",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791849600000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "SOL/USDT",
+      "timeframe": "1m",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791967800000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "SOL/USDT",
+      "timeframe": "5m",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791967500000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "SOL/USDT",
+      "timeframe": "15m",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791966600000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "SOL/USDT",
+      "timeframe": "1h",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791961200000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "SOL/USDT",
+      "timeframe": "4h",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791950400000,
+      "differences": [],
+      "passed": true
+    },
+    {
+      "symbol": "SOL/USDT",
+      "timeframe": "1d",
+      "count": 986,
+      "provider": "binance",
+      "finalizedTime": 1791849600000,
+      "differences": [],
+      "passed": true
+    }
+  ]
+}

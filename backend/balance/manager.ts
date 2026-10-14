@@ -150,6 +150,10 @@ export class BalanceManager {
     if (!Number.isFinite(pnl)) throw new Error('Invalid trade PnL');
     this.validateAmount(tradeValue);
     const before = await this.readBalances(query);
+    const tolerance = Math.max(1e-10, Math.abs(before.activeTradeBalance) * 1e-12);
+    if (tradeValue > before.activeTradeBalance + tolerance) {
+      throw new Error('Trade principal exceeds reserved active trade balance');
+    }
     const result = await query(`
       UPDATE balances SET
         bot_balance = bot_balance + ?,

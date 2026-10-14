@@ -61,30 +61,46 @@ export function enforceDegenDollarCap(
 }
 
 /** Net realized loss for the current UTC day; positive means losses exceed gains. */
-export async function getDailyRealizedLoss(riskMode: string, now = Date.now(), currentPrice?: number): Promise<number> {
+export async function getDailyRealizedLoss(
+  riskMode: string, now = Date.now(),
+  resolvePrice?: (symbol: string) => Promise<number> | number,
+): Promise<number> {
   const utc = new Date(now);
   const dayStart = Date.UTC(utc.getUTCFullYear(), utc.getUTCMonth(), utc.getUTCDate());
   const rows = await runQuery(
     `SELECT COALESCE(SUM(pnl), 0) AS netPnl
-     FROM shadow_trades
-     WHERE risk_mode = ? AND status = 'closed' AND exit_timestamp >= ?`,
-    [riskMode, dayStart],
+     FROM (
+       SELECT pnl FROM shadow_settlements WHERE risk_mode = ? AND timestamp >= ?
+       UNION ALL
+       SELECT pnl FROM shadow_trades
+       WHERE risk_mode = ? AND status = 'closed' AND exit_timestamp >= ?
+         AND NOT EXISTS (SELECT 1 FROM shadow_settlements WHERE trade_id = shadow_trades.id)
+     ) AS realized`,
+    [riskMode, dayStart, riskMode, dayStart],
     'all'
   );
   const realizedNetPnl = Number(rows?.[0]?.netPnl ?? 0);
   if (!Number.isFinite(realizedNetPnl)) throw new Error('Daily realized P&L is invalid');
   let unrealizedPnl = 0;
-  if (currentPrice !== undefined) {
-    if (!Number.isFinite(currentPrice) || currentPrice <= 0) throw new Error('Current price for unrealized P&L is invalid');
+  if (resolvePrice !== undefined) {
+    if (typeof resolvePrice !== 'function') throw new Error('A symbol-specific price resolver is required');
     const openTrades = await runQuery(
-      `SELECT side, amount, price FROM shadow_trades WHERE risk_mode = ? AND status = 'open'`,
+      `SELECT symbol, side, COALESCE(remaining_amount, amount) AS amount, price
+       FROM shadow_trades WHERE risk_mode = ? AND status = 'open'`,
       [riskMode], 'all'
     );
+    const prices = new Map<string, number>();
     for (const trade of openTrades || []) {
       const amount = Number(trade.amount);
       const entryPrice = Number(trade.price);
       if (!Number.isFinite(amount) || amount < 0 || !Number.isFinite(entryPrice) || entryPrice <= 0) {
         throw new Error('Open trade contains invalid values for unrealized P&L');
+      }
+      if (!trade.symbol || !['buy', 'sell'].includes(trade.side)) throw new Error('Open trade symbol or side is invalid');
+      if (!prices.has(trade.symbol)) prices.set(trade.symbol, await resolvePrice(trade.symbol));
+      const currentPrice = prices.get(trade.symbol)!;
+      if (!Number.isFinite(currentPrice) || currentPrice <= 0) {
+        throw new Error(`Price mark unavailable or invalid for ${trade.symbol}`);
       }
       unrealizedPnl += trade.side === 'buy'
         ? amount * (currentPrice - entryPrice)

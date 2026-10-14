@@ -4,6 +4,7 @@ import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { ensureLocalConfig } from './local-app-config.mjs';
+import { waitForLocalReadiness } from './local-app-readiness.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const envPath = path.join(root, '.env');
@@ -35,20 +36,12 @@ function openBrowser(url) {
 }
 
 async function waitUntilReady(child) {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    if (child.exitCode !== null || child.signalCode !== null) {
-      throw new Error(`App server exited early with status ${child.exitCode ?? child.signalCode}`);
-    }
-    try {
-      const response = await fetch(`http://${host}:${port}/health/live`, { signal: AbortSignal.timeout(1000) });
-      if (response.ok) return;
-    } catch {
-      // The server may need a few seconds to initialize its database and routes.
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
+  try {
+    await waitForLocalReadiness(`http://${host}:${port}`, child);
+  } catch (error) {
+    child.kill('SIGTERM');
+    throw error;
   }
-  child.kill('SIGTERM');
-  throw new Error(`App did not become ready at http://${host}:${port} within 30 seconds.`);
 }
 
 async function main() {
@@ -68,7 +61,7 @@ async function main() {
 
   const child = spawn(process.execPath, ['--import', 'tsx', 'server.ts'], {
     cwd: root,
-    env: { ...process.env, ...credentials, NODE_ENV: 'production', HOST: host, PORT: String(port), LIVE_TRADING_ENABLED: 'false', FREQTRADE_ENABLED: 'false' },
+    env: { ...process.env, ...credentials, NODE_ENV: 'production', HOST: host, PORT: String(port), LIVE_TRADING_ENABLED: 'false' },
     stdio: 'inherit',
   });
   const stop = (signal) => { if (!child.killed) child.kill(signal); };

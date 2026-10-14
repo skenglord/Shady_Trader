@@ -1,6 +1,6 @@
 import { afterEach, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { clearMockRunQuery, setMockRunQuery } from '../../backend/database.js';
+import { clearMockRunQuery, setMockRunQuery, setMockRunTransaction } from '../../backend/database.js';
 import { RiskMode } from '../../backend/risk/manager.js';
 import { ShadowTrader } from '../../backend/shadow/shadow_trader.js';
 
@@ -34,7 +34,7 @@ describe('live execution safeguards', () => {
     const insertedIntents: any[][] = [];
     let orders = 0;
 
-    setMockRunQuery(async (sql: string, params: any[] = []) => {
+    const query = async (sql: string, params: any[] = []) => {
       if (sql.includes('FROM execution_intents')) {
         return unresolvedModes.size > 0 ? [{ idempotency_key: 'pending' }] : [];
       }
@@ -56,7 +56,9 @@ describe('live execution safeguards', () => {
         return { changes: 1 };
       }
       return { changes: 1 };
-    });
+    };
+    setMockRunQuery(query);
+    setMockRunTransaction(work => work(query));
 
     const trader = new ShadowTrader();
     const signal = {

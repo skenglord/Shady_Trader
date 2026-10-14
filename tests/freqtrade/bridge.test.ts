@@ -123,6 +123,7 @@ describe('FreqtradeBridge.listStrategies', () => {
         const result = await promise;
         assert.ok(Array.isArray(result));
         assert.ok(result.includes('ShadyTraderReferenceStrategy'));
+        assert.ok(spawnCalls.at(-1)!.args.includes('--one-column'));
     });
 });
 

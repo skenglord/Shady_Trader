@@ -86,7 +86,10 @@ export default function ChartPanel(props: ChartPanelProps) {
   const shadowMarkersRef = useRef<ISeriesMarkersPluginApi<any> | null>(null);
   const markersPluginRef = useRef<ISeriesMarkersPluginApi<any> | null>(null);
   const indicatorSeriesRef = useRef<Record<string, ISeriesApi<"Line">>>({});
-  const lastBroadcastCandleTimeRef = useRef<number>(0);
+  const candleRequestRef = useRef(0);
+  const selectedMarketRef = useRef('');
+  selectedMarketRef.current = `${status.symbol}:${status.timeframe}`;
+  const [candleError, setCandleError] = useState('');
   const backtestTradesRef = useRef<any[]>([]);
   const [isLoadingCandles, setIsLoadingCandles] = useState(false);
 
@@ -436,16 +439,16 @@ export default function ChartPanel(props: ChartPanelProps) {
 
   // ---- Fetch candles ----
   const fetchCandles = useCallback(async (timeframe?: string) => {
+    const requestId = ++candleRequestRef.current;
+    const selection = selectedMarketRef.current;
     try {
       setIsLoadingCandles(true);
+      setCandleError('');
       const tf = timeframe || status.timeframe || '15m';
-      let historyParam = '1y';
-      if (tf === '1m') historyParam = '7d';
-      else if (tf === '5m') historyParam = '30d';
-      else if (tf === '15m') historyParam = '90d';
-      else if (tf === '1h') historyParam = '180d';
-      const result = await safeFetch(`${APP_URL}/api/candles?history=${historyParam}`);
-      debug.log(`[fetchCandles] tf=${tf} history=${historyParam} ok=${result.ok} hasData=${!!result.data} hasSeries=${!!seriesRef.current} isArray=${Array.isArray(result?.data)} len=${Array.isArray(result?.data) ? result.data.length : 'N/A'}`);
+      const result = await safeFetch(`${APP_URL}/api/candles?${new URLSearchParams({ symbol: status.symbol, timeframe: tf })}`, { cache: 'no-store' });
+      if (requestId !== candleRequestRef.current || selection !== selectedMarketRef.current) return;
+      if (!result.ok || !Array.isArray(result.data) || !result.data.length) throw new Error('Market candles are unavailable. Waiting for verified data.');
+      debug.log(`[fetchCandles] tf=${tf} ok=${result.ok} hasData=${!!result.data} hasSeries=${!!seriesRef.current} isArray=${Array.isArray(result?.data)} len=${Array.isArray(result?.data) ? result.data.length : 'N/A'}`);
       if (result.ok && result.data && seriesRef.current && Array.isArray(result.data)) {
         candleDataRef.current = result.data;
         const formattedData = result.data
@@ -466,11 +469,20 @@ export default function ChartPanel(props: ChartPanelProps) {
         if (chartRef.current) chartRef.current.timeScale().fitContent();
       }
     } catch (e) {
+      if (requestId !== candleRequestRef.current || selection !== selectedMarketRef.current) return;
+      candleDataRef.current = [];
+      seriesRef.current?.setData([]);
+      setCandleError(e instanceof Error ? e.message : 'Market candles are unavailable.');
       debug.error(e);
     } finally {
-      setIsLoadingCandles(false);
+      if (requestId === candleRequestRef.current && selection === selectedMarketRef.current) setIsLoadingCandles(false);
     }
-  }, [status.timeframe, seriesRef, chartRef, candleDataRef, updateIndicators, updateMarkers]);
+  }, [status.symbol, status.timeframe, seriesRef, chartRef, candleDataRef, updateIndicators, updateMarkers]);
+
+  useEffect(() => {
+    candleDataRef.current = [];
+    seriesRef.current?.setData([]);
+  }, [status.symbol, status.timeframe]);
 
   // Expose fetchCandles to parent via ref pattern (called on timeframe change)
   useEffect(() => {
@@ -481,15 +493,16 @@ export default function ChartPanel(props: ChartPanelProps) {
 
   // ---- Render ----
   return (
-    <div className="lg:col-span-2 space-y-6">
+    <div className="lg:col-span-2 min-w-0 space-y-6">
+      {candleError && <p role="alert" className="text-sm text-amber-300">{candleError}</p>}
       {/* Main Chart Card */}
       <div className={`bg-[#1e1e1e] rounded-xl border transition-colors duration-300 ${showBacktestUI ? 'border-amber-500/30 shadow-[0_0_15px_rgba(245,158,11,0.1)]' : 'border-white/5'} overflow-hidden`}>
-        <div className="p-4 border-b border-white/5 flex justify-between items-center">
+        <div className="p-3 sm:p-4 border-b border-white/5 flex flex-wrap gap-3 justify-between items-center">
           <h2 className="font-medium flex items-center gap-2">
             <Activity className={`w-4 h-4 ${showBacktestUI ? 'text-amber-400' : 'text-indigo-400'}`} />
             {showBacktestUI ? 'Backtest Simulation' : 'Live Market Data'}
           </h2>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button onClick={onToggleBacktest}
               className={`flex items-center gap-1 px-2 py-1 text-xs rounded transition-colors ${
                 showBacktestUI ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-white/5 hover:bg-white/10 text-gray-400 border border-transparent'}`}
@@ -674,7 +687,7 @@ export default function ChartPanel(props: ChartPanelProps) {
       <div className="bg-white/[0.02] border border-white/5 rounded-lg p-2">
         <div className="flex items-center justify-between mb-1">
           <span className="text-[9px] text-gray-400 uppercase tracking-wider">Chart Markers</span>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <label className="flex items-center gap-1 cursor-pointer">
               <input type="checkbox" checked={showSignalMarkers} onChange={onToggleSignalMarkers}
                 aria-label="Show signal markers on chart" className="w-2.5 h-2.5 accent-indigo-500" />

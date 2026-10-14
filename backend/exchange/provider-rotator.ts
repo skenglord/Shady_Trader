@@ -1,5 +1,6 @@
 import axios from 'axios';
 import { logger } from '../logging/logger';
+import { assertCandleRequest, CANDLE_INTERVAL_MS, validateLiveCandles, type MarketCandle } from './candle-contract.js';
 
 // ── Types ──────────────────────────────────────────────────────
 
@@ -16,14 +17,7 @@ interface ProviderHealth {
   consecutiveTimeouts: number;
 }
 
-export interface Candle {
-  time: number;
-  open: number;
-  high: number;
-  low: number;
-  close: number;
-  volume: number;
-}
+export interface Candle extends MarketCandle {}
 
 interface ProviderConfig {
   name: ProviderName;
@@ -41,6 +35,7 @@ export class ProviderRotator {
   private providers: ProviderConfig[];
   private health: Map<ProviderName, ProviderHealth> = new Map();
   private activeProvider: ProviderName;
+  private lastCandles: Candle | null = null;
   private readonly TIMEOUT_MS = 5000;
   private readonly CIRCUIT_THRESHOLD = 3;
   private readonly CIRCUIT_COOLDOWN_MS = 5 * 60 * 1000; // 5 minutes
@@ -117,6 +112,7 @@ export class ProviderRotator {
    * or fails, rotates to the next one. Returns empty array if all fail.
    */
   async getCandles(symbol: string, timeframe: string, limit: number = 200): Promise<Candle[]> {
+    assertCandleRequest(symbol, timeframe);
     const orderedProviders = this.getAvailableProviders();
 
     for (const config of orderedProviders) {
@@ -129,7 +125,7 @@ export class ProviderRotator {
 
       try {
         const start = Date.now();
-        const candles = await this.fetchFromProvider(config, symbol, timeframe, limit);
+        const candles = validateLiveCandles(await this.fetchFromProvider(config, symbol, timeframe, limit), symbol, timeframe, config.name);
         const latency = Date.now() - start;
 
         if (candles.length > 0) {
@@ -142,6 +138,7 @@ export class ProviderRotator {
             });
             this.activeProvider = config.name;
           }
+          this.lastCandles = candles.at(-1)!;
           return candles;
         }
       } catch (err: any) {
@@ -172,8 +169,9 @@ export class ProviderRotator {
         const price = await this.fetchPriceFromProvider(config, symbol);
         const latency = Date.now() - start;
 
-        if (price > 0) {
+        if (Number.isFinite(price) && price > 0) {
           this.recordSuccess(config.name, latency);
+          this.activeProvider = config.name;
           return price;
         }
       } catch (err: any) {
@@ -205,6 +203,7 @@ export class ProviderRotator {
     const now = Date.now();
     return {
       activeProvider: this.activeProvider,
+      candles: this.lastCandles ? { ...this.lastCandles, ageMs: now - this.lastCandles.time, stale: now - (this.lastCandles.fetchedAt || 0) > 120_000 } : null,
       providers: this.providers.map(p => {
         const h = this.health.get(p.name)!;
         return {
@@ -284,6 +283,7 @@ export class ProviderRotator {
 
     switch (config.name) {
       case 'coingecko': {
+        if (quoteSymbol !== 'USD') throw new Error('CoinGecko cannot supply a USDT quote');
         const coinIdMap: Record<string, string> = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana' };
         const coinId = coinIdMap[baseSymbol] || baseSymbol.toLowerCase();
         const params: Record<string, any> = { ids: coinId, vs_currencies: 'usd' };
@@ -329,41 +329,21 @@ export class ProviderRotator {
   // ── Private: Candle Fetch Implementations ──────────────────
 
   private timeframeToBinanceInterval(tf: string): string {
-    const map: Record<string, string> = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '1d': '1d' };
+    const map: Record<string, string> = { '1m': '1m', '5m': '5m', '15m': '15m', '1h': '1h', '4h': '4h', '1d': '1d' };
     return map[tf] || '1h';
   }
 
   private timeframeToCoinAPIGranularity(tf: string): string {
-    const map: Record<string, string> = { '1m': '1MIN', '5m': '5MIN', '15m': '15MIN', '1h': '1HRS', '1d': '1DAY' };
+    const map: Record<string, string> = { '1m': '1MIN', '5m': '5MIN', '15m': '15MIN', '1h': '1HRS', '4h': '4HRS', '1d': '1DAY' };
     return map[tf] || '1HRS';
   }
 
   private async fetchCoinGecko(
     symbol: string, timeframe: string, limit: number, config: ProviderConfig
   ): Promise<Candle[]> {
-    const baseSymbol = symbol.split('/')[0];
-    const coinIdMap: Record<string, string> = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana' };
-    const coinId = coinIdMap[baseSymbol] || baseSymbol.toLowerCase();
-
-    const daysMap: Record<string, string> = { '1m': '1', '5m': '1', '15m': '2', '1h': '30', '1d': '90' };
-    const days = daysMap[timeframe] || '30';
-
-    const params: Record<string, any> = {
-      vs_currency: 'usd',
-      days,
-      interval: timeframe === '1d' ? 'daily' : 'auto',
-    };
-    if (config.apiKey) params.x_cg_demo_api_key = config.apiKey;
-
-    const res = await axios.get(
-      `https://api.coingecko.com/api/v3/coins/${coinId}/ohlc`,
-      { params, timeout: this.TIMEOUT_MS }
-    );
-
-    const raw: [number, number, number, number, number][] = res.data || [];
-    return raw.slice(-limit).map(([time, open, high, low, close]) => ({
-      time, open, high, low, close, volume: 0,
-    }));
+    // CoinGecko OHLC is USD-quoted, has automatic resolution and no volume.
+    // It cannot satisfy this application's USDT OHLCV contract.
+    throw new Error('CoinGecko does not supply the requested USDT OHLCV series');
   }
 
   private async fetchBinance(
@@ -390,59 +370,28 @@ export class ProviderRotator {
   private async fetchCoinMarketCap(
     symbol: string, timeframe: string, limit: number, config: ProviderConfig
   ): Promise<Candle[]> {
-    const baseSymbol = symbol.split('/')[0];
-    const quoteSymbol = symbol.split('/')[1] || 'USD';
-
-    // CMC doesn't have a direct OHLC endpoint on free tier.
-    // Use the historical quotes endpoint with time periodicity.
-    const periodMap: Record<string, string> = { '1d': 'daily', '1h': 'hourly' };
-    const period = periodMap[timeframe] || 'hourly';
-
-    const res = await axios.get(
-      'https://pro-api.coinmarketcap.com/v1/cryptocurrency/quotes/historical',
-      {
-        headers: { 'X-CMC_PRO_API_KEY': config.apiKey, Accept: 'application/json' },
-        params: {
-          symbol: baseSymbol,
-          convert: quoteSymbol,
-          time_period: period,
-          count: Math.min(limit, 100),
-        },
-        timeout: this.TIMEOUT_MS,
-      }
-    );
-
-    const quotes = res.data?.data?.quotes || [];
-    return quotes.map((q: any) => {
-      const quote = q.quote?.[quoteSymbol] || {};
-      return {
-        time: new Date(q.timestamp).getTime(),
-        open: Number(quote.open || quote.price || 0),
-        high: Number(quote.high || quote.price || 0),
-        low: Number(quote.low || quote.price || 0),
-        close: Number(quote.close || quote.price || 0),
-        volume: Number(quote.volume || 0),
-      };
-    });
+    // Historical point quotes are not OHLCV bars; do not fabricate envelopes.
+    throw new Error('CoinMarketCap historical quotes do not supply verified OHLCV');
   }
 
   private async fetchCoinAPI(
     symbol: string, timeframe: string, limit: number, config: ProviderConfig
   ): Promise<Candle[]> {
+    if (!config.apiKey) throw new Error('CoinAPI API key is unavailable');
     const baseSymbol = symbol.split('/')[0];
     const quoteSymbol = symbol.split('/')[1] || 'USD';
     const granularity = this.timeframeToCoinAPIGranularity(timeframe);
 
     const now = new Date();
     const periodMs: Record<string, number> = {
-      '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '1d': 86400000,
+      '1m': 60000, '5m': 300000, '15m': 900000, '1h': 3600000, '4h': 14400000, '1d': 86400000,
     };
     const ms = periodMs[timeframe] || 3600000;
     const startTime = new Date(now.getTime() - limit * ms).toISOString();
     const endTime = now.toISOString();
 
     const res = await axios.get(
-      `https://rest.coinapi.io/v1/ohlcv/${baseSymbol}/${quoteSymbol}/${granularity}`,
+      `https://rest.coinapi.io/v1/ohlcv/BINANCE_SPOT_${baseSymbol}_${quoteSymbol}/history`,
       {
         headers: { 'X-CoinAPI-Key': config.apiKey, Accept: 'application/json' },
         params: { period_id: granularity, time_start: startTime, time_end: endTime, limit },

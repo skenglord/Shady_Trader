@@ -1,0 +1,60 @@
+{
+  "observedAt": "2026-10-14T08:43:47.121Z",
+  "entry": {
+    "id": "354f1616-6b9f-4199-8b7f-824137665017",
+    "status": "filled",
+    "filledQuantity": "0.0001",
+    "fillPrice": "83425.02",
+    "symbol": "BTC/USDT",
+    "side": "buy",
+    "quantity": "0.0001",
+    "timestamp": 1791967426312
+  },
+  "open": {
+    "id": "354f1616-6b9f-4199-8b7f-824137665017",
+    "symbol": "BTC/USDT",
+    "side": "buy",
+    "quantity": "0.0001",
+    "entryPrice": "83425.02",
+    "currentPrice": "83425.02",
+    "leverage": 1,
+    "status": "open",
+    "unrealizedPnl": "0",
+    "pnlPercentage": "0",
+    "roi": "0",
+    "openedAt": 1791967426312,
+    "candlesHeld": 0
+  },
+  "close": {
+    "id": "354f1616-6b9f-4199-8b7f-824137665017",
+    "symbol": "BTC/USDT",
+    "side": "buy",
+    "quantity": "0.0001",
+    "entryPrice": "83425.02",
+    "currentPrice": "83425.01",
+    "leverage": 1,
+    "status": "closed",
+    "unrealizedPnl": "0",
+    "realizedPnl": "-0.000001",
+    "pnlPercentage": "-0.000011986811630371799731",
+    "roi": "-0.000011986811630371799731",
+    "openedAt": 1791967426312,
+    "closedAt": 1791967426779,
+    "candlesHeld": 0,
+    "exitReason": "manual_close"
+  },
+  "summary": {
+    "totalUnrealizedPnl": "0",
+    "totalRealizedPnl": "-0.000001",
+    "totalMarginUsed": "0",
+    "positionCount": {
+      "total": 1,
+      "open": 0,
+      "closed": 1,
+      "liquidated": 0
+    },
+    "positions": []
+  },
+  "retryIdentityPreserved": true,
+  "pnlConserved": true
+}

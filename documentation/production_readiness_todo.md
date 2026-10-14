@@ -1,17 +1,17 @@
 # Production Readiness Todo
 
-Created: 2026-06-10 | Updated: 2026-10-12
+Created: 2026-06-10 | Updated: 2026-10-14
 
-## Current verified gate state (October 12 live review)
+## Current verified gate state (October 14 usability repairs)
 
-**Blocked for trustworthy paper-performance evaluation and live funds.** The [live-system review](live_system_review_2026-10-12.md) records actual API/browser observations and isolated production-method reproductions at commit `52fdae3`. Its findings supersede any implication that the earlier accounting tests establish complete paper correctness.
+**Local public-data paper workflows verified; live funds and untrusted-network deployment remain gated.** The [repair report](usability_repair_2026-10-14.md) supersedes the open status of the eleven reproduced [October 12 findings](live_system_review_2026-10-12.md).
 
-- Real BTC/USDT 15m market data flows through Binance fallback. The first comparison found one incorrect finalized candle among nine; the later nine matched. Candle persistence and stale fallback remain blockers.
-- Isolated reproductions: runner profit **3.20 vs 2.00 expected**; mode-switch wallet **1,100 vs 1,000 expected**; mixed-symbol risk loss **47,000 vs 0 expected**; limit-100 buy fills at average **105**; 10x long liquidates after a **1%** adverse price move.
-- Live browser: empty performance WS frames erase six REST portfolios; 390px viewport overflows to 1,282px. Paper REST has no connected exchange getter. Provider/age labels and candle cache identity need repair.
-- Source review: fallback symbol/timeframe and volume contracts are unsafe; partial-runner persistence needs restart verification.
-- Running clone: Redis degraded, Freqtrade not installed, ML disabled. Public venue GETs do not verify credentialed exchange execution. No orders were placed by this review.
-- Review changed documentation only. Subsequent October 12 publication verification: serial Node 22 suite **617 tests / 616 passed / 0 failed / 1 skipped**; whole skipped suites remain and the count does not establish complete coverage. Root lint and production build pass. The dependency audit was not rerun. All local work branches are already included in main.
+- Durable runner settlements and reservation ownership, per-symbol marks, limit/FOK/IOC matching, maintenance-margin liquidation and rollback/restart invariants have regression coverage.
+- All 18 finalized-candle comparisons matched Binance (BTC/ETH/SOL-USDT × 1m/5m/15m/1h/4h/1d). Explicit unavailability replaces invalid/stale fallback data.
+- The single persisted paper service passed real-depth buy/retry/close and restart checks. Performance WebSocket snapshots are populated. Real mobile width is 390/390; three isolated browser scenarios pass.
+- Local Redis is healthy; workers consume jobs after readiness and restart. Freqtrade discovery, public futures-data download, ZIP result normalization and queued backtest succeed. The reference sample generated zero trades.
+- Root/CLI TypeScript, production build, complexity and full serial Node tests pass; final counts are recorded in [verification.json](audits/2026-10-14/verification.json). No new dependency audit was run.
+- The local app runs at `http://localhost:3001`. ML Python dependencies are installed, but no model is loaded; ML and live exchange execution remain disabled.
 
 ## Historical verified gate state (October 11 readiness phases)
 
@@ -40,15 +40,16 @@ Created: 2026-06-10 | Updated: 2026-10-12
 
 ## Current release blockers and next actions
 
-**Not ready for trustworthy paper-performance evaluation, live funds or untrusted network exposure.** The [October 12 live review](live_system_review_2026-10-12.md) supplements the [October 10 full audit](full_system_audit_2026-10-10.md) and reopens paper-accounting/data gates after October 11 focused fixes. Close, pair-price position updates, stop/kill, balance concurrency and audit rollback have historical focused verification; the daily-loss gate and reservation ownership require separate repairs. Reconciliation still requires unsupported-symbol recovery, third-asset fee valuation and credentialed sandbox validation.
+The reproduced local usability blockers are repaired. Retain the remaining release gates below; test and public-data success does not establish safe live execution.
 
-- [ ] Repair runner same-cycle partial/final settlement and durable partial state; verify restart and balance conservation.
-- [ ] Persist trade reservation ownership across active-mode changes; reject excess principal release.
-- [ ] Value each symbol independently in the daily-loss gate; verify missing/stale-price handling.
-- [ ] Enforce limit prices, partial-fill/time-in-force semantics and consistent paper liquidation math.
-- [ ] Update unfinished candles through finalization; enforce age, provenance, symbol, quote, interval and volume contracts across fallbacks.
-- [ ] Share the paper service between REST and WebSocket; await performance snapshots; repair cache identity, source/age labels and mobile layout.
-- [ ] Validate the intended full runtime including Redis queues, Freqtrade and configured ML, followed by real-data paper lifecycle/restart scenarios.
+- [x] Repair same-cycle runner settlement, reservation ownership, excess-release guards and restart conservation.
+- [x] Resolve daily-loss marks per symbol and block unavailable marks.
+- [x] Enforce limit/FOK/IOC semantics, partial fills, depth rollback, consistent liquidation and closure quantity.
+- [x] Upsert OHLCV/provenance and validate live symbol/quote/interval/volume/freshness.
+- [x] Share and persist paper account state; repair performance broadcasts, chart identity/time units, source/age labels and mobile layout.
+- [x] Verify local Redis workers, Freqtrade download/backtest, public-data paper lifecycle and restart. Install ML dependencies and report model absence explicitly.
+- [ ] Train and independently validate ML models; verify the configured inference service before enabling it.
+- [ ] Reconcile legacy shadow reservation ownership before using an existing account's uncertain balances or performance.
 
 - [x] Secure paper REST and symbol mutations with trader role checks; require valid API tokens for CSRF bypass; reject malformed pre-auth WS JSON safely; delay paper WS initialization until auth; deny Vite filesystem aliases and local database files. Focused tests pass 17/17; full production readiness checks remain pending.
 - [x] Prevent duplicate live closes with a per-trade lock and durable close intent; leave uncertain closes blocked for reconciliation. Price existing positions and kill-switch exits by each trade's own symbol. Stop waits for the active cycle and cancels entries that have not reached exchange submission. Focused trade-safety regressions pass 87/87.
@@ -60,7 +61,8 @@ Created: 2026-06-10 | Updated: 2026-10-12
 - [ ] Activate risk configs atomically, remove LLM risk authority, and repair ML/schema/Freqtrade integration and independent OOS evaluation.
 - [ ] Repair Docker runtime imports/Kubernetes volumes, enforce a single engine owner, and verify database-specific backup restoration.
 - [x] Upgrade vulnerable production dependencies; `npm audit --omit=dev` reports zero advisories. The full graph still has 14 development-dependency advisories.
-- [ ] Repair CLI/test discovery and triage remaining development dependency advisories; prove the audit regression scenarios before a sandbox-exchange release gate.
+- [x] Repair CLI/test discovery and prove the reproduced audit regressions.
+- [ ] Triage remaining development dependency advisories before a sandbox-exchange release gate.
 
 The remaining sections retain dated implementation history and earlier inventories; they are not current verification claims.
 

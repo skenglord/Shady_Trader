@@ -24,7 +24,7 @@ export interface PaperOrder {
   price?: Decimal;
   timeInForce: 'GTC' | 'IOC' | 'FOK';
   timestamp: number;
-  status: 'pending' | 'filled' | 'cancelled' | 'expired';
+  status: 'pending' | 'partially_filled' | 'filled' | 'cancelled' | 'expired';
   filledQuantity?: Decimal;
   fillPrice?: Decimal;
   fillTimestamp?: number;
@@ -42,14 +42,33 @@ export class OrderBookSimulator {
 
   constructor() {}
 
-  public updateOrderBook(snapshot: { symbol: string; timestamp: number; bids: [number, number][]; asks: [number, number][] }): void {
+  public restoreOrders(orders: PaperOrder[]): void {
+    this.pendingOrders = new Map(orders.map(order => [order.id, order]));
+  }
+
+  public snapshotBooks() {
+    return new Map([...this.orderBooks].map(([symbol, book]) => [symbol, {
+      ...book, bids: book.bids.map(level => ({ ...level })), asks: book.asks.map(level => ({ ...level })),
+    }]));
+  }
+
+  public restoreBooks(books: ReturnType<OrderBookSimulator['snapshotBooks']>): void {
+    this.orderBooks = books;
+  }
+
+  public updateOrderBook(snapshot: { symbol: string; timestamp: number; bids: [number, number][]; asks: [number, number][] }): boolean {
     const toLevels = (rows: [number, number][]) => rows.slice(0, this.MAX_LEVELS).map(([price, quantity]) => {
       if (!Number.isFinite(price) || !Number.isFinite(quantity) || price <= 0 || quantity <= 0) throw new Error('Invalid live order book level');
       return { price: new Decimal(price), quantity: new Decimal(quantity) };
     });
-    const bids = toLevels(snapshot.bids), asks = toLevels(snapshot.asks);
+    if (!Number.isFinite(snapshot.timestamp) || snapshot.timestamp > Date.now() + 1_000) throw new Error('Invalid live order book timestamp');
+    const existing = this.orderBooks.get(snapshot.symbol);
+    if (existing && snapshot.timestamp <= existing.lastUpdateTime) return false;
+    const bids = toLevels(snapshot.bids).sort((a, b) => b.price.comparedTo(a.price));
+    const asks = toLevels(snapshot.asks).sort((a, b) => a.price.comparedTo(b.price));
     if (!bids.length || !asks.length || bids[0].price.gte(asks[0].price)) throw new Error('Live order book is empty or crossed');
     this.orderBooks.set(snapshot.symbol, { bids, asks, lastUpdateTime: snapshot.timestamp });
+    return true;
   }
 
   public getOrderBook(symbol: string): OrderBookSnapshot | null {
@@ -66,8 +85,8 @@ export class OrderBookSimulator {
     return {
       symbol,
       timestamp: orderBook.lastUpdateTime,
-      bids: [...orderBook.bids],
-      asks: [...orderBook.asks],
+      bids: orderBook.bids.map(level => ({ ...level })),
+      asks: orderBook.asks.map(level => ({ ...level })),
       midPrice,
       spread,
     };
@@ -98,7 +117,7 @@ export class OrderBookSimulator {
 
   public cancelPaperOrder(orderId: string): boolean {
     const order = this.pendingOrders.get(orderId);
-    if (order && order.status === 'pending') {
+    if (order && (order.status === 'pending' || order.status === 'partially_filled')) {
       order.status = 'cancelled';
       return true;
     }
@@ -109,107 +128,56 @@ export class OrderBookSimulator {
     return this.pendingOrders.get(orderId);
   }
 
+  public getOrders(): PaperOrder[] {
+    return Array.from(this.pendingOrders.values());
+  }
+
   public matchOrders(symbol: string, slippageModel?: SlippageModel): {
     filledOrders: PaperOrder[];
     remainingOrders: PaperOrder[];
   } {
     const orderBook = this.orderBooks.get(symbol);
-    if (!orderBook) {
+    if (!orderBook || Date.now() - orderBook.lastUpdateTime > 15_000) {
       return { filledOrders: [], remainingOrders: [] };
     }
-
     const filledOrders: PaperOrder[] = [];
     const remainingOrders: PaperOrder[] = [];
-
-    for (const [orderId, order] of this.pendingOrders) {
-      if (order.symbol !== symbol || order.status !== 'pending') {
-        if (order.symbol === symbol) {
-          remainingOrders.push(order);
-        }
+    for (const order of this.pendingOrders.values()) {
+      if (order.symbol !== symbol || !['pending', 'partially_filled'].includes(order.status)) continue;
+      const levels = (order.side === 'buy' ? orderBook.asks : orderBook.bids).filter(level =>
+        level.quantity.gt(0) && (order.type === 'market' || (order.price &&
+          (order.side === 'buy' ? level.price.lte(order.price) : level.price.gte(order.price)))));
+      let remaining = order.quantity.minus(order.filledQuantity || 0);
+      if (order.timeInForce === 'FOK' && levels.reduce((sum, level) => sum.add(level.quantity), new Decimal(0)).lt(remaining)) {
+        order.status = 'cancelled';
         continue;
       }
-
-      if (order.type === 'market') {
-        const fillResult = this.matchMarketOrder(order, orderBook, slippageModel);
-        if (fillResult.filled) {
-          filledOrders.push(fillResult.order);
-        } else {
-          remainingOrders.push(order);
-        }
-      } else if (order.type === 'limit') {
-        const fillResult = this.matchLimitOrder(order, orderBook);
-        if (fillResult.filled) {
-          filledOrders.push(fillResult.order);
-        } else {
-          remainingOrders.push(order);
-        }
+      let filled = new Decimal(0);
+      let cost = new Decimal(0);
+      for (const level of levels) {
+        if (remaining.lte(0)) break;
+        const quantity = Decimal.min(remaining, level.quantity);
+        const price = slippageModel && order.type === 'market'
+          ? this.applySlippage(level.price, order.side, slippageModel) : level.price;
+        cost = cost.add(quantity.mul(price));
+        filled = filled.add(quantity);
+        remaining = remaining.minus(quantity);
+        level.quantity = level.quantity.minus(quantity);
       }
+      if (filled.gt(0)) {
+        const previous = order.filledQuantity || new Decimal(0);
+        const totalCost = previous.mul(order.fillPrice || 0).add(cost);
+        order.filledQuantity = previous.add(filled);
+        order.fillPrice = totalCost.div(order.filledQuantity);
+        order.fillTimestamp = Date.now();
+        order.status = remaining.isZero() ? 'filled' : 'partially_filled';
+        filledOrders.push(order);
+      }
+      // Market orders cannot rest without a price; cancel any unfilled remainder.
+      if (remaining.gt(0) && (order.timeInForce !== 'GTC' || order.type === 'market')) order.status = 'cancelled';
+      if (order.status === 'pending' || order.status === 'partially_filled') remainingOrders.push(order);
     }
-
     return { filledOrders, remainingOrders };
-  }
-
-  private matchMarketOrder(
-    order: PaperOrder,
-    orderBook: { bids: OrderBookLevel[]; asks: OrderBookLevel[]; lastUpdateTime: number },
-    slippageModel?: SlippageModel
-  ): { filled: boolean; order: PaperOrder } {
-    const levels = order.side === 'buy' ? orderBook.asks : orderBook.bids;
-    let remainingQuantity = order.quantity;
-    let totalCost = new Decimal(0);
-    let filledQuantity = new Decimal(0);
-
-    for (const level of levels) {
-      if (remainingQuantity.lte(0)) break;
-
-      const fillQuantity = Decimal.min(remainingQuantity, level.quantity);
-      const fillPrice = slippageModel 
-        ? this.applySlippage(level.price, order.side, slippageModel)
-        : level.price;
-
-      totalCost = totalCost.add(fillQuantity.mul(fillPrice));
-      filledQuantity = filledQuantity.add(fillQuantity);
-      remainingQuantity = remainingQuantity.sub(fillQuantity);
-    }
-
-    if (filledQuantity.gt(0)) {
-      const avgPrice = totalCost.div(filledQuantity);
-      order.status = 'filled';
-      order.filledQuantity = filledQuantity;
-      order.fillPrice = avgPrice;
-      order.fillTimestamp = Date.now();
-      return { filled: true, order };
-    }
-
-    return { filled: false, order };
-  }
-
-  private matchLimitOrder(
-    order: PaperOrder,
-    orderBook: { bids: OrderBookLevel[]; asks: OrderBookLevel[]; lastUpdateTime: number }
-  ): { filled: boolean; order: PaperOrder } {
-    if (!order.price) {
-      return { filled: false, order };
-    }
-
-    const levels = order.side === 'buy' ? orderBook.asks : orderBook.bids;
-    let canFill = false;
-
-    for (const level of levels) {
-      if (order.side === 'buy' && level.price.lte(order.price)) {
-        canFill = true;
-        break;
-      } else if (order.side === 'sell' && level.price.gte(order.price)) {
-        canFill = true;
-        break;
-      }
-    }
-
-    if (canFill) {
-      return this.matchMarketOrder(order, orderBook);
-    }
-
-    return { filled: false, order };
   }
 
   private applySlippage(price: Decimal, side: 'buy' | 'sell', slippageModel: SlippageModel): Decimal {

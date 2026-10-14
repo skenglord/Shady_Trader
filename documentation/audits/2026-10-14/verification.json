@@ -1,0 +1,167 @@
+{
+  "recordedAt": "2026-10-14T18:11:12.512844+00:00",
+  "scope": "October 12 audit usability repairs; local public-data paper trading and research on Node 22.23.3",
+  "baseCommit": "3b3e5c50ff406fa22df0963987022fe50e29bd21",
+  "checks": {
+    "nodeTests": {
+      "command": "npm test",
+      "exitCode": 0,
+      "tests": 667,
+      "suites": 198,
+      "pass": 666,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 1,
+      "todo": 0,
+      "duration_ms": 452644.50535,
+      "skippedSuitesOutsideIndividualSkipCount": [
+        "OptimizationEngine",
+        "OverfittingDetector",
+        "TradingEngine utility methods [LEGACY-QUARANTINED]",
+        "SignalGenerator branch coverage [LEGACY-QUARANTINED]",
+        "Performance Regression Benchmarks - Slippage Engine (<1ms latency) [LEGACY-QUARANTINED]",
+        "Performance Benchmarks - Edge Cases [LEGACY-QUARANTINED]",
+        "LiquidityAnalyzer [LEGACY-QUARANTINED]",
+        "StatisticalValidator [LEGACY-QUARANTINED]",
+        "Trading System Tests",
+        "Exchange Adapter Tests",
+        "Database Worker Tests",
+        "Job Queues Tests",
+        "WebSocket Handler Tests",
+        "Paper Trading Controller Tests",
+        "Stateless Manager Tests",
+        "Monte Carlo Engine Tests",
+        "Monte Carlo Correlation Matrix Tests",
+        "Monte Carlo Path Generator Tests",
+        "Monte Carlo Stress Test Engine Tests",
+        "Monte Carlo Risk Calculator Tests",
+        "Monte Carlo WebSocket Handler Tests",
+        "Monte Carlo Controller Tests",
+        "WFA Rolling Optimizer Tests",
+        "WFA Checkpoint Tests",
+        "WFA Controller Tests",
+        "Validation Visualizer Tests",
+        "Backpressure Handler Tests",
+        "Exchange Cache Tests",
+        "Exchange Deduplication Tests",
+        "Exchange Distributed Locks Tests",
+        "Exchange Latency Profiler Tests",
+        "Exchange Partitioner Tests",
+        "Exchange Reconciliation Tests",
+        "Exchange WS Connection Pool Tests",
+        "Slippage Index Tests",
+        "Slippage Types Tests"
+      ],
+      "skippedIndividualTests": [
+        "should handle stop loss and take profit"
+      ]
+    },
+    "rootTypeScript": {
+      "command": "npm run lint",
+      "exitCode": 0
+    },
+    "cliTypeScript": {
+      "command": "node node_modules/typescript/bin/tsc --noEmit -p cli/tsconfig.json",
+      "exitCode": 0
+    },
+    "productionBuild": {
+      "command": "npm run build",
+      "exitCode": 0,
+      "largestChunkKB": 332.43
+    },
+    "complexity": {
+      "command": "npm run quality:complexity",
+      "exitCode": 0,
+      "maximum": 50
+    },
+    "isolatedBrowser": {
+      "command": "playwright test tests/playwright/lazy-dashboard.spec.ts --reporter=list",
+      "exitCode": 0,
+      "passed": 3
+    },
+    "finalAccountingPaperManualEntryRegressions": {
+      "passed": 38,
+      "failed": 0,
+      "exitCode": 0
+    },
+    "diffWhitespace": {
+      "command": "git diff --check",
+      "exitCode": 0
+    }
+  },
+  "observedWorkflows": {
+    "runtime": {
+      "observedAt": "2026-10-14T18:03:32.982Z",
+      "url": "http://localhost:3001",
+      "ready": "ready",
+      "components": {
+        "database": "ok",
+        "redis": "ok",
+        "tradingEngine": "ok"
+      },
+      "paperStateRestoredAfterRestart": true,
+      "closedHistoryResponse": 200
+    },
+    "liveBrowser": {
+      "observedAt": "2026-10-14T18:06:10.948Z",
+      "pageErrors": [],
+      "failedResponses": [],
+      "consoleWarnings": [
+        "Error with Permissions-Policy header: Unrecognized feature: 'ambient-light-sensor'.",
+        "Error with Permissions-Policy header: Unrecognized feature: 'battery'.",
+        "Error with Permissions-Policy header: Unrecognized feature: 'document-domain'.",
+        "Error with Permissions-Policy header: Unrecognized feature: 'web-share'.",
+        "The width(-1) and height(-1) of chart should be greater than 0,\n       please check the style of container, or the props width(100%) and height(100%),\n       or add a minWidth(0) or minHeight(undefined) or use aspect(undefined) to control the\n       height and width."
+      ],
+      "mobile": {
+        "viewport": 390,
+        "scrollWidth": 390,
+        "bodyWidth": 390
+      },
+      "populatedPerformanceFrames": 3
+    },
+    "finalizedCandles": {
+      "observedAt": "2026-10-14T08:51:12.413Z",
+      "provider": "binance",
+      "comparisons": 18,
+      "passed": 18,
+      "pairs": [
+        "BTC/USDT",
+        "ETH/USDT",
+        "SOL/USDT"
+      ],
+      "intervals": [
+        "1m",
+        "5m",
+        "15m",
+        "1h",
+        "4h",
+        "1d"
+      ]
+    },
+    "paperLifecycle": {
+      "quantityBTC": "0.0001",
+      "entryPriceUSDT": "83425.02",
+      "exitPriceUSDT": "83425.01",
+      "realizedPnlUSDT": "-0.000001",
+      "retryIdentityPreserved": true
+    },
+    "research": {
+      "jobStatus": "completed",
+      "strategy": "ShadyTraderReferenceStrategy",
+      "totalTrades": 0,
+      "note": "Zero-trade sample verifies workflow execution and result transport, not strategy profitability."
+    }
+  },
+  "remainingGates": [
+    "Legacy shadow ownership reconciliation",
+    "Credentialed native venue sandbox execution and unsupported external-symbol/third-asset-fee handling",
+    "Trained ML model and independent out-of-sample strategy evaluation",
+    "Real PostgreSQL integration and restore",
+    "Atomic risk-configuration activation",
+    "Deployment ownership and Docker/Kubernetes release checks"
+  ],
+  "liveTradingEnabled": false,
+  "mlEnabled": false,
+  "dependencyAudit": "Not rerun; dependencies unchanged. See October 11 audit for prior results."
+}

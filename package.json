@@ -13,7 +13,7 @@
     "app": "node scripts/launch-app.mjs",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx --test tests/**/*.test.ts",
+    "test": "node scripts/run-tests.mjs",
     "test:coverage": "c8 --reporter=text --reporter=json-summary npm test",
     "quality:coverage": "npm run test:coverage && node scripts/check-coverage.mjs",
     "quality:complexity": "node scripts/check-complexity.mjs",

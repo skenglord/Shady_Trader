@@ -64,9 +64,9 @@ describe('Risk safety guards (Block 6)', () => {
   test('daily loss includes unrealized losses on open positions', async () => {
     setMockRunQuery(async (sql: string) => {
       if (sql.includes('SUM(pnl)')) return [{ netPnl: -100 }];
-      if (sql.includes("status = 'open'")) return [{ side: 'buy', amount: 2, price: 50 }];
+      if (sql.includes("status = 'open'")) return [{ symbol: 'BTC/USDT', side: 'buy', amount: 2, price: 50 }];
       return [];
     });
-    assert.equal(await getDailyRealizedLoss('moderate', Date.UTC(2026, 8, 30), 40), 120);
+    assert.equal(await getDailyRealizedLoss('moderate', Date.UTC(2026, 8, 30), () => 40), 120);
   });
 });

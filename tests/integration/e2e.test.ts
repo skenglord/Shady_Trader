@@ -36,6 +36,7 @@ import { createServer, type Server as HttpServer } from 'http';
 import { TradingEngine } from '../../backend/main.js';
 import { MarketDataService } from '../../backend/api/marketDataService.js';
 import { setMockRunQuery, setMockRunTransaction, clearMockRunQuery } from '../../backend/database.js';
+import { createShadowTestStore, persistShadowTestTrade } from '../utils/shadow-sqlite-store.js';
 import { apiRouter } from '../../backend/api/routes.js';
 import { ShadowTrader } from '../../backend/shadow/shadow_trader.js';
 import { RiskMode } from '../../backend/risk/manager.js';
@@ -153,21 +154,6 @@ function setupDefaultDbMock() {
  * test. Returns { changes: 1 } for writes and [] for reads (except specific
  * canned responses).
  */
-function createRecordingDbMock() {
-  const recorded: { sql: string; params: any[]; type: string }[] = [];
-  const mockFn = async (sql: string, params: any[] = [], type: 'run' | 'all' = 'run') => {
-    recorded.push({ sql: sql.trim(), params, type });
-
-    if (sql.includes('SELECT * FROM shadow_trades')) return [];
-    if (sql.includes('SELECT SUM(pnl)')) return [{ totalPnl: 0 }];
-    if (sql.includes('SELECT COUNT(*)')) return [{ count: 0 }];
-    if (sql.includes('SELECT exit_timestamp')) return [];
-    if (type === 'all') return [];
-    return { changes: 1 };
-  };
-  return { mockFn, recorded };
-}
-
 // ── Fixed candle data for deterministic cycles ──────────────────────────────
 
 function makeFixedCandles(count: number = 200): { time: number; open: number; high: number; low: number; close: number; volume: number }[] {
@@ -293,7 +279,8 @@ describe('Full-System Integration (T8)', { concurrency: false }, () => {
       await engine.init();
 
       // Manually inject an open shadow trade so killBot has something to close
-      engine.shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push({
+      const store = createShadowTestStore();
+      const trade = {
         id: 'test-kill-1',
         symbol: 'BTC/USDT',
         side: 'buy',
@@ -307,12 +294,16 @@ describe('Full-System Integration (T8)', { concurrency: false }, () => {
         takeProfit: 52000,
         candlesHeld: 0,
         isRunner: false,
-      } as any);
+      } as any;
+      persistShadowTestTrade(store.db, trade);
+      engine.shadowTrader.portfolios[RiskMode.MODERATE].openTrades.push(trade);
 
       await engine.killBot();
       assert.strictEqual(engine.isRunning, false);
       // The open trade should have been closed (removed from openTrades)
       assert.strictEqual(engine.shadowTrader.portfolios[RiskMode.MODERATE].openTrades.length, 0);
+      assert.strictEqual(store.db.prepare('SELECT status FROM shadow_trades WHERE id = ?').get(trade.id).status, 'closed');
+      store.db.close();
 
       wss.close();
     });
@@ -622,10 +613,12 @@ describe('Full-System Integration (T8)', { concurrency: false }, () => {
   // ═════════════════════════════════════════════════════════════════════════
 
   describe('(d) Persistence round-trip', () => {
+    let store: ReturnType<typeof createShadowTestStore>;
+    beforeEach(() => { store = createShadowTestStore(); });
+    afterEach(() => { store.db.close(); });
 
     test('signal produces a shadow trade INSERT, then closeTrade UPDATE sets status=closed with pnl and exit fields', async () => {
-      const { mockFn, recorded } = createRecordingDbMock();
-      setMockRunQuery(mockFn as any);
+      const { recorded } = store;
 
       const shadowTrader = new ShadowTrader();
       await shadowTrader.init();
@@ -706,19 +699,12 @@ describe('Full-System Integration (T8)', { concurrency: false }, () => {
       );
       assert.ok(updateCalls.length > 0, 'should have recorded an UPDATE shadow_trades with close fields');
 
-      // Verify UPDATE sets status='closed'
-      const updateSql = updateCalls[0].sql;
-      assert.ok(updateSql.includes("'closed'"), "UPDATE should set status='closed'");
-
-      // Verify UPDATE params: pnl, exit_price, exit_timestamp, tradeId
-      const updateParams = updateCalls[0].params;
-      assert.ok(typeof updateParams[0] === 'number', 'pnl should be a number');
-      assert.strictEqual(updateParams[1], exitPrice, 'exit_price should match the close price');
-      assert.ok(typeof updateParams[2] === 'number', 'exit_timestamp should be a number');
-      assert.strictEqual(updateParams[3], tradeId, 'last param should be the trade id');
-
-      // For a buy trade closed at a higher price, pnl should be positive
-      assert.ok(updateParams[0] > 0, 'pnl should be positive for a profitable buy trade');
+      const row: any = store.db.prepare('SELECT * FROM shadow_trades WHERE id = ?').get(tradeId);
+      assert.equal(row.status, 'closed');
+      assert.equal(row.exit_price, exitPrice);
+      assert.ok(row.exit_timestamp > 0);
+      assert.ok(row.pnl > 0, 'profitable close is durable');
+      assert.equal(row.remaining_amount, 0);
 
       // Also verify audit_trades were logged (open + close)
       const auditInserts = recorded.filter(r => r.sql.includes('INSERT INTO audit_trades'));
@@ -726,8 +712,7 @@ describe('Full-System Integration (T8)', { concurrency: false }, () => {
     });
 
     test('closeTrade on non-existent trade returns false', async () => {
-      const { mockFn } = createRecordingDbMock();
-      setMockRunQuery(mockFn as any);
+
 
       const shadowTrader = new ShadowTrader();
       await shadowTrader.init();
@@ -737,8 +722,7 @@ describe('Full-System Integration (T8)', { concurrency: false }, () => {
     });
 
     test('persistence round-trip: losing trade produces negative pnl', async () => {
-      const { mockFn, recorded } = createRecordingDbMock();
-      setMockRunQuery(mockFn as any);
+      const { recorded } = store;
 
       const shadowTrader = new ShadowTrader();
       await shadowTrader.init();
@@ -770,8 +754,8 @@ describe('Full-System Integration (T8)', { concurrency: false }, () => {
         r.sql.includes('pnl')
       );
       assert.ok(updateCalls.length > 0);
-      // params[0] is pnl in the UPDATE
-      assert.ok(updateCalls[0].params[0] < 0, 'pnl should be negative for a losing trade');
+      const row: any = store.db.prepare('SELECT * FROM shadow_trades WHERE id = ?').get(tradeId);
+      assert.ok(row.pnl < 0, 'pnl should be negative for a losing trade');
     });
   });
 

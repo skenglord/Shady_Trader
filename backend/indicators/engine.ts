@@ -33,6 +33,7 @@ export function calculateMFI(
 ): number[] {
   const result: number[] = new Array(closes.length).fill(NaN);
   for (let i = period; i < closes.length; i++) {
+    if (volumes.slice(i - period + 1, i + 1).some(v => !Number.isFinite(v) || v < 0)) continue;
     let posF = 0, negF = 0;
     for (let j = i - period + 1; j <= i; j++) {
       const tp     = (highs[j] + lows[j] + closes[j]) / 3;
@@ -40,7 +41,7 @@ export function calculateMFI(
       const rmf    = tp * volumes[j];
       if (tp > tpPrev) posF += rmf; else if (tp < tpPrev) negF += rmf;
     }
-    result[i] = negF === 0 ? 100 : 100 - 100 / (1 + posF / negF);
+    result[i] = posF === 0 && negF === 0 ? 50 : negF === 0 ? 100 : 100 - 100 / (1 + posF / negF);
   }
   return result;
 }
@@ -78,6 +79,7 @@ export interface Candle {
   low: number;
   close: number;
   volume: number;
+  volumeAvailable?: boolean;
 }
 
 export class IndicatorEngine {
@@ -159,7 +161,7 @@ export class IndicatorEngine {
     const closes = candles.map(c => c.close);
     const highs = candles.map(c => c.high);
     const lows = candles.map(c => c.low);
-    const volumes = candles.map(c => c.volume);
+    const volumes = candles.map(c => c.volumeAvailable === false ? NaN : c.volume);
 
     const ema9 = EMA.calculate({ period: this.EMA_FAST, values: closes });
     const ema21 = EMA.calculate({ period: this.EMA_MEDIUM, values: closes });
@@ -180,7 +182,11 @@ export class IndicatorEngine {
 
     const macd = MACD.calculate({ fastPeriod: 12, slowPeriod: 26, signalPeriod: 9, SimpleMAOscillator: false, SimpleMASignal: false, values: closes });
 
-    const volumeSma20 = SMA.calculate({ period: this.VOLUME_PERIOD, values: volumes });
+    const volumeSma20 = volumes.map((_, i) => {
+      const window = volumes.slice(i - this.VOLUME_PERIOD + 1, i + 1);
+      return i >= this.VOLUME_PERIOD - 1 && window.every(Number.isFinite)
+        ? window.reduce((sum, v) => sum + v, 0) / this.VOLUME_PERIOD : null;
+    });
 
     const atr = ATR.calculate({ period: 14, high: highs, low: lows, close: closes });
 
@@ -192,7 +198,7 @@ export class IndicatorEngine {
       const typicalPrice = (highs[i] + lows[i] + closes[i]) / 3;
       cumulativeTypicalPriceVolume += typicalPrice * volumes[i];
       cumulativeVolume += volumes[i];
-      vwap.push(cumulativeTypicalPriceVolume / cumulativeVolume);
+      vwap.push(cumulativeVolume > 0 && Number.isFinite(cumulativeTypicalPriceVolume) ? cumulativeTypicalPriceVolume / cumulativeVolume : null);
     }
 
     // Align arrays to the end
@@ -218,7 +224,7 @@ export class IndicatorEngine {
       const volRatioVal = getVal(volumeSma20, 0) ? c.volume / getVal(volumeSma20, 0) : 1;
       const vpi = mfiVal != null
         ? computeVPI(mfiVal, mfiBullDiv[i], mfiBearDiv[i], volRatioVal, c.close, c.open, c.high, c.low).score
-        : 0;
+        : null;
 
       result.push({
         ...c,

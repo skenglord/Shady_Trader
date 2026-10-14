@@ -1,4 +1,5 @@
-import { runQuery } from '../database.js';
+import { runQuery, withDatabaseTransaction } from '../database.js';
+import { assertCandleRequest, CANDLE_INTERVAL_MS, validateLiveCandles, type MarketCandle } from './candle-contract.js';
 import axios from 'axios';
 import crypto from 'crypto';
 import { logger } from '../logging/logger.js';
@@ -42,6 +43,8 @@ export class ExchangeConnector {
   private ccApiKey: string;
   private currentPrice = 0;
   private lastUpdate = 0;
+  private quotes = new Map<string, { price: number; fetchedAt: number }>();
+  private candleStatus = new Map<string, Record<string, unknown>>();
   private updateInterval: NodeJS.Timeout | null = null;
   private updatingPrice = false;
   private tickHandler: ((tick: { symbol: string; price: number; time: number }) => void) | null = null;
@@ -459,7 +462,9 @@ export class ExchangeConnector {
   }
 
   private async fetchLatestPrice(symbol: string) {
+    assertCandleRequest(symbol, '1m');
     const baseSymbol = this.symbolMap[symbol] || symbol.split('/')[0];
+    const quoteSymbol = symbol.split('/')[1];
 
     // Try provider rotator first (CoinGecko → Binance → CoinMarketCap → CoinAPI)
     try {
@@ -479,7 +484,7 @@ export class ExchangeConnector {
       if (this.exchangeName === 'binance') {
         const pair = symbol.replace('/', '');
         const ticker = await axios.get(`${this.getBinanceBaseUrl()}/api/v3/ticker/24hr`, {
-          params: { symbol: pair }
+          params: { symbol: pair }, timeout: 5000
         });
 
         const price = Number(ticker.data?.lastPrice || 0);
@@ -494,7 +499,7 @@ export class ExchangeConnector {
       if (this.exchangeName === 'kraken') {
         const pair = symbol.replace('/', '');
         const response = await axios.get('https://api.kraken.com/0/public/Ticker', {
-          params: { pair }
+          params: { pair }, timeout: 5000
         });
 
         const firstResult = Object.values(response.data?.result || {})[0] as any;
@@ -511,7 +516,7 @@ export class ExchangeConnector {
       if (this.exchangeName === 'okx') {
         const pair = symbol.replace('/', '-');
         const response = await axios.get(`${this.getOkxBaseUrl()}/api/v5/market/ticker`, {
-          params: { instId: pair }
+          params: { instId: pair }, timeout: 5000
         });
 
         const price = Number(response.data?.data?.[0]?.last || 0);
@@ -527,7 +532,7 @@ export class ExchangeConnector {
       if (this.exchangeName === 'coinbase') {
         const pair = symbol.replace('/', '-');
         const response = await axios.get(`${this.getCoinbaseBaseUrl()}/api/v3/brokerage/market/get_ticker`, {
-          params: { product_id: pair }
+          params: { product_id: pair }, timeout: 5000
         });
 
         const price = Number(response.data?.price || 0);
@@ -547,7 +552,7 @@ export class ExchangeConnector {
           headers: {
             'X-CoinAPI-Key': this.apiKey,
             'Accept': 'application/json'
-          }
+          }, timeout: 5000
         });
 
         if (response.data?.rate) {
@@ -559,18 +564,7 @@ export class ExchangeConnector {
       }
 
       if (this.exchangeName === 'coingecko') {
-        // CoinGecko simple price endpoint
-        const coinGeckoIdMap: Record<string, string> = { 'BTC': 'bitcoin', 'ETH': 'ethereum', 'SOL': 'solana' };
-        const coinId = coinGeckoIdMap[baseSymbol] || baseSymbol.toLowerCase();
-        const cgParams: Record<string, any> = { ids: coinId, vs_currencies: 'usd', include_24hr_vol: 'true' };
-        if (this.apiKey) cgParams.x_cg_demo_api_key = this.apiKey;
-        const response = await axios.get('https://api.coingecko.com/api/v3/simple/price', { params: cgParams });
-
-        if (response.data?.[coinId]?.usd) {
-          this.currentPrice = Number(response.data[coinId].usd);
-          this.lastUpdate = Date.now();
-          await this.saveTickToDb(symbol, this.currentPrice, Number(response.data[coinId]?.usd_24h_vol || 0));
-        }
+        await this.fetchCryptoComparePrice(symbol);
         return;
       }
 
@@ -581,15 +575,15 @@ export class ExchangeConnector {
         },
         params: {
           symbol: baseSymbol,
-          convert: 'USD'
-        }
+          convert: quoteSymbol
+        }, timeout: 5000
       });
 
       const data = response.data?.data?.[baseSymbol];
-      if (data?.quote?.USD) {
-        this.currentPrice = Number(data.quote.USD.price);
+      if (data?.quote?.[quoteSymbol]) {
+        this.currentPrice = Number(data.quote[quoteSymbol].price);
         this.lastUpdate = Date.now();
-        await this.saveTickToDb(symbol, this.currentPrice, Number(data.quote.USD.volume_24h || 0));
+        await this.saveTickToDb(symbol, this.currentPrice, Number(data.quote[quoteSymbol].volume_24h || 0));
       }
     } catch (error: any) {
       logger.warn('Primary exchange failed, trying CryptoCompare fallback', {
@@ -601,12 +595,14 @@ export class ExchangeConnector {
   }
 
   private async fetchCryptoComparePrice(symbol: string) {
+    assertCandleRequest(symbol, '1m');
     const baseSymbol = this.symbolMap[symbol] || symbol.split('/')[0];
+    const quoteSymbol = symbol.split('/')[1];
     try {
-      const ccParams: Record<string, any> = { fsyms: baseSymbol, tsyms: 'USD' };
+      const ccParams: Record<string, any> = { fsyms: baseSymbol, tsyms: quoteSymbol };
       if (this.ccApiKey) ccParams.api_key = this.ccApiKey;
-      const response = await axios.get('https://min-api.cryptocompare.com/data/pricemulti', { params: ccParams });
-      const price = Number(response.data?.[baseSymbol]?.USD);
+      const response = await axios.get('https://min-api.cryptocompare.com/data/pricemulti', { params: ccParams, timeout: 5000 });
+      const price = Number(response.data?.[baseSymbol]?.[quoteSymbol]);
       if (Number.isFinite(price) && price > 0) {
         this.currentPrice = price;
         this.lastUpdate = Date.now();
@@ -626,33 +622,23 @@ export class ExchangeConnector {
   }
 
   async fetchCryptoCompareHistorical(symbol: string, timeframe: string, limit: number = 100): Promise<any[]> {
-    const baseSymbol = this.symbolMap[symbol] || symbol.split('/')[0];
-    const intervalMap: Record<string, number> = { '1m': 1, '5m': 5, '15m': 15, '1h': 60, '1d': 1440 };
-    const interval = intervalMap[timeframe] || 60;
-
+    assertCandleRequest(symbol, timeframe);
+    const [baseSymbol, quoteSymbol] = symbol.split('/');
+    const interval = CANDLE_INTERVAL_MS[timeframe];
+    const endpoint = interval < 3_600_000 ? 'histominute' : interval < 86_400_000 ? 'histohour' : 'histoday';
+    const aggregate = interval / (endpoint === 'histominute' ? 60_000 : endpoint === 'histohour' ? 3_600_000 : 86_400_000);
     try {
-      const ccParams: Record<string, any> = { fsym: baseSymbol, tsym: 'USD', limit: Math.min(limit, 2000), aggregate: interval };
-      if (this.ccApiKey) ccParams.api_key = this.ccApiKey;
-      const response = await axios.get('https://min-api.cryptocompare.com/data/v2/histoday', { params: ccParams });
-
-      if (response.data?.Data?.Data) {
-        return response.data.Data.Data.map((c: any) => ({
-          time: c.time * 1000,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-          volume: c.volumeto || c.volumefrom || 0
-        }));
-      }
+      const params: Record<string, any> = { fsym: baseSymbol, tsym: quoteSymbol, limit: Math.min(limit - 1, 2000), aggregate, tryConversion: false };
+      if (this.ccApiKey) params.api_key = this.ccApiKey;
+      const response = await axios.get(`https://min-api.cryptocompare.com/data/v2/${endpoint}`, { params, timeout: 5000 });
+      const rows = (response.data?.Data?.Data || []).map((c: any) => ({
+        time: Number(c.time) * 1000, open: Number(c.open), high: Number(c.high), low: Number(c.low), close: Number(c.close), volume: Number(c.volumefrom),
+      }));
+      return validateLiveCandles(rows, symbol, timeframe, 'cryptocompare').slice(-limit);
     } catch (error: any) {
-      logger.error('CryptoCompare historical fetch failed', {
-        service: 'ExchangeConnector',
-        symbol: baseSymbol,
-        error: error.message
-      });
+      logger.warn('CryptoCompare candles unavailable', { service: 'ExchangeConnector', symbol, timeframe, error: error.message });
+      return [];
     }
-    return [];
   }
 
   async fetchCoinAPIHistorical(symbol: string, timeframe: string, limit: number = 100): Promise<any[]> {
@@ -672,7 +658,8 @@ export class ExchangeConnector {
     const msPerCandle: Record<string, number> = {
       '1m': 60_000, '5m': 300_000, '15m': 900_000, '1h': 3_600_000, '4h': 14_400_000, '1d': 86_400_000
     };
-    const targetMs = msPerCandle[timeframe] || 3_600_000;
+    assertCandleRequest(symbol, timeframe);
+    const targetMs = msPerCandle[timeframe];
     if (targetMs === 60_000) {
       // Already 1m — no aggregation needed; return the raw rows from the caller.
       return [];
@@ -716,6 +703,7 @@ export class ExchangeConnector {
     }
     const aggregated: any[] = [];
     for (const [bucketTime, candles] of [...buckets.entries()].sort((a, b) => a[0] - b[0])) {
+      if (candles.length !== targetMs / baseMs || candles.some((c, i) => c.time !== bucketTime + i * baseMs)) continue;
       aggregated.push({
         time: bucketTime,
         open: candles[0].open,
@@ -777,27 +765,30 @@ export class ExchangeConnector {
     return [];
   }
 
-  private async saveTickToDb(symbol: string, price: number, volume: number) {
+  private async saveTickToDb(symbol: string, price: number, _volume: number) {
+    if (!Number.isFinite(price) || price <= 0) return;
     const now = Date.now();
-    const candleTime = Math.floor(now / 60000) * 60000;
+    this.quotes.set(symbol, { price, fetchedAt: now });
+    this.tickHandler?.({ symbol, price, time: now });
+  }
 
-    try {
-      await runQuery(
-        `
-        INSERT INTO candles (symbol, timeframe, time, open, high, low, close, volume)
-        VALUES (?, '1m', ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(symbol, timeframe, time) DO UPDATE SET
-        high = MAX(high, excluded.high),
-        low = MIN(low, excluded.low),
-        close = excluded.close,
-        volume = excluded.volume
-      `,
-        [symbol, candleTime, price, price, price, price, volume]
-      );
-      this.tickHandler?.({ symbol, price, time: now });
-    } catch (error) {
-      logger.error('Failed to save tick to DB', { service: 'ExchangeConnector', error: (error as Error).message });
-    }
+  private async persistCandles(symbol: string, timeframe: string, candles: MarketCandle[]): Promise<void> {
+    await withDatabaseTransaction(async query => {
+      for (const c of candles) {
+        await query(`INSERT INTO candles (symbol,timeframe,time,open,high,low,close,volume) VALUES (?,?,?,?,?,?,?,?)
+          ON CONFLICT(symbol,timeframe,time) DO UPDATE SET open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close, volume=excluded.volume`,
+          [symbol, timeframe, c.time, c.open, c.high, c.low, c.close, c.volume]);
+        await query(`INSERT INTO candle_provenance (symbol,timeframe,time,provider,fetched_at,finalized,volume_available) VALUES (?,?,?,?,?,?,?)
+          ON CONFLICT(symbol,timeframe,time) DO UPDATE SET provider=excluded.provider, fetched_at=excluded.fetched_at, finalized=excluded.finalized, volume_available=excluded.volume_available`,
+          [symbol, timeframe, c.time, c.provider, c.fetchedAt, c.finalized ? 1 : 0, c.volumeAvailable ? 1 : 0]);
+      }
+    });
+  }
+
+  getCandleStatus(symbol: string, timeframe: string) {
+    const status = this.candleStatus.get(`${symbol}:${timeframe}`);
+    if (!status) return { symbol, timeframe, provider: null, stale: true, available: false };
+    return { ...status, stale: Date.now() - Number(status.fetchedAt || 0) > 120_000, ageMs: Date.now() - Number(status.latestTime) };
   }
 
   async fetchExchangeOHLCV(symbol: string, timeframe: string, since: number, limit: number) {
@@ -852,51 +843,44 @@ export class ExchangeConnector {
     return rows;
   }
 
-  async getCandles(symbol: string, timeframe: string, limit: number = 100) {
-    // Prefer live exchange OHLCV; provider rotation only returns exchange data.
+  async getCandles(symbol: string, timeframe: string, limit: number = 100): Promise<MarketCandle[]> {
+    assertCandleRequest(symbol, timeframe);
+    const accept = (rows: MarketCandle[], provider: string) => {
+      const candles = validateLiveCandles(rows, symbol, timeframe, provider);
+      const latest = candles.at(-1);
+      if (latest) this.candleStatus.set(`${symbol}:${timeframe}`, {
+        symbol, timeframe, provider: latest.provider, fetchedAt: latest.fetchedAt,
+        latestTime: latest.time, volumeAvailable: latest.volumeAvailable, available: true,
+      });
+      return candles;
+    };
+    for (const fetch of [
+      async () => accept(await this.providerRotator.getCandles(symbol, timeframe, limit), this.providerRotator.getActiveProvider()),
+      async () => accept(await this.fetchCryptoCompareHistorical(symbol, timeframe, limit), 'cryptocompare'),
+    ]) {
+      try {
+        const candles = await fetch();
+        if (candles.length > 0) {
+          await this.persistCandles(symbol, timeframe, candles);
+          return candles;
+        }
+      } catch (error: any) {
+        logger.warn('Live candles unavailable from provider', { symbol, timeframe, error: error.message });
+      }
+    }
+    // Only rows fetched as complete provider OHLCV can be used for live decisions.
+    // Imported history and legacy ticker-derived rows remain available to backtests.
+    const rows = await runQuery(`SELECT c.time,c.open,c.high,c.low,c.close,c.volume,p.provider,p.fetched_at,p.finalized,p.volume_available
+      FROM candles c JOIN candle_provenance p ON c.symbol=p.symbol AND c.timeframe=p.timeframe AND c.time=p.time
+      WHERE c.symbol=? AND c.timeframe=? ORDER BY c.time DESC LIMIT ?`, [symbol, timeframe, limit], 'all');
     try {
-      const rotated = await this.providerRotator.getCandles(symbol, timeframe, limit);
-      if (rotated.length >= 20) {
-        for (const candle of rotated) {
-          runQuery(
-            `INSERT OR IGNORE INTO candles (symbol, timeframe, time, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [symbol, timeframe, candle.time, candle.open, candle.high, candle.low, candle.close, candle.volume]
-          ).catch(() => {});
-        }
-        return rotated;
-      }
-    } catch (err: any) {
-      logger.warn(`[ExchangeConnector] Provider rotator failed: ${err.message}`, { service: 'connector' });
+      const cached = accept(rows.map((c: any) => ({ ...c, fetchedAt: Number(c.fetched_at), finalized: Boolean(c.finalized), volumeAvailable: Boolean(c.volume_available) })), 'database');
+      if (cached.length) return cached;
+    } catch (error: any) {
+      logger.warn('Stored candles are not usable for live trading', { symbol, timeframe, error: error.message });
     }
-
-    let rows = await runQuery(
-      `SELECT time, open, high, low, close, volume
-       FROM candles
-       WHERE symbol = ? AND timeframe = ?
-       ORDER BY time DESC
-       LIMIT ?`,
-      [symbol, timeframe, limit],
-      'all'
-    );
-
-    if (rows.length < 20 && this.exchangeName === 'coinapi' && this.apiKey) {
-      const coinApiRows = await this.fetchCoinAPIHistorical(symbol, timeframe, limit);
-      if (coinApiRows.length >= 20) {
-        for (const candle of coinApiRows) {
-          runQuery(`INSERT OR IGNORE INTO candles (symbol, timeframe, time, open, high, low, close, volume) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [symbol, timeframe, candle.time, candle.open, candle.high, candle.low, candle.close, candle.volume]).catch(() => {});
-        }
-        return coinApiRows;
-      }
-    }
-
-    if (rows.length < 20) {
-      const aggregated = await this.aggregateFromBaseTimeframe(symbol, timeframe, limit);
-      if (aggregated.length >= 20) return aggregated;
-      logger.warn(`[ExchangeConnector] Only ${rows.length} real candles available for ${symbol} ${timeframe}; no synthetic fallback will be used.`, { service: 'connector' });
-    }
-
-    return rows.reverse();
+    this.candleStatus.set(`${symbol}:${timeframe}`, { symbol, timeframe, provider: null, fetchedAt: 0, available: false });
+    return [];
   }
 
   private signBinanceQuery(query: string): string {
@@ -1365,11 +1349,17 @@ export class ExchangeConnector {
     }
   }
 
-  async getCurrentPrice(symbol: string) {
-    if (Date.now() - this.lastUpdate > 10000) {
+  async getCurrentPrice(symbol: string): Promise<number> {
+    assertCandleRequest(symbol, '1m');
+    let quote = this.quotes.get(symbol);
+    if (!quote || Date.now() - quote.fetchedAt > 10_000) {
       await this.fetchLatestPrice(symbol);
+      quote = this.quotes.get(symbol);
     }
-    return this.currentPrice;
+    if (!quote || Date.now() - quote.fetchedAt > 10_000 || !Number.isFinite(quote.price) || quote.price <= 0) {
+      throw new Error(`Fresh price unavailable for ${symbol}`);
+    }
+    return quote.price;
   }
 
   async getOrderBook(symbol: string, limit: number = 50): Promise<OrderBookData> {
