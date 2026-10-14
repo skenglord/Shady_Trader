@@ -60,7 +60,7 @@ jobs:
         USE_POSTGRES: false
 
     - name: Run tests with PostgreSQL
-      run: npm test
+      run: npm test tests/database/postgres_integration.test.ts
       env:
         USE_POSTGRES: true
         POSTGRES_HOST: localhost
