@@ -31,6 +31,9 @@ RUN npm run build
 FROM base AS runner
 WORKDIR /app
 
+# Link the GHCR package to this public repository so Kubernetes can pull it anonymously.
+LABEL org.opencontainers.image.source="https://github.com/skenglord/Shady_Trader"
+
 ENV NODE_ENV=production
 ENV PORT=3000
 ENV HOST=0.0.0.0

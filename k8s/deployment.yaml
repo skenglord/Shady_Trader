@@ -119,7 +119,7 @@ spec:
         fsGroup: 1001
       containers:
       - name: shady-trader
-        image: shady-trader:latest
+        image: ghcr.io/skenglord/shady-trader:latest
         ports:
         - containerPort: 3000
         env:
@@ -269,7 +269,7 @@ spec:
         - name: freqtrade-data
           mountPath: /app/backend/freqtrade/user_data/data
       - name: freqtrade-webserver
-        image: shady-trader:latest
+        image: ghcr.io/skenglord/shady-trader:latest
         command: ["bash", "backend/freqtrade/run_webserver.sh"]
         ports:
         - name: freqtrade-api
