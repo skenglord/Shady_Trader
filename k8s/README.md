@@ -1,5 +1,12 @@
 # Kubernetes deployment prerequisites
 
+The application image is published to `ghcr.io/skenglord/shady-trader` by the
+`CI/CD Pipeline` workflow using its repository-scoped `GITHUB_TOKEN`. The
+Dockerfile's OCI source label links the package to this public repository, so
+the package inherits public access and the cluster does not need a registry
+pull secret. Deployments use immutable commit tags; `latest` is also published
+from `main` for manifest defaults.
+
 The manifests deliberately contain no credentials. Before applying them, create
 `shady-trader-secrets` from a protected secret manager or a local, untracked env
 file containing these keys:

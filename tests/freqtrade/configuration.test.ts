@@ -48,14 +48,18 @@ describe('Freqtrade deployment configuration', () => {
     assert.match(compose, /FREQTRADE__API_SERVER__LISTEN_IP_ADDRESS: 0\.0\.0\.0/);
   });
 
-  test('publishes and deploys the same namespaced commit image to both app containers', () => {
+  test('publishes and deploys the same public GHCR commit image to both app containers', () => {
     assert.match(workflow, /if: github\.ref == 'refs\/heads\/main' \|\| github\.ref == 'refs\/heads\/develop'/);
-    assert.match(workflow, /docker tag shady-trader:\$\{\{ github\.sha \}\} "\$DOCKERHUB_USERNAME\/shady-trader:\$\{\{ github\.sha \}\}"/);
-    assert.match(workflow, /docker push "\$DOCKERHUB_USERNAME\/shady-trader:\$\{\{ github\.sha \}\}"/);
-    assert.match(workflow, /DOCKERHUB_USERNAME\/shady-trader:latest/);
-    assert.match(workflow, /shady-trader="\$DOCKERHUB_USERNAME\/shady-trader:\$\{\{ github\.sha \}\}"/);
-    assert.match(workflow, /freqtrade-webserver="\$DOCKERHUB_USERNAME\/shady-trader:\$\{\{ github\.sha \}\}"/);
-    assert.match(deployment, /- name: shady-trader\n        image: shady-trader:latest/);
-    assert.match(deployment, /- name: freqtrade-webserver\n        image: shady-trader:latest/);
+    assert.match(workflow, /packages: write/);
+    assert.match(workflow, /registry: ghcr\.io/);
+    assert.match(workflow, /password: \$\{\{ secrets\.GITHUB_TOKEN \}\}/);
+    assert.match(workflow, /docker tag shady-trader:\$\{\{ github\.sha \}\} "\$image:\$\{\{ github\.sha \}\}"/);
+    assert.match(workflow, /docker push "\$image:\$\{\{ github\.sha \}\}"/);
+    assert.match(workflow, /"\$image:latest"/);
+    assert.match(workflow, /shady-trader="ghcr\.io\/skenglord\/shady-trader:\$\{\{ github\.sha \}\}"/);
+    assert.match(workflow, /freqtrade-webserver="ghcr\.io\/skenglord\/shady-trader:\$\{\{ github\.sha \}\}"/);
+    assert.match(dockerfile, /LABEL org\.opencontainers\.image\.source="https:\/\/github\.com\/skenglord\/Shady_Trader"/);
+    assert.match(deployment, /- name: shady-trader\n        image: ghcr\.io\/skenglord\/shady-trader:latest/);
+    assert.match(deployment, /- name: freqtrade-webserver\n        image: ghcr\.io\/skenglord\/shady-trader:latest/);
   });
 });
