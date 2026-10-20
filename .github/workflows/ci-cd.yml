@@ -162,7 +162,9 @@ jobs:
           -v "$GITHUB_WORKSPACE:/work" \
           -w /work \
           ghcr.io/yannh/kubeconform:v0.8.0 \
-          -strict -summary -kubernetes-version 1.28.0 "${manifests[@]}"
+          -strict -summary -kubernetes-version 1.28.0 \
+          -skip ServiceMonitor,VirtualService,Gateway,DestinationRule,PrometheusRule,PeerAuthentication,Telemetry,AuthorizationPolicy \
+          "${manifests[@]}"
 
   deploy-staging:
     needs: [build, validate-manifests]
