@@ -154,15 +154,15 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Validate Kubernetes manifests with kubeconform
-      uses: yannh/kubeconform-action@v1
-      with:
-        files: k8s/
-        # Skip the monitoring/ subdirectory — it contains vendored CRD-based
-        # bundles (Prometheus, Grafana) whose schemas are not available to
-        # kubeconform and would produce false negatives.
-        ignore: k8s/monitoring/
-        # Use Kubernetes 1.28.0 schemas for validation
-        kubernetes_version: "1.28.0"
+      run: |
+        mapfile -d '' manifests < <(
+          find k8s -path 'k8s/monitoring' -prune -o -type f \( -name '*.yaml' -o -name '*.yml' \) -print0
+        )
+        docker run --rm \
+          -v "$GITHUB_WORKSPACE:/work" \
+          -w /work \
+          ghcr.io/yannh/kubeconform:v0.8.0 \
+          -strict -summary -kubernetes-version 1.28.0 "${manifests[@]}"
 
   deploy-staging:
     needs: [build, validate-manifests]
